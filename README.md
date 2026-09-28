@@ -62,7 +62,7 @@ Before starting, ensure you have:
 
 Create a dedicated folder for your workspace on your local disk and navigate into it:
 
-```bash
+```
 # Create your workspace directory (replace 'C:\projects\your-workspace' with your preferred path)
 mkdir C:\projects\your-workspace
 
