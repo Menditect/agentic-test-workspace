@@ -28,6 +28,16 @@ Once the script finishes running, it outputs a complete, isolated Agentic Worksp
   - Instant feedback loops during active development without requiring round-trips to the central MTA web portal.
 - **Prerequisites:** Requires the **MTA Runtime Plugin** installed and running inside your Mendix application, connected via the local MTA Plugin MCP endpoint (`/plugin/mcp`).
 
+### What is an Agentic Test Workspace?
+
+An **Agentic Test Workspace** is a dedicated project environment created specifically for your **AI coding assistant / agent** (such as Cursor, VS Code with GitHub Copilot/Cline, Claude Code, or Antigravity/Gemini). 
+
+Think of this workspace as the AI agent's dedicated command center containing:
+- **Agent Directives & Skills (`skills/`)**: Authoritative testing instructions and domain skills (synchronized from `Menditect/agentic-test-skills`) that teach the AI how to design, write, and execute MTA tests following Menditect standards.
+- **MCP Server Configurations (`mta`, `mta_plugin`, `StudioPro`)**: Standardized Model Context Protocol (MCP) bridges allowing the AI to interact with the MTA Cloud portal, local runtime plugins, and Mendix Studio Pro.
+- **Model Inspection & Search Index (`mxcli`, `.mxcli/catalog.db`)**: Fast offline search tools allowing the AI to inspect and understand your Mendix domain models, microflows, and dependencies.
+- **Test Artifacts (`menditect-output/`)**: Persistent test execution plans (`EP_*.md`), test results, and trace logs.
+
 ## Prerequisites
 
 > **Best Practice:** You should create a dedicated Agentic Test Workspace for each individual Mendix Application Under Test. Rather than attempting to reuse a single workspace across multiple Mendix applications, clone or instantiate this repository template separately for every Mendix app you intend to test.
@@ -42,44 +52,68 @@ Before starting, ensure you have:
 
 ## Setup of workspace
 
+> [!TIP]
+> You can create your workspace in any directory on your computer (e.g. `C:\projects\my-app-test-workspace` or `~/projects/my-app-test-workspace`). The paths below are examples.
+
 > [!WARNING]
 > Mxcli will install software in the directory of the Mendix project, please make sure to read the mxcli documentation before proceeding. (https://www.mxcli.org/)
 
-### 1. Create target directory for workspace
+### 1. Create and open your workspace directory
+
+Create a dedicated folder for your workspace on your local disk and navigate into it:
+
 ```bash
+# Create your workspace directory (replace 'C:\projects\your-workspace' with your preferred path)
 mkdir C:\projects\your-workspace
+
+# Navigate into the newly created workspace directory
+cd C:\projects\your-workspace
 ```
 
+### 2. Clone the repository
 
-#### 2. Clone the repository
+Clone the `agentic-test-workspace` repository inside your workspace directory:
 
 ```bash
-git  clone  https://github.com/Menditect/agentic-test-workspace.git
+git clone https://github.com/Menditect/agentic-test-workspace.git
 ```
 
+### 3. Go to agentic-test-workspace directory
 
-#### 3. Go to agentic-test-workspace directory
+Navigate into the cloned repository folder:
+
 ```bash
- cd C:\projects\your-workspace\agentic-test-workspace
+cd agentic-test-workspace
 ```
 
-#### 4. Run the setup wizard
+### 4. Run the setup wizard
 
 In the directory where you cloned the repository (`agentic-test-workspace`), run:
+
 ```bash
 npm run setup
 ```
 
 The interactive script handles the full configuration in a few steps:
 
-- Project & Model Detection: Locates your Mendix .mpr file, detects the Studio Pro version, and downloads mxcli.
-- MTA & Instance Setup: Scans your project for existing MTA application instances, configures connection settings, and isolates secrets into a local .env file.
-- Skills & AI Scaffolding: Downloads the latest test skills (Menditect/agentic-test-skills) and generates configuration files for IDEs like Cursor, VS Code, and Claude.
-- Optional Code Indexing: Offers to build a local project catalog (.mxcli/catalog.db) for deep code search and dependency analysis.
+- **Workspace & Model Detection**: Locates your Mendix `.mpr` file, detects Studio Pro version, and downloads `mxcli`.
+- **Model Inspection Source**: Lets you select between `mxcli` (standalone offline engine) or `Studio Pro MCP` (live IDE integration), while using `mxcli` in the background for project analysis.
+- **MTA & Instance Setup**: Scans your project for existing MTA application instances, configures connection settings, and isolates secrets into a local `.env` file.
+- **Skills & AI Scaffolding**: Downloads the latest test skills (`Menditect/agentic-test-skills`) and generates configuration files for IDEs like Cursor, VS Code, Claude, and Antigravity.
+- **Optional Code Indexing**: Offers to build a local project catalog (`.mxcli/catalog.db`) for deep code search and dependency analysis.
 
-#### 5. Open the workspace in your AI IDE
+### 5. Open the workspace in your AI IDE
 
-Open the selected workspace folder in your AI IDE (Cursor, Claude Code, GitHub Copilot, or Antigravity/Gemini).  The MCP server configuration is **specific to your chosen AI assistant and IDE environment** (e.g., Cursor, VS Code, Claude Code, Cline, etc.).
+Open the selected workspace folder in your AI IDE (Cursor, Claude Code, GitHub Copilot, or Antigravity/Gemini). The MCP server configuration is **specific to your chosen AI assistant and IDE environment** (e.g., Cursor, VS Code, Claude Code, Cline, etc.).
+
+#### Studio Pro MCP Configuration (Optional)
+
+If you selected **Studio Pro MCP** during setup to enable live in-memory model inspection:
+1. Open your Mendix project in **Mendix Studio Pro** (version **11.12+** required).
+2. In Studio Pro, go to **Edit > Preferences** (or **Settings**) and enable the **MCP Server**.
+3. Confirm the port/URL matches `http://localhost:7782/mcp` (or your configured port).
+4. Keep Studio Pro running with your project open while your AI assistant is active.
+*(Note: The setup wizard automatically writes `studiopro_mcp_url` into `mta_config.json`, `.env`, and your IDE MCP configuration files).*
 
 To connect your agent to MTA and the MTA Plugin, you can choose between two approaches:
 
@@ -98,6 +132,8 @@ Configure your assistant's MCP client using the connection details specified in 
 * **MTA Runtime Plugin Server (`mta_plugin`):**
   - **Endpoint / URL:** Value of `plugin_mcp_url` (e.g. `http://localhost:8081/plugin/mcp`)
   - **Headers:** `Authorization: <PLUGIN_MCP_TOKEN>` *(if configured)*
+* **Studio Pro MCP Server (`StudioPro` - optional):**
+  - **Endpoint / URL:** Value of `studiopro_mcp_url` (e.g. `http://localhost:7782/mcp`)
 
 
 ## Synchronization & updates

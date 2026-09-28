@@ -4,6 +4,7 @@ This page lists all the releases of the Menditect Agent Workspace Template, with
 
 | Release Version | Date | Key Highlights / Release Message |
 | :--- | :--- | :--- |
+| [v1.8.5](releases/v1.8.5.md) | 2026-09-28 | improved support for studiopro MCP |
 | [v1.8.4](releases/v1.8.4.md) | 2026-09-25 | align global Antigravity MCP paths and populate environment variables in setup |
 | [v1.8.3](releases/v1.8.3.md) | 2026-09-25 | preserve exact token string formatting and prioritize active workspace environment |
 | [v1.8.2](releases/v1.8.2.md) | 2026-09-25 | fixed error in authentication header and force native mcp execution |

@@ -51,6 +51,7 @@ function normalizeConfigAliases(cfg) {
   normalized.execution_plans_dir = cfg.execution_plans_dir || (cfg.mta_output_path ? path.join(cfg.mta_output_path, 'execution-plans') : '');
   normalized.playwright_viewer_url = cfg.playwright_viewer_url || cfg.playwrightViewerUrl || '';
   normalized.tracefile_base_url = cfg.tracefile_base_url || cfg.tracefileBaseUrl || cfg.tracefile_url || '';
+  normalized.studiopro_mcp_url = cfg.studiopro_mcp_url || cfg.studioproMcpUrl || cfg.studio_pro_mcp_url || '';
   return normalized;
 }
 
@@ -578,7 +579,7 @@ function mergeJsonFile(filePath, updater) {
   fs.writeFileSync(filePath, JSON.stringify(updated, null, 2), 'utf8');
 }
 
-function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl, appName, mtaAuthHeader, pluginToken, defaultInstanceToken, pluginUrl) {
+function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl, appName, mtaAuthHeader, pluginToken, defaultInstanceToken, pluginUrl, studioproMcpUrl) {
   const isToolsWorkspace = path.resolve(workspaceDir) === path.resolve(toolsRootDir);
   const isParentWorkspace = path.resolve(workspaceDir) === path.resolve(toolsRootDir, '..');
   const toolsDirName = path.basename(toolsRootDir);
@@ -615,9 +616,11 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
   if (mcpSource === 'studiopro') {
     newMcpServers['StudioPro'] = {
       "command": "node",
-      "args": [proxyScriptPath, "studiopro"]
+      "args": [proxyScriptPath, "studiopro"],
+      "env": {
+        "MTA_CONFIG_PATH": mtaConfigEnvPath
+      }
     };
-    console.log('Note: Studio Pro MCP defaults to port 7782. Edit generated IDE configs if your port differs.');
   }
 
   // 1. VS Code .vscode/mcp.json (merge servers)
@@ -712,6 +715,16 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
     }
   };
 
+  if (mcpSource === 'studiopro') {
+    globalMcpServers['StudioPro'] = {
+      "command": "node",
+      "args": [globalProxyPath, "studiopro"],
+      "env": {
+        "MTA_CONFIG_PATH": path.join(workspaceDir, 'mta_config.json').replace(/\\/g, '/')
+      }
+    };
+  }
+
   for (const cfgPath of antigravityConfigPaths) {
     if (fs.existsSync(cfgPath) || cfgPath.includes(path.join('.gemini', 'config'))) {
       const dir = path.dirname(cfgPath);
@@ -751,6 +764,17 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
         }
       }
     };
+
+    if (mcpSource === 'studiopro') {
+      globalMcpServers['StudioPro'] = {
+        "command": "node",
+        "args": [globalProxyPath, "studiopro"],
+        "env": {
+          "MTA_CONFIG_PATH": path.join(workspaceDir, 'mta_config.json').replace(/\\/g, '/')
+        }
+      };
+    }
+
     mergeJsonFile(claudeDesktopPath, (existing) => {
       return {
         ...existing,
@@ -981,7 +1005,8 @@ async function run(options = {}) {
   console.log('     or type a new value and press [Enter].\n');
 
   // 1. Detailed breakdown of files & Git impact before choosing workspace
-  console.log('Choose how you want to structure your Agentic Testing Workspace:\n');
+  console.log('Choose how you want to structure your Agentic Testing Workspace:');
+  console.log('(The workspace is the dedicated project environment where your AI agent operates with skills, MCP tools, and test plans)\n');
 
   console.log('[1] Dedicated Tools Workspace (Recommended)');
   console.log('    ★ ADVANTAGE: Keeps your Mendix project Git 100% clean and untouched.');
@@ -1037,16 +1062,15 @@ async function run(options = {}) {
   }
 
   // 2b. Model Inspection Source Selection
-  console.log('\n--- Model Inspection Source ---');
-  console.log('Documentation: https://www.mxcli.org/');
-  console.log('Choose how the AI inspects your Mendix model:\n');
+  console.log('\n--- Model Inspection Source (AI Assistant) ---');
+  console.log('Choose how the AI assistant inspects your Mendix model inside your IDE:\n');
   console.log('  [1] mxcli (Recommended / Standalone):');
   console.log('      Reads your .mpr file directly from disk. Fast, works offline, and does NOT');
   console.log('      require Mendix Studio Pro to be open. Best for headless agents and CI/CD.');
   console.log('      (Documentation: https://www.mxcli.org/)');
   console.log('  [2] Studio Pro MCP (Live IDE):');
   console.log('      Connects live to an open Studio Pro session (port 7782, requires Mendix 11.12+).');
-  console.log('      Use this if you want the AI to interact with live in-memory changes while you work.\n');
+  console.log('      Enables the AI to inspect live in-memory changes while you work in Studio Pro.\n');
 
   let defaultModelChoice = existingConfig.model_source === 'studiopro' ? '2' : '1';
   let modelSource = '';
@@ -1058,15 +1082,31 @@ async function run(options = {}) {
   }
   const mcpSource = modelSource === '2' ? 'studiopro' : 'mxcli';
 
-  // 2c. mxcli Search Index Options
+  let studioproMcpUrl = '';
+  if (mcpSource === 'studiopro') {
+    const defaultStudioUrl = existingConfig.studiopro_mcp_url || process.env.STUDIOPRO_MCP_URL || 'http://localhost:7782/mcp';
+    studioproMcpUrl = await ask('Studio Pro MCP URL (port configured in Studio Pro Preferences)', defaultStudioUrl);
 
+    console.log('\n┌──────────────────────────────────────────────────────────────────────────┐');
+    console.log('│ ACTION REQUIRED IN MENDIX STUDIO PRO:                                    │');
+    console.log('│ 1. Open this project in Mendix Studio Pro (version 11.12+ required).     │');
+    console.log('│ 2. In Studio Pro, go to Edit > Preferences and enable the MCP Server.    │');
+    console.log(`│ 3. Confirm the port/URL matches: ${(studioproMcpUrl || 'http://localhost:7782/mcp').padEnd(39)} │`);
+    console.log('│ 4. Keep Studio Pro running with this project while using your AI agent.  │');
+    console.log('└──────────────────────────────────────────────────────────────────────────┘\n');
 
+    console.log('[INFO] Studio Pro MCP configured for your IDE AI assistant.');
+    console.log('[INFO] Note: The setup wizard will continue using mxcli in the background to inspect');
+    console.log('       project configurations, discover MTA settings, and prepare workspace scaffolding.');
+  }
+
+  // 2c. Mendix Project Search Index Options
   let catalogChoice = 'fast';
   if (mprPath && fs.existsSync(mprPath)) {
     console.log('\n--- Mendix Project Search Index (.mxcli/catalog.db) ---');
-    console.log('mxcli can create a local SQLite database index of your Mendix app.');
+    console.log('mxcli can create an optional local SQLite database index of your Mendix app.');
     console.log('This enables the AI assistant to instantly search your domain model, microflows,');
-    console.log('pages, and caller/callee dependencies offline without opening Studio Pro.');
+    console.log('pages, and caller/callee dependencies offline without putting load on Studio Pro.');
     console.log('Documentation: https://www.mxcli.org/\n');
     console.log('Indexing options:');
     console.log('  [1] Fast (Recommended - seconds):');
@@ -1353,6 +1393,9 @@ async function run(options = {}) {
     mendix_project_dir: projectDir,
     mendix_mpr_path: mprPath
   };
+  if (studioproMcpUrl) {
+    config.studiopro_mcp_url = studioproMcpUrl;
+  }
 
   // Cloned Repository Immutability Rule: If workspaceDir is separate from toolsRootDir,
   // write mta_config.json exclusively to workspaceDir, keeping toolsRootDir git worktree clean.
@@ -1387,6 +1430,10 @@ MTA_OUTPUT_PATH="${menditectOutputDir.replace(/\\/g, '/')}"
 MTA_APP_INSTANCE_TOKEN="${defaultInstanceToken}"
 MTA_APP_INSTANCE_DEFAULT="${defaultInstanceName}"
 `;
+
+  if (studioproMcpUrl) {
+    envContent += `STUDIOPRO_MCP_URL="${studioproMcpUrl}"\n`;
+  }
 
   for (const inst of appInstances) {
     const safeEnvName = inst.name.replace(/[^a-zA-Z0-9_]/g, '_').toUpperCase();
@@ -1428,7 +1475,7 @@ MTA_APP_INSTANCE_DEFAULT="${defaultInstanceName}"
   }
 
   // 10. Generate & Merge IDE Configs
-  generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl, appName, mtaAuthHeader, pluginToken, defaultInstanceToken, pluginUrl);
+  generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl, appName, mtaAuthHeader, pluginToken, defaultInstanceToken, pluginUrl, studioproMcpUrl);
 
   // 11. Deploy local mxcli runners into workspace
   deployMxcliWrappers(workspaceDir, mprPath);

@@ -146,6 +146,11 @@
       "enum": ["mxcli", "studiopro"],
       "description": "Model discovery mechanism used by the agent ('mxcli' or 'studiopro')."
     },
+    "studiopro_mcp_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "MCP endpoint URL for the Mendix Studio Pro MCP server (e.g. 'http://localhost:7782/mcp')."
+    },
     "mendix_project_dir": {
       "type": "string",
       "description": "Absolute path to the Mendix project directory."
