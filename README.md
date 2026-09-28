@@ -102,6 +102,12 @@ The interactive script handles the full configuration in a few steps:
 - **Skills & AI Scaffolding**: Downloads the latest test skills (`Menditect/agentic-test-skills`) and generates configuration files for IDEs like Cursor, VS Code, Claude, and Antigravity.
 - **Optional Code Indexing**: Offers to build a local project catalog (`.mxcli/catalog.db`) for deep code search and dependency analysis.
 
+> [!TIP]
+> **Wizard Navigation**:
+> - Press **[Enter]** to accept the detected/default value in brackets `[value]`.
+> - Type **`b`** or **`back`** at any prompt to return to the previous question and change your answer.
+> - A numbered **Configuration Summary & Review** is presented before any files are saved, allowing you to review and jump directly to any setting to edit it.
+
 ### 5. Open the workspace in your AI IDE
 
 Open the selected workspace folder in your AI IDE (Cursor, Claude Code, GitHub Copilot, or Antigravity/Gemini). The MCP server configuration is **specific to your chosen AI assistant and IDE environment** (e.g., Cursor, VS Code, Claude Code, Cline, etc.).
@@ -134,6 +140,15 @@ Configure your assistant's MCP client using the connection details specified in 
   - **Headers:** `Authorization: <PLUGIN_MCP_TOKEN>` *(if configured)*
 * **Studio Pro MCP Server (`StudioPro` - optional):**
   - **Endpoint / URL:** Value of `studiopro_mcp_url` (e.g. `http://localhost:7782/mcp`)
+
+### Troubleshooting
+
+#### Java Runtime Errors with MTA Plugin
+If you encounter Java runtime, compilation, or classloading errors (e.g., `ClassNotFoundException`, `NoClassDefFoundError`, or duplicate `.jar` conflicts) when running your Mendix application with the MTA Plugin:
+1. Open your local Mendix project directory in your file explorer.
+2. Navigate to the `userlib/` directory and remove any older or conflicting MTA Plugin `.jar` files (e.g., `mta-plugin-*.jar`).
+3. In Mendix Studio Pro, go to **App > Clean Deployment Directory** (or **Project > Clean Deployment Directory**).
+4. Restart and run your Mendix application from Studio Pro.
 
 
 ## Synchronization & updates
