@@ -141,15 +141,6 @@ Configure your assistant's MCP client using the connection details specified in 
 * **Studio Pro MCP Server (`StudioPro` - optional):**
   - **Endpoint / URL:** Value of `studiopro_mcp_url` (e.g. `http://localhost:7782/mcp`)
 
-### Troubleshooting
-
-#### Java Runtime Errors with MTA Plugin
-If you encounter Java runtime, compilation, or classloading errors (e.g., `ClassNotFoundException`, `NoClassDefFoundError`, or duplicate `.jar` conflicts) when running your Mendix application with the MTA Plugin:
-1. Open your local Mendix project directory in your file explorer.
-2. Navigate to the `userlib/` directory and remove any older or conflicting MTA Plugin `.jar` files (e.g., `mta-plugin-*.jar`).
-3. In Mendix Studio Pro, go to **App > Clean Deployment Directory** (or **Project > Clean Deployment Directory**).
-4. Restart and run your Mendix application from Studio Pro.
-
 
 ## Synchronization & updates
 
