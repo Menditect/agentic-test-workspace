@@ -452,6 +452,20 @@ async function buildProjectCatalog(mprPath, optionalBin, options = {}) {
   });
 }
 
+async function getOrDownloadMxcli(mprPath) {
+  let mxcliBin = findMxcliBinary(mprPath);
+  if (!mxcliBin) {
+    try {
+      const { syncMxcli } = require('./sync-upstream');
+      const downloaded = await syncMxcli();
+      if (downloaded) {
+        mxcliBin = findMxcliBinary(mprPath);
+      }
+    } catch (e) {}
+  }
+  return mxcliBin;
+}
+
 function inspectMendixMtaSettings(mprPath, optionalBin) {
   if (!mprPath || !fs.existsSync(mprPath)) return null;
 
@@ -468,19 +482,20 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
     const configMap = new Map();
 
     // 1. Parse configuration blocks to capture HttpPortNumber / ApplicationRootUrl per configuration
-    const configBlockRegex = /create or modify configuration '([^']+)'([\s\S]*?);/g;
+    // Supports both 'create or modify configuration' and 'alter settings configuration'
+    const configBlockRegex = /(?:create\s+or\s+modify|alter\s+settings)\s+configuration\s+'([^']+)'([\s\S]*?);/gi;
     let cMatch;
     while ((cMatch = configBlockRegex.exec(output)) !== null) {
       const cfgName = cMatch[1];
       const body = cMatch[2];
       let port = null;
-      const portMatch = body.match(/HttpPortNumber\s*=\s*(\d+)/);
+      const portMatch = body.match(/HttpPortNumber\s*=\s*(\d+)/i);
       if (portMatch) {
         port = portMatch[1].trim();
       }
 
       let runtimeUrl = null;
-      const rootUrlMatch = body.match(/ApplicationRootUrl\s*=\s*'([^']+)'/);
+      const rootUrlMatch = body.match(/ApplicationRootUrl\s*=\s*'([^']+)'/i);
       if (rootUrlMatch && rootUrlMatch[1] && rootUrlMatch[1].trim()) {
         runtimeUrl = rootUrlMatch[1].trim();
       } else if (port) {
@@ -504,7 +519,7 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
     }
 
     // 2. Parse alter settings constant ... in configuration '...'
-    const constRegex = /alter settings constant '([^']+)'\s+value\s+'([^']*)'\s+in configuration '([^']+)';/g;
+    const constRegex = /alter\s+settings\s+constant\s+'([^']+)'\s+value\s+'([^']*)'[\s\S]*?in\s+configuration\s+'([^']+)';/gi;
     let constMatch;
     while ((constMatch = constRegex.exec(output)) !== null) {
       const [_, constantName, rawVal, configName] = constMatch;
@@ -521,37 +536,37 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
         });
       }
       const entry = configMap.get(configName);
-      if (constantName.includes('ApplicationInstanceToken') && val) {
+      if (constantName.toLowerCase().includes('applicationinstancetoken') && val) {
         entry.token = val;
-      } else if (constantName.includes('MTAConnectionUrl') && val) {
+      } else if (constantName.toLowerCase().includes('mtaconnectionurl') && val) {
         entry.mtaUrl = val.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
-      } else if (constantName.includes('McpServerAccessToken') && val) {
+      } else if (constantName.toLowerCase().includes('mcpserveraccesstoken') && val) {
         entry.pluginToken = formatBearerToken(val);
       }
     }
 
     // 3. Global fallbacks if not defined on a specific configuration
     let globalMtaUrl = null;
-    const globalUrlMatch = output.match(/alter settings constant 'MtaPluginModule\.MTAConnectionUrl'\s+value\s+'([^']*)'/);
+    const globalUrlMatch = output.match(/alter\s+settings\s+constant\s+'(?:[^']+\.)?MTAConnectionUrl'\s+value\s+'([^']*)'/i);
     if (globalUrlMatch && globalUrlMatch[1] && globalUrlMatch[1].trim()) {
       globalMtaUrl = globalUrlMatch[1].trim().replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
     }
 
     let globalPluginToken = null;
-    const globalTokenMatch = output.match(/alter settings constant 'MtaPluginModule\.McpServerAccessToken'\s+value\s+'([^']*)'/);
+    const globalTokenMatch = output.match(/alter\s+settings\s+constant\s+'(?:[^']+\.)?McpServerAccessToken'\s+value\s+'([^']*)'/i);
     if (globalTokenMatch && globalTokenMatch[1] && globalTokenMatch[1].trim()) {
       globalPluginToken = formatBearerToken(globalTokenMatch[1].trim());
     }
 
     let globalPort = null;
-    const globalPortMatch = output.match(/HttpPortNumber\s*=\s*(\d+)/);
+    const globalPortMatch = output.match(/HttpPortNumber\s*=\s*(\d+)/i);
     if (globalPortMatch && globalPortMatch[1]) {
       globalPort = globalPortMatch[1].trim();
     }
 
     let globalRuntimeUrl = null;
     let globalPluginUrl = null;
-    const globalRootUrlMatch = output.match(/ApplicationRootUrl\s*=\s*'([^']+)'/);
+    const globalRootUrlMatch = output.match(/ApplicationRootUrl\s*=\s*'([^']+)'/i);
     if (globalRootUrlMatch && globalRootUrlMatch[1] && globalRootUrlMatch[1].trim()) {
       globalRuntimeUrl = globalRootUrlMatch[1].trim();
       globalPluginUrl = globalRuntimeUrl.replace(/\/+$/, '') + '/plugin/mcp';
@@ -1107,8 +1122,8 @@ async function run(options = {}) {
               console.log(`Note: Mendix ${state.detectedVersion} is below 11.12. Module-level skills require Mendix 11.12 or higher.`);
             }
           }
-          if (!state.discoveredMta) {
-            const mxcliBin = findMxcliBinary(state.mprPath);
+          if (state.mprPath) {
+            const mxcliBin = await getOrDownloadMxcli(state.mprPath);
             if (mxcliBin) {
               process.stdout.write('Checking Mendix project for configured MTA settings via mxcli... ');
               state.discoveredMta = inspectMendixMtaSettings(state.mprPath, mxcliBin);
@@ -1222,6 +1237,13 @@ async function run(options = {}) {
     } else if (currentStep === 'mta_instances') {
       console.log('\n--- MTA Connection & Application Instances ---');
       let stepSubBack = false;
+
+      if ((!state.discoveredMta || !state.discoveredMta.instances || state.discoveredMta.instances.length === 0) && state.mprPath) {
+        const mxcliBin = await getOrDownloadMxcli(state.mprPath);
+        if (mxcliBin) {
+          state.discoveredMta = inspectMendixMtaSettings(state.mprPath, mxcliBin);
+        }
+      }
 
       if (state.discoveredMta && state.discoveredMta.instances && state.discoveredMta.instances.length > 0) {
         state.appInstances = state.discoveredMta.instances;
