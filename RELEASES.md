@@ -4,6 +4,7 @@ This page lists all the releases of the Menditect Agent Workspace Template, with
 
 | Release Version | Date | Key Highlights / Release Message |
 | :--- | :--- | :--- |
+| [v1.9.1](releases/v1.9.1.md) | 2026-09-29 | improved documentation in script and verify mode |
 | [v1.9.0](releases/v1.9.0.md) | 2026-09-28 | improved navigation in script |
 | [v1.8.5](releases/v1.8.5.md) | 2026-09-28 | improved support for studiopro MCP |
 | [v1.8.4](releases/v1.8.4.md) | 2026-09-25 | align global Antigravity MCP paths and populate environment variables in setup |

@@ -11,6 +11,19 @@ try {
   if (pkg.version) scriptVersion = ` (v${pkg.version})`;
 } catch (e) {}
 
+const colors = {
+  reset: '\x1b[0m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  cyan: '\x1b[36m',
+  bold: '\x1b[1m'
+};
+
+const PASS = `${colors.green}[PASS]${colors.reset}`;
+const FAIL = `${colors.red}[FAIL]${colors.reset}`;
+const WARN = `${colors.yellow}[WARN]${colors.reset}`;
+
 function loadEnvFile(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return;
   try {
@@ -162,11 +175,11 @@ function checkSchemaContractAlignment() {
       try {
         const upstream = JSON.parse(fs.readFileSync(candidate.path, 'utf8'));
         if (upstream.version && localVersion !== upstream.version) {
-          console.warn(`[WARN] Contract version mismatch: mta_config.schema.json is v${localVersion}, but ${candidate.name} is v${upstream.version}!`);
+          console.warn(`${WARN} Contract version mismatch: mta_config.schema.json is v${localVersion}, but ${candidate.name} is v${upstream.version}!`);
           console.warn(`       mta_config contract version must match agentic-test-skills. Run "npm run update:skills" to align.`);
           return false;
         } else if (upstream.version) {
-          console.log(`[PASS] mta_config schema contract (v${localVersion}) is aligned with ${candidate.name}.`);
+          console.log(`${PASS} mta_config schema contract (v${localVersion}) is aligned with ${candidate.name}.`);
           return true;
         }
       } catch (e) {}
@@ -182,7 +195,7 @@ function checkSkillsPresence() {
   console.log('Checking MTA skills presence...');
 
   if (!fs.existsSync(skillsDir)) {
-    console.warn(`  [WARN] Skills directory not found at ${skillsDir}. Run "npm run update:skills" to download MTA skills.`);
+    console.warn(`  ${WARN} Skills directory not found at ${skillsDir}. Run "npm run update:skills" to download MTA skills.`);
     return false;
   }
 
@@ -191,13 +204,13 @@ function checkSkillsPresence() {
   const foundSkills = expectedSkills.filter(skill => fs.existsSync(path.join(skillsDir, skill)));
 
   if (hasAgents && foundSkills.length === expectedSkills.length) {
-    console.log(`  [PASS] MTA skills are active in ${skillsDir} (orchestrator + ${foundSkills.length} domain skills present).`);
+    console.log(`  ${PASS} MTA skills are active in ${skillsDir} (orchestrator + ${foundSkills.length} domain skills present).`);
     return true;
   } else if (foundSkills.length > 0) {
-    console.warn(`  [WARN] Partial MTA skills detected in ${skillsDir} (${foundSkills.length}/${expectedSkills.length}). Run "npm run update:skills" to align.`);
+    console.warn(`  ${WARN} Partial MTA skills detected in ${skillsDir} (${foundSkills.length}/${expectedSkills.length}). Run "npm run update:skills" to align.`);
     return false;
   } else {
-    console.warn(`  [WARN] No MTA skills detected in ${skillsDir}. Run "npm run update:skills" to download them.`);
+    console.warn(`  ${WARN} No MTA skills detected in ${skillsDir}. Run "npm run update:skills" to download them.`);
     return false;
   }
 }
@@ -208,7 +221,7 @@ function checkMxcliBinary() {
   const binPath = path.join(toolsRootDir, 'bin', binName);
 
   if (!fs.existsSync(binPath)) {
-    console.warn(`[WARN] mxcli binary not found at ${binPath}. Run "npm run update:mxcli" to install it.`);
+    console.warn(`${WARN} mxcli binary not found at ${binPath}. Run "npm run update:mxcli" to install it.`);
     return false;
   }
 
@@ -218,19 +231,19 @@ function checkMxcliBinary() {
       stdio: ['pipe', 'pipe', 'ignore'],
       timeout: 5000
     }).trim();
-    console.log(`[PASS] mxcli binary is ready (${versionOut}).`);
+    console.log(`${PASS} mxcli binary is ready (${versionOut}).`);
 
     // Check if mxcli AI scaffolding (.ai-context) is initialized
     const targetDir = config.workspace_dir || toolsRootDir;
     const aiContextPath = path.join(targetDir, '.ai-context');
     const dotMxcliPath = path.join(targetDir, '.mxcli');
     if (fs.existsSync(aiContextPath)) {
-      console.log(`[PASS] mxcli AI scaffolding is initialized (.ai-context/skills/).`);
+      console.log(`${PASS} mxcli AI scaffolding is initialized (.ai-context/skills/).`);
     } else {
       console.log(`[NOTICE] mxcli AI scaffolding not initialized in ${targetDir}. Run "npm run setup" to initialize skills and context.`);
     }
     if (fs.existsSync(dotMxcliPath)) {
-      console.log(`[PASS] Local mxcli working directory is present (.mxcli/).`);
+      console.log(`${PASS} Local mxcli working directory is present (.mxcli/).`);
     }
 
     // Check if Mendix project catalog (.mxcli/catalog.db) is populated
@@ -243,18 +256,18 @@ function checkMxcliBinary() {
           if (stats.size > 0) {
             const sizeMb = (stats.size / (1024 * 1024)).toFixed(2);
             const mtime = stats.mtime.toISOString().replace('T', ' ').substring(0, 19);
-            console.log(`[PASS] Mendix project catalog is active (.mxcli/catalog.db, ${sizeMb} MB, modified ${mtime}).`);
+            console.log(`${PASS} Mendix project catalog is active (.mxcli/catalog.db, ${sizeMb} MB, modified ${mtime}).`);
           } else {
-            console.warn(`[WARN] Mendix project catalog exists but is empty (0 bytes) at ${catalogDbPath}.`);
+            console.warn(`${WARN} Mendix project catalog exists but is empty (0 bytes) at ${catalogDbPath}.`);
             console.warn(`       MTA test analysis and code search require the project catalog.`);
             console.warn(`       To populate: ./mxcli -c "REFRESH CATALOG SOURCE FORCE;"`);
             console.warn(`       (Note: On large projects, source extraction may take multiple minutes to 1 hour).`);
           }
         } catch (e) {
-          console.warn(`[WARN] Unable to inspect catalog.db: ${e.message}`);
+          console.warn(`${WARN} Unable to inspect catalog.db: ${e.message}`);
         }
       } else {
-        console.warn(`[WARN] Mendix project catalog is not built (.mxcli/catalog.db not found in ${mendixDir}).`);
+        console.warn(`${WARN} Mendix project catalog is not built (.mxcli/catalog.db not found in ${mendixDir}).`);
         console.warn(`       MTA test analysis and code search require the project catalog.`);
         console.warn(`       To generate: ./mxcli -c "REFRESH CATALOG SOURCE FORCE;"`);
         console.warn(`       (Note: On large projects, source extraction may take multiple minutes to 1 hour).`);
@@ -263,7 +276,7 @@ function checkMxcliBinary() {
 
     return true;
   } catch (e) {
-    console.warn(`[WARN] mxcli binary present at ${binPath} but failed execution check: ${e.message}`);
+    console.warn(`${WARN} mxcli binary present at ${binPath} but failed execution check: ${e.message}`);
     return false;
   }
 }
@@ -277,7 +290,7 @@ function checkTokenPreflight(mode) {
       console.log('[INFO] Identification token for a service account is configured.');
       const rawToken = hasToken.replace(/^Bearer\s+/i, '').trim();
       if (rawToken.length < 28) {
-        console.warn(`  [WARN] Configured MTA token is shorter than 28 characters (${rawToken.length} chars: "${rawToken}").`);
+        console.warn(`  ${WARN} Configured MTA token is shorter than 28 characters (${rawToken.length} chars: "${rawToken}").`);
         console.warn('         MTA Cloud service account tokens are long tokens generated in MTA Service Account Manager.');
         console.warn('         If you do not have an MTA license/token, leave MTA_MCP_AUTH_HEADER empty in .env to use free exploratory testing.');
       }
@@ -285,7 +298,7 @@ function checkTokenPreflight(mode) {
   } else if (mode === 'plugin') {
     const hasToken = process.env.PLUGIN_MCP_TOKEN || (config.plugin_mcp_token && config.plugin_mcp_token.trim());
     if (!hasToken) {
-      console.warn('[WARN] No Plugin token configured in .env or PLUGIN_MCP_TOKEN (recommended: Bearer <token>).');
+      console.warn(`${WARN} No Plugin token configured in .env or PLUGIN_MCP_TOKEN (recommended: Bearer <token>).`);
     } else {
       console.log('[INFO] Plugin token is configured.');
     }
@@ -304,9 +317,9 @@ function checkSecurityHygiene() {
     try {
       const settingsContent = fs.readFileSync(settingsPath, 'utf8');
       if (settingsContent.includes('MTA_MCP_AUTH_HEADER') || settingsContent.includes('PLUGIN_MCP_TOKEN')) {
-        console.warn('  [WARN] Sensitive tokens detected in .vscode/settings.json! Run "npm run setup" to migrate them to .env and clean settings.json.');
+        console.warn(`  ${WARN} Sensitive tokens detected in .vscode/settings.json! Run "npm run setup" to migrate them to .env and clean settings.json.`);
       } else {
-        console.log('  [PASS] .vscode/settings.json contains no sensitive tokens.');
+        console.log(`  ${PASS} .vscode/settings.json contains no sensitive tokens.`);
       }
     } catch (e) {}
   }
@@ -333,12 +346,12 @@ function checkSecurityHygiene() {
           const argsStr = JSON.stringify(srvDef.args || []);
           if (/bearer\s+/i.test(argsStr)) {
             mcpHygienePassed = false;
-            console.warn(`  [WARN] ${item.label} (${srvName}) contains hardcoded tokens in args!`);
+            console.warn(`  ${WARN} ${item.label} (${srvName}) contains hardcoded tokens in args!`);
             console.warn(`         Tokens should be stored in .env. Run "npm run setup" to sanitize.`);
           }
           if (argsStr.includes('mta-ai-assistant')) {
             mcpHygienePassed = false;
-            console.warn(`  [WARN] ${item.label} (${srvName}) references outdated proxy path 'mta-ai-assistant'.`);
+            console.warn(`  ${WARN} ${item.label} (${srvName}) references outdated proxy path 'mta-ai-assistant'.`);
             console.warn(`         Run "npm run setup" to update proxy references.`);
           }
         }
@@ -346,7 +359,7 @@ function checkSecurityHygiene() {
     }
   }
   if (mcpHygienePassed) {
-    console.log('  [PASS] IDE MCP configurations contain no hardcoded tokens or outdated proxy paths.');
+    console.log(`  ${PASS} IDE MCP configurations contain no hardcoded tokens or outdated proxy paths.`);
   }
 
   // 3. Check .env gitignore status
@@ -358,12 +371,12 @@ function checkSecurityHygiene() {
       const lines = gitIgnoreContent.split(/\r?\n/).map(l => l.trim());
       const hasEnv = lines.some(l => l === '.env' || l === '*.env' || l.startsWith('.env'));
       if (hasEnv) {
-        console.log('  [PASS] .env is properly protected by .gitignore.');
+        console.log(`  ${PASS} .env is properly protected by .gitignore.`);
       } else {
-        console.warn('  [WARN] .env exists in workspace but is NOT ignored in .gitignore! Add .env to .gitignore to prevent accidental commit.');
+        console.warn(`  ${WARN} .env exists in workspace but is NOT ignored in .gitignore! Add .env to .gitignore to prevent accidental commit.`);
       }
     } else {
-      console.warn('  [WARN] .env exists in workspace but no .gitignore found! Ensure credentials are not committed.');
+      console.warn(`  ${WARN} .env exists in workspace but no .gitignore found! Ensure credentials are not committed.`);
     }
   }
 
@@ -371,7 +384,7 @@ function checkSecurityHygiene() {
   if (rawConfig.mta_auth_header || rawConfig.plugin_mcp_token) {
     console.log('  [INFO] mta_config.json contains legacy auth tokens. Run "npm run setup" to decouple secrets to .env.');
   } else {
-    console.log('  [PASS] mta_config.json contains no hardcoded authentication tokens.');
+    console.log(`  ${PASS} mta_config.json contains no hardcoded authentication tokens.`);
   }
 
   // 5. Cloned Repository Immutability Rule: Verify toolsRootDir is not polluted
@@ -382,10 +395,10 @@ function checkSecurityHygiene() {
     if (fs.existsSync(path.join(rootDir, '.env.local'))) dirtyFiles.push('.env.local');
 
     if (dirtyFiles.length > 0) {
-      console.warn(`  [WARN] Cloned repository contains local workspace files (${dirtyFiles.join(', ')}).`);
+      console.warn(`  ${WARN} Cloned repository contains local workspace files (${dirtyFiles.join(', ')}).`);
       console.warn(`         To ensure clean git pulls, workspace configuration should live exclusively in ${config.workspace_dir}.`);
     } else {
-      console.log('  [PASS] Cloned agentic-test-workspace repository is clean (tools isolation verified).');
+      console.log(`  ${PASS} Cloned agentic-test-workspace repository is clean (tools isolation verified).`);
     }
   }
 }
@@ -408,14 +421,14 @@ function checkAgentDirectives() {
         const hasSsot = content.includes('ENVIRONMENT SSOT') || content.includes('mta_config.json');
         if (!hasSetup || !hasSsot) {
           allIntact = false;
-          console.warn(`  [WARN] ${item.name} is missing the Menditect Architecture Setup directives!`);
+          console.warn(`  ${WARN} ${item.name} is missing the Menditect Architecture Setup directives!`);
           console.warn(`         This can occur if "mxcli init" was executed directly.`);
           console.warn(`         Run "npm run setup:directives" to restore them immediately.`);
         } else {
-          console.log(`  [PASS] ${item.name} has Menditect directives intact.`);
+          console.log(`  ${PASS} ${item.name} has Menditect directives intact.`);
         }
       } catch (e) {
-        console.warn(`  [WARN] Could not read ${item.name}: ${e.message}`);
+        console.warn(`  ${WARN} Could not read ${item.name}: ${e.message}`);
       }
     }
   }
@@ -482,10 +495,10 @@ function checkPublicBoundaryHygiene() {
   }
 
   if (violations.length === 0) {
-    console.log('  [PASS] All public release notes, docs, and schemas correctly attribute official upstream "agentic-test-skills".');
+    console.log(`  ${PASS} All public release notes, docs, and schemas correctly attribute official upstream "agentic-test-skills".`);
     return true;
   } else {
-    console.error('  [FAIL] Public Boundary Violation: Reference to internal build repository detected:');
+    console.error(`  ${FAIL} Public Boundary Violation: Reference to internal build repository detected:`);
     for (const v of violations) {
       console.error(`    - ${v.file}:${v.line} [${v.desc}] -> "${v.snippet}"`);
     }
@@ -530,7 +543,7 @@ function checkPlaywrightTraceSettings() {
   console.log('Checking Playwright trace inspection readiness...');
   console.log(`  [INFO] Playwright Viewer URL: ${viewerUrl}`);
   if (tracefileBase) {
-    console.log(`  [PASS] Tracefile Base URL:   ${tracefileBase}`);
+    console.log(`  ${PASS} Tracefile Base URL:   ${tracefileBase}`);
   } else {
     console.log('  [NOTICE] Tracefile Base URL not configured; will fall back dynamically to mta_base_url.');
   }
@@ -575,7 +588,7 @@ function verifyMode(mode) {
       if (!res) return false;
       if (res.id === 1 && res.result && res.result.tools) {
         clearTimeout(timeout);
-        console.log(`  [PASS] ${mode} MCP Server is responding correctly (${res.result.tools.length} tools found).`);
+        console.log(`  ${PASS} ${mode} MCP Server is responding correctly (${res.result.tools.length} tools found).`);
         proc.kill();
         resolve({ success: true, offline: false, count: res.result.tools.length });
         return true;
@@ -591,18 +604,18 @@ function verifyMode(mode) {
           proc.kill();
           resolve({ success: true, offline: true, message: errMsg });
         } else if (mode === 'studiopro' && isOffline) {
-          console.warn(`  [WARN] Studio Pro MCP is offline (Studio Pro is not running on port 7782).`);
+          console.warn(`  ${WARN} Studio Pro MCP is offline (Studio Pro is not running on port 7782).`);
           proc.kill();
           resolve({ success: false, offline: true, message: errMsg });
         } else if (isMtaAuthError) {
-          console.error(`  [FAIL] MTA MCP Server Authentication Error:`);
+          console.error(`  ${FAIL} MTA MCP Server Authentication Error:`);
           console.error(`         The MTA server rejected the identification token for a service account.`);
           console.error(`         - If you have an MTA Service Account token, verify MTA_MCP_AUTH_HEADER in .env.`);
           console.error(`         - If you do not have an MTA license/token, leave MTA_MCP_AUTH_HEADER empty in .env to use free exploratory testing.`);
           proc.kill();
           resolve({ success: false, offline: false, message: errMsg });
         } else {
-          console.error(`  [FAIL] ${mode} MCP Server returned an error:`, errMsg);
+          console.error(`  ${FAIL} ${mode} MCP Server returned an error:`, errMsg);
           proc.kill();
           resolve({ success: false, offline: false, message: errMsg });
         }
@@ -657,13 +670,13 @@ async function run() {
 
   console.log('Checking configuration schema compliance...');
   if (!activeConfigPath) {
-    console.warn('[WARN] No mta_config.json found! Run "npm run setup" to initialize your workspace configuration.');
+    console.warn(`${WARN} No mta_config.json found! Run "npm run setup" to initialize your workspace configuration.`);
   } else {
     const schemaResult = validateConfigAgainstSchema(rawConfig);
     if (schemaResult.valid) {
-      console.log(`[PASS] mta_config.json complies with mta_config.schema.json (${activeConfigPath}).`);
+      console.log(`${PASS} mta_config.json complies with mta_config.schema.json (${activeConfigPath}).`);
     } else {
-      console.warn(`[WARN] mta_config.json (${activeConfigPath}) has schema validation warnings:`);
+      console.warn(`${WARN} mta_config.json (${activeConfigPath}) has schema validation warnings:`);
       schemaResult.errors.forEach(err => console.warn(`  - ${err}`));
     }
   }
@@ -704,9 +717,9 @@ async function run() {
   }
   
   if (mtaResult.success && pluginResult.success && spResult.success) {
-    console.log('Verification Complete. Workspace configuration and required MCP services are verified.');
+    console.log(`${colors.green}${colors.bold}Verification Complete.${colors.reset} Workspace configuration and required MCP services are verified.`);
   } else {
-    console.log('Verification Failed. Please check the errors above and ensure your .env credentials are valid.');
+    console.log(`${colors.red}${colors.bold}Verification Failed.${colors.reset} Please check the errors above and ensure your .env credentials are valid.`);
   }
 }
 

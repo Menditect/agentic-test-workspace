@@ -39,10 +39,12 @@ function ask(question, defaultVal, options = {}) {
     let promptStr;
     if (allowBack) {
       promptStr = hasDefault
-        ? `${question} [${defaultVal}] (or 'b' to go back): `
+        ? `${question} [${defaultVal}] (Press Enter to accept, or 'b' to go back): `
         : `${question} (or 'b' to go back): `;
     } else {
-      promptStr = hasDefault ? `${question} [${defaultVal}]: ` : `${question}: `;
+      promptStr = hasDefault
+        ? `${question} [${defaultVal}] (Press Enter to accept): `
+        : `${question}: `;
     }
     activeRl.question(promptStr, answer => {
       const trimmed = answer.trim();
@@ -1373,6 +1375,10 @@ async function run(options = {}) {
         nextStep = 'mta_url';
       }
     } else if (currentStep === 'mta_url') {
+      console.log('\n--- MTA URL ---');
+      console.log('Default is https://mta-trial.mendixcloud.com.');
+      console.log('*(Note: For free exploratory users, the cloud MTA URL is not relevant because all testing runs locally on your machine.');
+      console.log(' You can safely press Enter to accept the default or leave it empty.)*\n');
       const defaultMtaUrl = state.mtaUrl || state.activeConfig?.mtaUrl || state.discoveredMta?.globalMtaUrl || existingConfig.mta_base_url || 'https://mta-trial.mendixcloud.com';
       const ans = await ask('MTA URL', defaultMtaUrl);
       if (isBack(ans)) {
@@ -1382,13 +1388,14 @@ async function run(options = {}) {
         nextStep = 'mta_token';
       }
     } else if (currentStep === 'mta_token') {
-      console.log('\nIdentification token for a service account:');
-      console.log('(Required only to author test cases/suites and store test results in the MTA Cloud Portal.');
+      console.log('\n--- Identification Token for a Service Account ---');
+      console.log('Press Enter to SKIP (leave blank).');
+      console.log('*(Note: You do not need an MTA Cloud license or service account token for exploratory testing.');
+      console.log(' Required only to author test cases/suites and store test results in the MTA Cloud Portal.');
       console.log(' In the MTA Portal as ServiceAccountManager, go to Service account overview, create a ServiceAccount,');
-      console.log(' and ensure "Call MCP primitive tools = Enabled" is checked.');
-      console.log(' If you are using free exploratory testing without an MTA license, press Enter to skip.)');
+      console.log(' and ensure "Call MCP primitive tools = Enabled" is checked.)*\n');
       const defaultMtaToken = state.rawMtaToken || process.env.MTA_MCP_AUTH_HEADER || existingConfig.mta_auth_header || '';
-      const ans = await ask('Identification token for a service account (optional / press Enter to skip)', defaultMtaToken);
+      const ans = await ask('Identification token for a service account (Press Enter to skip / leave blank)', defaultMtaToken);
       if (isBack(ans)) {
         goBack = true;
       } else {
