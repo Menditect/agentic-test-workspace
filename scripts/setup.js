@@ -22,6 +22,25 @@ try {
   if (pkg.version) scriptVersion = ` (v${pkg.version})`;
 } catch (e) {}
 
+const colors = {
+  reset: '\x1b[0m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  orange: '\x1b[38;5;208m',
+  cyan: '\x1b[36m',
+  bold: '\x1b[1m'
+};
+
+const PASS = `${colors.green}[PASS]${colors.reset}`;
+const FAIL = `${colors.red}[FAIL]${colors.reset}`;
+const WARN = `${colors.yellow}[WARN]${colors.reset}`;
+const NOTICE = `${colors.orange}[NOTICE]${colors.reset}`;
+const INFO = `${colors.cyan}[INFO]${colors.reset}`;
+const FOUND = `${colors.green}[FOUND]${colors.reset}`;
+const ERROR = `${colors.red}[ERROR]${colors.reset}`;
+const RESTORE = `${colors.cyan}[RESTORE]${colors.reset}`;
+
 const BACK_ACTION = '__MTA_BACK__';
 
 function isBack(val) {
@@ -270,7 +289,7 @@ function initializeMxcli(targetDir, mprPath, optionalBin, options = {}) {
 
   const mxcliBin = optionalBin || findMxcliBinary(mprPath);
   if (!mxcliBin) {
-    console.log('[NOTICE] mxcli binary not found. Skipping mxcli init.');
+    console.log(`${NOTICE} mxcli binary not found. Skipping mxcli init.`);
     return false;
   }
 
@@ -307,7 +326,7 @@ function initializeMxcli(targetDir, mprPath, optionalBin, options = {}) {
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: 45000
       });
-      console.log(`[PASS] Initialized mxcli AI context and skills (.ai-context/skills/).`);
+      console.log(`${PASS} Initialized mxcli AI context and skills (.ai-context/skills/).`);
 
       // Restore saved custom headers if present
       if (savedCustomAgentsHeader && fs.existsSync(agentsPath)) {
@@ -332,7 +351,7 @@ function initializeMxcli(targetDir, mprPath, optionalBin, options = {}) {
               stdio: ['ignore', 'ignore', 'ignore'],
               timeout: 15000
             });
-            console.log(`[PASS] Initialized project brain architecture store (docs/brain/).`);
+            console.log(`${PASS} Initialized project brain architecture store (docs/brain/).`);
           } catch (e) {}
         }
       }
@@ -342,7 +361,7 @@ function initializeMxcli(targetDir, mprPath, optionalBin, options = {}) {
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: 30000
       });
-      console.log(`[PASS] Refreshed mxcli AI skills via --sync-skills.`);
+      console.log(`${PASS} Refreshed mxcli AI skills via --sync-skills.`);
     }
 
     // Ensure local operational working directory .mxcli exists
@@ -352,7 +371,7 @@ function initializeMxcli(targetDir, mprPath, optionalBin, options = {}) {
 
     return true;
   } catch (err) {
-    console.warn(`[WARN] Could not complete mxcli initialization in ${targetDir}: ${err.message}`);
+    console.warn(`${WARN} Could not complete mxcli initialization in ${targetDir}: ${err.message}`);
     return false;
   }
 }
@@ -362,7 +381,7 @@ async function buildProjectCatalog(mprPath, optionalBin, options = {}) {
 
   const mxcliBin = optionalBin || findMxcliBinary(mprPath);
   if (!mxcliBin) {
-    console.log('[NOTICE] mxcli binary not found. Skipping catalog build.');
+    console.log(`${NOTICE} mxcli binary not found. Skipping catalog build.`);
     return false;
   }
 
@@ -407,8 +426,8 @@ async function buildProjectCatalog(mprPath, optionalBin, options = {}) {
 
   const normalized = (choice || 'fast').toLowerCase();
   if (normalized === 'skip' || normalized === '3' || normalized.startsWith('n')) {
-    console.log('[INFO] Catalog indexing skipped.');
-    console.log('[INFO] You can build it anytime by running:');
+    console.log(`${INFO} Catalog indexing skipped.`);
+    console.log(`${INFO} You can build it anytime by running:`);
     console.log('       ./mxcli -c "REFRESH CATALOG FULL FORCE;" (fast mode) or');
     console.log('       ./mxcli -c "REFRESH CATALOG SOURCE FORCE;" (full mode)');
     return false;
@@ -435,20 +454,20 @@ async function buildProjectCatalog(mprPath, optionalBin, options = {}) {
         if (fs.existsSync(catalogDbPath)) {
           const stats = fs.statSync(catalogDbPath);
           const sizeMb = (stats.size / (1024 * 1024)).toFixed(2);
-          console.log(`\n[PASS] Catalog compiled successfully (${sizeMb} MB) at ${catalogDbPath}`);
+          console.log(`\n${PASS} Catalog compiled successfully (${sizeMb} MB) at ${catalogDbPath}`);
         } else {
-          console.log('\n[PASS] Catalog refresh command completed.');
+          console.log(`\n${PASS} Catalog refresh command completed.`);
         }
         resolve(true);
       } else {
-        console.warn(`\n[WARN] Catalog build exited with code ${code}.`);
+        console.warn(`\n${WARN} Catalog build exited with code ${code}.`);
         console.warn(`       You can retry manually via: ./mxcli -c "${commandToRun}"`);
         resolve(false);
       }
     });
 
     proc.on('error', (err) => {
-      console.warn(`\n[WARN] Failed to spawn mxcli for catalog refresh: ${err.message}`);
+      console.warn(`\n${WARN} Failed to spawn mxcli for catalog refresh: ${err.message}`);
       resolve(false);
     });
   });
@@ -1198,8 +1217,8 @@ async function run(options = {}) {
         console.log(`│ 3. Confirm the port/URL matches: ${(state.studioproMcpUrl || 'http://localhost:7782/mcp').padEnd(39)} │`);
         console.log('│ 4. Keep Studio Pro running with this project while using your AI agent.  │');
         console.log('└──────────────────────────────────────────────────────────────────────────┘\n');
-        console.log('[INFO] Studio Pro MCP configured for your IDE AI assistant.');
-        console.log('[INFO] Note: The setup wizard will continue using mxcli in the background to inspect');
+        console.log(`${INFO} Studio Pro MCP configured for your IDE AI assistant.`);
+        console.log(`  ${INFO} Note: The setup wizard will continue using mxcli in the background to inspect`);
         console.log('       project configurations, discover MTA settings, and prepare workspace scaffolding.');
         state.catalogChoice = 'skip';
         nextStep = 'mta_instances';
@@ -1249,7 +1268,7 @@ async function run(options = {}) {
 
       if (state.discoveredMta && state.discoveredMta.instances && state.discoveredMta.instances.length > 0) {
         state.appInstances = state.discoveredMta.instances;
-        console.log(`\n[FOUND] Discovered ${state.appInstances.length} App Instance Token(s) across Mendix project configurations:`);
+        console.log(`\n${FOUND} Discovered ${state.appInstances.length} App Instance Token(s) across Mendix project configurations:`);
         state.appInstances.forEach((inst, idx) => {
           const previewToken = inst.token.length > 12 ? `${inst.token.slice(0, 8)}...${inst.token.slice(-4)}` : inst.token;
           const urlInfo = inst.mtaUrl ? ` -> MTA: ${inst.mtaUrl}` : '';
@@ -1318,12 +1337,12 @@ async function run(options = {}) {
                   if (isBack(token)) { stepSubBack = true; break; }
                   token = token.trim();
                   if (!token) {
-                    console.log('[ERROR] Application instance token cannot be empty.');
+                    console.log(`${ERROR} Application instance token cannot be empty.`);
                   }
                 }
                 if (stepSubBack) break;
                 if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
-                  console.log('[NOTICE] Token does not match standard UUID format, but will be used as entered.');
+                  console.log(`${NOTICE} Token does not match standard UUID format, but will be used as entered.`);
                 }
                 newInstances.push({ name: instName, token });
               }
@@ -1352,7 +1371,7 @@ async function run(options = {}) {
             state.appInstances = [];
             state.defaultInstanceName = '';
             state.defaultInstanceToken = '';
-            console.log('[INFO] Skipped. Automated cloud test execution (ExecuteTest) is inactive.');
+            console.log(`${INFO} Skipped. Automated cloud test execution (ExecuteTest) is inactive.`);
             console.log('       Local exploratory testing remains fully available via the runtime plugin below.');
           }
         }
@@ -1401,7 +1420,7 @@ async function run(options = {}) {
       } else {
         state.rawMtaToken = ans;
         if (!state.rawMtaToken.trim()) {
-          console.log('[INFO] Identification token for a service account skipped. Cloud authoring tools will remain inactive.');
+          console.log(`${INFO} Identification token for a service account skipped. Cloud authoring tools will remain inactive.`);
         }
         nextStep = 'plugin_url';
       }
@@ -1504,7 +1523,7 @@ async function run(options = {}) {
       } else if (stepHistory.length > 0) {
         currentStep = stepHistory.pop();
       } else {
-        console.log('[INFO] Already at the first step.\n');
+        console.log(`${INFO} Already at the first step.\n`);
       }
     } else if (nextStep) {
       if (editingSingleSetting) {
@@ -1547,13 +1566,13 @@ async function run(options = {}) {
       if (detectedModule) {
         skillsDir = detectedModule;
         skillsStyle = 'mendix_module';
-        console.log(`\n[FOUND] Menditect_AgenticTestSkills module detected at:`);
+        console.log(`\n${FOUND} Menditect_AgenticTestSkills module detected at:`);
         console.log(`        ${path.relative(workspaceDir, detectedModule)}`);
         console.log(`Skills will be installed inside this module.`);
       } else {
         skillsDir = path.join(workspaceDir, 'skills');
         skillsStyle = 'standard';
-        console.log(`\n[NOTICE] Menditect_AgenticTestSkills Marketplace module was not detected in this project.`);
+        console.log(`\n${NOTICE} Menditect_AgenticTestSkills Marketplace module was not detected in this project.`);
         console.log(`Skills will be placed as project-level skills in ./skills/.`);
         console.log(`(Tip: Download Menditect_AgenticTestSkills from the Mendix Marketplace anytime,`);
         console.log(`then re-run setup to automatically relocate skills into the module.)`);
@@ -1661,19 +1680,19 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
   // Skills synchronization
   let skillsSyncSuccess = false;
   if (skipSkills) {
-    console.log('\n[NOTICE] Skipping skills synchronization (--skip-skills specified).');
+    console.log(`\n${NOTICE} Skipping skills synchronization (--skip-skills specified).`);
   } else {
     console.log('\n--- Menditect Agentic Test Skills Synchronization ---');
     try {
       const { syncSkills } = require('./sync-upstream');
       skillsSyncSuccess = await syncSkills({ config });
       if (skillsSyncSuccess) {
-        console.log(`[PASS] Upstream skills synchronized successfully into ${skillsDir}.`);
+        console.log(`${PASS} Upstream skills synchronized successfully into ${skillsDir}.`);
       } else {
-        console.warn(`[WARN] Skills synchronization did not complete. You can run "npm run update:skills" later.`);
+        console.warn(`${WARN} Skills synchronization did not complete. You can run "npm run update:skills" later.`);
       }
     } catch (err) {
-      console.warn(`[WARN] Could not automatically sync skills: ${err.message}`);
+      console.warn(`${WARN} Could not automatically sync skills: ${err.message}`);
       console.warn(`       You can sync skills manually later via "npm run update:skills".`);
     }
   }
@@ -1713,7 +1732,7 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
 
   // Verify Prompt
   console.log('--- Workspace Verification ---');
-  console.log('[WARNING] Make sure your app under test is running in Studio Pro when verifying the MCP connection!\n');
+  console.log(`${WARN} Make sure your app under test is running in Studio Pro when verifying the MCP connection!\n`);
   const doVerify = await ask('Would you like to verify MCP connectivity now? (npm run verify) (y/n)', 'y', { allowBack: false });
   
   if (doVerify.toLowerCase().startsWith('y')) {
@@ -1722,7 +1741,7 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
       const verifyScript = path.join(__dirname, 'verify-setup.js');
       execSync(`node "${verifyScript}"`, { stdio: 'inherit' });
     } catch (e) {
-      console.warn('\n[NOTICE] Verification completed with warnings or errors. You can rerun anytime via "npm run verify".');
+      console.warn(`\n${NOTICE} Verification completed with warnings or errors. You can rerun anytime via "npm run verify".`);
     }
   }
 
@@ -1792,9 +1811,9 @@ function runDirectivesOnly() {
   const defaultInstanceName = config.default_app_instance || '';
 
   const skillsDir = config.skills_dir || path.join(workspaceDir, 'skills');
-  console.log(`[RESTORE] Restoring Menditect Architecture Setup directives in ${workspaceDir}...`);
+  console.log(`${RESTORE} Restoring Menditect Architecture Setup directives in ${workspaceDir}...`);
   updateAgentDirectives(workspaceDir, appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsDir);
-  console.log(`[PASS] Agent directives successfully restored across AGENTS.md, CLAUDE.md, and GEMINI.md.`);
+  console.log(`${PASS} Agent directives successfully restored across AGENTS.md, CLAUDE.md, and GEMINI.md.`);
 }
 
 if (require.main === module) {

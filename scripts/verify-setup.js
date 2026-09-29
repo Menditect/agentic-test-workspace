@@ -16,6 +16,7 @@ const colors = {
   red: '\x1b[31m',
   green: '\x1b[32m',
   yellow: '\x1b[33m',
+  orange: '\x1b[38;5;208m',
   cyan: '\x1b[36m',
   bold: '\x1b[1m'
 };
@@ -23,6 +24,9 @@ const colors = {
 const PASS = `${colors.green}[PASS]${colors.reset}`;
 const FAIL = `${colors.red}[FAIL]${colors.reset}`;
 const WARN = `${colors.yellow}[WARN]${colors.reset}`;
+const NOTICE = `${colors.orange}[NOTICE]${colors.reset}`;
+const INFO = `${colors.cyan}[INFO]${colors.reset}`;
+const TIP = `${colors.cyan}[TIP]${colors.reset}`;
 
 function loadEnvFile(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return;
@@ -185,7 +189,7 @@ function checkSchemaContractAlignment() {
       } catch (e) {}
     }
   }
-  console.log(`[INFO] mta_config schema contract version is v${localVersion}.`);
+  console.log(`${INFO} mta_config schema contract version is v${localVersion}.`);
   return true;
 }
 
@@ -240,7 +244,7 @@ function checkMxcliBinary() {
     if (fs.existsSync(aiContextPath)) {
       console.log(`${PASS} mxcli AI scaffolding is initialized (.ai-context/skills/).`);
     } else {
-      console.log(`[NOTICE] mxcli AI scaffolding not initialized in ${targetDir}. Run "npm run setup" to initialize skills and context.`);
+      console.log(`${NOTICE} mxcli AI scaffolding not initialized in ${targetDir}. Run "npm run setup" to initialize skills and context.`);
     }
     if (fs.existsSync(dotMxcliPath)) {
       console.log(`${PASS} Local mxcli working directory is present (.mxcli/).`);
@@ -285,9 +289,9 @@ function checkTokenPreflight(mode) {
   if (mode === 'mta') {
     const hasToken = process.env.MTA_MCP_AUTH_HEADER || (process.env.MTA_MCP_TOKEN ? `Bearer ${process.env.MTA_MCP_TOKEN}` : null) || (config.mta_auth_header && config.mta_auth_header.trim());
     if (!hasToken) {
-      console.log('[INFO] No identification token for a service account configured in .env or MTA_MCP_AUTH_HEADER (optional for free exploratory testing).');
+      console.log(`${INFO} No identification token for a service account configured in .env or MTA_MCP_AUTH_HEADER (optional for free exploratory testing).`);
     } else {
-      console.log('[INFO] Identification token for a service account is configured.');
+      console.log(`${INFO} Identification token for a service account is configured.`);
       const rawToken = hasToken.replace(/^Bearer\s+/i, '').trim();
       if (rawToken.length < 28) {
         console.warn(`  ${WARN} Configured MTA token is shorter than 28 characters (${rawToken.length} chars: "${rawToken}").`);
@@ -300,10 +304,10 @@ function checkTokenPreflight(mode) {
     if (!hasToken) {
       console.warn(`${WARN} No Plugin token configured in .env or PLUGIN_MCP_TOKEN (recommended: Bearer <token>).`);
     } else {
-      console.log('[INFO] Plugin token is configured.');
+      console.log(`${INFO} Plugin token is configured.`);
     }
   } else if (mode === 'studiopro') {
-    console.log('[INFO] Studio Pro MCP does not require authentication.');
+    console.log(`${INFO} Studio Pro MCP does not require authentication.`);
   }
 }
 
@@ -382,7 +386,7 @@ function checkSecurityHygiene() {
 
   // 4. Check mta_config.json legacy tokens
   if (rawConfig.mta_auth_header || rawConfig.plugin_mcp_token) {
-    console.log('  [INFO] mta_config.json contains legacy auth tokens. Run "npm run setup" to decouple secrets to .env.');
+    console.log(`  ${INFO} mta_config.json contains legacy auth tokens. Run "npm run setup" to decouple secrets to .env.`);
   } else {
     console.log(`  ${PASS} mta_config.json contains no hardcoded authentication tokens.`);
   }
@@ -511,11 +515,11 @@ function checkAppInstances() {
   const instances = config.app_instances || [];
   const defaultToken = config.default_app_instance_token || process.env.MTA_APP_INSTANCE_TOKEN;
   if (!instances.length && !defaultToken) {
-    console.log('[INFO] No MTA App Instance Tokens configured (automated cloud ExecuteTest is inactive).');
+    console.log(`${INFO} No MTA App Instance Tokens configured (automated cloud ExecuteTest is inactive).`);
     return;
   }
   const defaultName = config.default_app_instance || (instances[0] ? instances[0].name : 'default');
-  console.log(`[INFO] Configured ${instances.length || 1} MTA App Instance Token(s). Active default: [${defaultName}].`);
+  console.log(`${INFO} Configured ${instances.length || 1} MTA App Instance Token(s). Active default: [${defaultName}].`);
 
   if (config.mendix_mpr_path && fs.existsSync(config.mendix_mpr_path) && defaultToken) {
     const toolsRootDir = path.join(__dirname, '..');
@@ -528,9 +532,9 @@ function checkAppInstances() {
           timeout: 10000
         });
         if (out.includes(defaultToken)) {
-          console.log('[INFO] Active App Instance Token matches a configuration in the Mendix project model.');
+          console.log(`  ${INFO} Active App Instance Token matches a configuration in the Mendix project model.`);
         } else {
-          console.log('[NOTICE] Active App Instance Token was not found in the Mendix project settings (it may be an external or custom instance).');
+          console.log(`  ${NOTICE} Active App Instance Token was not found in the Mendix project settings (it may be an external or custom instance).`);
         }
       } catch (e) {}
     }
@@ -541,11 +545,11 @@ function checkPlaywrightTraceSettings() {
   const viewerUrl = config.playwright_viewer_url || process.env.PLAYWRIGHT_VIEWER_URL || 'https://trace.playwright.dev/?trace=';
   const tracefileBase = config.tracefile_base_url || process.env.MTA_TRACEFILE_BASE_URL || (config.mta_base_url ? `${config.mta_base_url.replace(/\/$/, '')}/rest/private/tracefile?fileUUID=` : '');
   console.log('Checking Playwright trace inspection readiness...');
-  console.log(`  [INFO] Playwright Viewer URL: ${viewerUrl}`);
+  console.log(`  ${INFO} Playwright Viewer URL: ${viewerUrl}`);
   if (tracefileBase) {
     console.log(`  ${PASS} Tracefile Base URL:   ${tracefileBase}`);
   } else {
-    console.log('  [NOTICE] Tracefile Base URL not configured; will fall back dynamically to mta_base_url.');
+    console.log(`  ${NOTICE} Tracefile Base URL not configured; will fall back dynamically to mta_base_url.`);
   }
 }
 
@@ -553,14 +557,14 @@ function verifyMode(mode) {
   return new Promise((resolve) => {
     console.log(`Verifying ${mode} MCP server...`);
     if (mode === 'plugin') {
-      console.log('  [INFO] Note: Make sure your app under test is running in Studio Pro to verify the Plugin MCP connection.');
+      console.log(`  ${INFO} Note: Make sure your app under test is running in Studio Pro to verify the Plugin MCP connection.`);
     }
     checkTokenPreflight(mode);
 
     if (mode === 'mta') {
       const hasToken = process.env.MTA_MCP_AUTH_HEADER || (process.env.MTA_MCP_TOKEN ? `Bearer ${process.env.MTA_MCP_TOKEN}` : null) || (config.mta_auth_header && config.mta_auth_header.trim());
       if (!hasToken) {
-        console.log('  [NOTICE] Identification token for a service account is not configured (optional for free exploratory testing).');
+        console.log(`  ${NOTICE} Identification token for a service account is not configured (optional for free exploratory testing).`);
         console.log('           Cloud MTA MCP authoring tools are inactive. Local exploratory testing is enabled via Plugin MCP.');
         resolve({ success: true, offline: true, message: 'No MTA token configured; exploratory mode' });
         return;
@@ -577,7 +581,7 @@ function verifyMode(mode) {
     let timeout = setTimeout(() => {
       console.error(`Timeout waiting for ${mode} MCP server (${timeoutMs / 1000}s elapsed).`);
       if (mode === 'mta') {
-        console.error('  [TIP] Check internet connectivity to your MTA cloud instance and ensure');
+        console.error(`  ${TIP} Check internet connectivity to your MTA cloud instance and ensure`);
         console.error('        MTA_MCP_AUTH_HEADER in .env contains a valid identification token for a service account.');
       }
       proc.kill();
@@ -599,7 +603,7 @@ function verifyMode(mode) {
         const isMtaAuthError = mode === 'mta' && (errMsg.includes('MCP_server_authorize_user') || errMsg.includes('substring($TokenWithPrefix') || errMsg.includes('Authentication failed') || errMsg.includes('401') || errMsg.includes('403'));
 
         if (mode === 'plugin' && isOffline) {
-          console.log(`  [NOTICE] Plugin MCP Server is offline (Mendix app is not running locally).`);
+          console.log(`  ${NOTICE} Plugin MCP Server is offline (Mendix app is not running locally).`);
           console.log(`           Local test execution will be available when your app is running in Studio Pro.`);
           proc.kill();
           resolve({ success: true, offline: true, message: errMsg });
