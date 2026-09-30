@@ -88,6 +88,7 @@ function normalizeConfigAliases(cfg) {
   normalized.mta_base_url = cfg.mta_base_url || cfg.mta_url || cfg.mtaUrl || '';
   normalized.default_app_instance_token = cfg.default_app_instance_token || (cfg.app_instances && cfg.app_instances[0]?.token) || cfg.instance_token || '';
   normalized.execution_plans_dir = cfg.execution_plans_dir || (cfg.mta_output_path ? path.join(cfg.mta_output_path, 'execution-plans') : '');
+  normalized.exploratory_execution_mode = cfg.exploratory_execution_mode || cfg.exploratoryExecutionMode || 'auto_execute';
   normalized.playwright_viewer_url = cfg.playwright_viewer_url || cfg.playwrightViewerUrl || '';
   normalized.tracefile_base_url = cfg.tracefile_base_url || cfg.tracefileBaseUrl || cfg.tracefile_url || '';
   normalized.studiopro_mcp_url = cfg.studiopro_mcp_url || cfg.studioproMcpUrl || cfg.studio_pro_mcp_url || '';
@@ -1083,7 +1084,8 @@ async function run(options = {}) {
     mtaUrl: existingConfig.mta_base_url || '',
     rawMtaToken: process.env.MTA_MCP_AUTH_HEADER || existingConfig.mta_auth_header || '',
     pluginUrl: existingConfig.plugin_mcp_url || '',
-    rawPluginToken: process.env.PLUGIN_MCP_TOKEN || existingConfig.plugin_mcp_token || ''
+    rawPluginToken: process.env.PLUGIN_MCP_TOKEN || existingConfig.plugin_mcp_token || '',
+    exploratoryMode: existingConfig.exploratory_execution_mode || 'auto_execute'
   };
 
   let currentStep = 'workspace';
@@ -1456,6 +1458,35 @@ async function run(options = {}) {
         goBack = true;
       } else {
         state.rawPluginToken = ans;
+        nextStep = 'exploratory_mode';
+      }
+    } else if (currentStep === 'exploratory_mode') {
+      console.log('\n================================================================================');
+      console.log(' EXPLORATORY TESTING STRATEGY (MTA Runtime Plugin)');
+      console.log('================================================================================');
+      console.log(' When you ask your AI assistant to test a microflow locally via the MTA Plugin');
+      console.log(' (in-memory execution with JVM database transaction rollback):');
+      console.log('');
+      console.log(' [1] auto_execute (Default / Recommended):');
+      console.log('     • High Velocity: The AI writes the full Execution Plan (EP_*.md) to disk');
+      console.log('       and dispatches the test in a single turn (< 3 seconds total feedback).');
+      console.log('     • Safe by Design: Runs entirely inside the local Mendix JVM and rolls back');
+      console.log('       automatically; 0 database rows are modified or left behind.');
+      console.log('     • Fully Promotable: The plan is already on disk, so you can promote it');
+      console.log('       to a permanent MTA test suite at any time without re-planning.');
+      console.log('');
+      console.log(' [2] prompt_approval:');
+      console.log('     • Strict Governance: The AI writes the Execution Plan and pauses at');
+      console.log('       Checkpoint 1, waiting for your explicit approval before executing.');
+      console.log('     • Traditional 2-turn conversational flow.');
+      console.log('================================================================================\n');
+
+      const defaultModeChoice = state.exploratoryMode === 'prompt_approval' ? '2' : '1';
+      const ans = await ask('Select exploratory execution mode: [1] auto_execute (recommended), [2] prompt_approval', defaultModeChoice);
+      if (isBack(ans)) {
+        goBack = true;
+      } else {
+        state.exploratoryMode = ans.trim() === '2' ? 'prompt_approval' : 'auto_execute';
         nextStep = 'summary_review';
       }
     } else if (currentStep === 'summary_review') {
@@ -1482,15 +1513,16 @@ async function run(options = {}) {
       console.log(` [6] App Instances:      ${instanceSummary}`);
       console.log(` [7] Plugin MCP URL:     ${state.pluginUrl || '(none)'}`);
       console.log(` [8] Plugin Token:       ${pluginTokenPreview}`);
+      console.log(` [9] Exploratory Mode:   ${state.exploratoryMode === 'auto_execute' ? 'Auto-Execute (1-turn fast local testing)' : 'Prompt Approval (halt at Checkpoint 1)'}`);
       console.log('================================================================================\n');
 
       console.log('Options:');
       console.log('  • Press [Enter] or type "y" to confirm and save this configuration');
-      console.log('  • Type a number [1-8] to jump directly to and edit that setting');
+      console.log('  • Type a number [1-9] to jump directly to and edit that setting');
       console.log("  • Type 'b' to go back to the previous question");
       console.log('  • Type "n" or "abort" to exit without saving\n');
 
-      const reviewAns = await ask('Confirm and apply configuration? [Y/n/1-8]', 'y', { allowBack: false });
+      const reviewAns = await ask('Confirm and apply configuration? [Y/n/1-9]', 'y', { allowBack: false });
       const trimmed = reviewAns.trim().toLowerCase();
 
       if (trimmed === 'b' || trimmed === 'back') {
@@ -1498,7 +1530,7 @@ async function run(options = {}) {
       } else if (trimmed === 'n' || trimmed === 'no' || trimmed === 'abort' || trimmed === 'exit') {
         console.log('\nSetup aborted by user. Exiting without modifying any files.');
         process.exit(0);
-      } else if (['1', '2', '3', '4', '5', '6', '7', '8'].includes(trimmed)) {
+      } else if (['1', '2', '3', '4', '5', '6', '7', '8', '9'].includes(trimmed)) {
         editingSingleSetting = true;
         stepHistory.push('summary_review');
         if (trimmed === '1') currentStep = 'workspace';
@@ -1509,6 +1541,7 @@ async function run(options = {}) {
         else if (trimmed === '6') currentStep = 'mta_instances';
         else if (trimmed === '7') currentStep = 'plugin_url';
         else if (trimmed === '8') currentStep = 'plugin_token';
+        else if (trimmed === '9') currentStep = 'exploratory_mode';
         continue;
       } else {
         currentStep = 'DONE';
@@ -1610,6 +1643,7 @@ async function run(options = {}) {
     skills_style: skillsStyle,
     mta_output_path: menditectOutputDir,
     execution_plans_dir: plansDir,
+    exploratory_execution_mode: state.exploratoryMode || 'auto_execute',
     mendix_version: state.detectedVersion || '',
     application_name: state.appName,
     mta_base_url: mtaUrl,

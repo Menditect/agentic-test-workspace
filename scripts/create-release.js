@@ -145,11 +145,12 @@ No breaking changes. Run \`npm run update:skills\` and \`npm run update:mxcli\` 
   // Update RELEASES.md table
   if (fs.existsSync(releasesIndexFile)) {
     let indexContent = fs.readFileSync(releasesIndexFile, 'utf8');
-    const tableHeader = '| Release Version | Date | Key Highlights / Release Message |\n| :--- | :--- | :--- |\n';
-    const newRow = `| [${version}](releases/${version}.md) | ${today} | ${summary} |\n`;
+    const tableHeaderRegex = /(\| Release Version \| Date \| Key Highlights \/ Release Message \|\r?\n\| :--- \| :--- \| :--- \|\r?\n)/;
+    const eol = indexContent.includes('\r\n') ? '\r\n' : '\n';
+    const newRow = `| [${version}](releases/${version}.md) | ${today} | ${summary} |${eol}`;
 
-    if (indexContent.includes(tableHeader)) {
-      indexContent = indexContent.replace(tableHeader, tableHeader + newRow);
+    if (tableHeaderRegex.test(indexContent)) {
+      indexContent = indexContent.replace(tableHeaderRegex, `$1${newRow}`);
       fs.writeFileSync(releasesIndexFile, indexContent, 'utf8');
       console.log(`Updated ${path.relative(rootDir, releasesIndexFile)}`);
     }

@@ -26,6 +26,8 @@ Once the script finishes running, it outputs a complete, isolated Agentic Worksp
   - Direct execution and testing of Mendix microflows in memory.
   - Live inspection and verification of runtime entity states and data attributes.
   - Instant feedback loops during active development without requiring round-trips to the central MTA web portal.
+  - High-velocity 1-turn execution with automatic transaction rollback (`exploratory_execution_mode: "auto_execute"`).
+  - Universal Execution Plans (`EP_*.md`) persisted to disk for full test auditability and instant promotion to permanent MTA test suites.
 - **Prerequisites:** Requires the **MTA Runtime Plugin** installed and running inside your Mendix application, connected via the local MTA Plugin MCP endpoint (`/plugin/mcp`).
 
 ### What is an Agentic Test Workspace?
@@ -99,6 +101,7 @@ The interactive script handles the full configuration in a few steps:
 - **Workspace & Model Detection**: Locates your Mendix `.mpr` file, detects Studio Pro version, and downloads `mxcli`.
 - **Model Inspection Source**: Lets you select between `mxcli` (standalone offline engine) or `Studio Pro MCP` (live IDE integration), while using `mxcli` in the background for project analysis.
 - **MTA & Instance Setup**: Scans your project for existing MTA application instances, configures connection settings, and isolates secrets into a local `.env` file.
+- **Exploratory Execution Strategy**: Select your preferred AI velocity (`exploratory_execution_mode`). Choose `auto_execute` (default) for instant 1-turn test feedback (< 3s total latency) with plan generation and JVM rollback, or `prompt_approval` to require explicit plan sign-off at Checkpoint 1 before running.
 - **Skills & AI Scaffolding**: Downloads the latest test skills (`Menditect/agentic-test-skills`) and generates configuration files for IDEs like Cursor, VS Code, Claude, and Antigravity.
 - **Optional Code Indexing**: Offers to build a local project catalog (`.mxcli/catalog.db`) for deep code search and dependency analysis.
 
@@ -168,18 +171,19 @@ npm run --prefix ./agentic-test-workspace verify
 
 All Menditect Agentic Test Skills strictly consume `mta_config.json` as the primary **Single Source of Truth (SSOT)** for workspace paths, MTA server endpoints, model discovery sources, and application instances. Sensitive authentication tokens (`MTA_MCP_AUTH_HEADER`, `PLUGIN_MCP_TOKEN`) are securely maintained in `.env`.
 
-### Canonical JSON Structure (v1.5.0)
+### Canonical JSON Structure (v1.8.0)
 
 ```json
 {
   "$schema": "./mta_config.schema.json",
   "workspace_type": "clone_root",
-  "workspace_dir": "C:\Projecten\mta-trial",
-  "skills_dir": "C:\Projecten\mta-trial\skills",
+  "workspace_dir": "C:\\Projecten\\mta-trial",
+  "skills_dir": "C:\\Projecten\\mta-trial\\skills",
   "skills_style": "standard",
-  "mta_output_path": "C:\Projecten\mta-trial\menditect-output",
-  "execution_plans_dir": "C:\Projecten\mta-trial\menditect-output\execution-plans",
+  "mta_output_path": "C:\\Projecten\\mta-trial\\menditect-output",
+  "execution_plans_dir": "C:\\Projecten\\mta-trial\\menditect-output\\execution-plans",
   "execution_plan_collapsible": true,
+  "exploratory_execution_mode": "auto_execute",
   "mendix_version": "11.12.011",
   "application_name": "MyMendixApp",
   "mta_base_url": "https://mta-instance.mendixcloud.com",
@@ -199,8 +203,8 @@ All Menditect Agentic Test Skills strictly consume `mta_config.json` as the prim
   "default_app_instance": "Local Development",
   "default_app_instance_token": "00000000-0000-0000-0000-000000000000",
   "model_source": "mxcli",
-  "mendix_project_dir": "C:\Projects\MyMendixApp",
-  "mendix_mpr_path": "C:\Projects\MyMendixApp\MyMendixApp.mpr"
+  "mendix_project_dir": "C:\\Projects\\MyMendixApp",
+  "mendix_mpr_path": "C:\\Projects\\MyMendixApp\\MyMendixApp.mpr"
 }
 ```
 
@@ -213,6 +217,7 @@ All Menditect Agentic Test Skills strictly consume `mta_config.json` as the prim
 | `application_name` | string | **(Required)** Name of the target Mendix application in MTA. Eliminates manual application disambiguation prompts. |
 | `execution_plans_dir` | string | **(Required)** Directory where active Execution Plans (`EP_*.md`) are stored and updated in-place. |
 | `execution_plan_collapsible` | boolean | Whether to format execution plans with collapsible `<details>` HTML tags (default: `true` for VS Code/GitHub) or flat Markdown headers (`false` for Claude Desktop/pure markdown). |
+| `exploratory_execution_mode` | string (`"auto_execute"` \| `"prompt_approval"`) | **(Default: `"auto_execute"`)** Execution strategy for Option A in-memory unit tests on the MTA Plugin (`Rollback = Yes`). `"auto_execute"` generates the Execution Plan (`EP_*.md`) on disk and executes in 1 turn without halting at Checkpoint 1. `"prompt_approval"` halts at Checkpoint 1 for manual sign-off before dispatching. |
 | `mendix_project_dir` | string | **(Required)** Absolute path to the target Mendix project folder containing the app model. |
 | `mendix_mpr_path` | string | Absolute path to the Mendix `.mpr` project file used by `mxcli`. |
 | `mta_auth_header` | string | *(Deprecated)* HTTP Authorization header (`Bearer <session_token>`) for authenticating with MTA server. Stored in `.env` as `MTA_MCP_AUTH_HEADER`. |
