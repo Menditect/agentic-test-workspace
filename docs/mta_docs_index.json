@@ -1,0 +1,760 @@
+{
+  "updated_at": "2026-09-30T09:46:36.636370+00:00",
+  "source_url": "https://documentation-dev.menditect.com/llms.txt",
+  "total_documents": 124,
+  "categories": {
+    "Best Practices": 6,
+    "How-Tos & Guides": 35,
+    "Installation & Setup": 6,
+    "Knowledge Base": 5,
+    "Known Issues & Workarounds": 20,
+    "Reference Guide": 51,
+    "Docs": 1
+  },
+  "documents": [
+    {
+      "title": "Data variation",
+      "url": "https://documentation.menditect.com/best-practice/data-variation",
+      "category": "Best Practices",
+      "description": "Best practices for using data variations in MTA, including adding only relevant attributes and varying a single value per test case."
+    },
+    {
+      "title": "Data management",
+      "url": "https://documentation.menditect.com/best-practice/datamanagement",
+      "category": "Best Practices",
+      "description": "Guide on managing test data in MTA to ensure repeatable tests across application instances without database side effects."
+    },
+    {
+      "title": "Best Practices",
+      "url": "https://documentation.menditect.com/best-practice/",
+      "category": "Best Practices",
+      "description": "Overview of best practices for establishing testing strategies, optimizing Mendix apps, and maintaining test data in MTA."
+    },
+    {
+      "title": "Record actions",
+      "url": "https://documentation.menditect.com/best-practice/record-actions",
+      "category": "Best Practices",
+      "description": "Guidelines, preparation steps, and limitations for recording user actions in MTA and converting them into test steps."
+    },
+    {
+      "title": "Test maintenance",
+      "url": "https://documentation.menditect.com/best-practice/test-maintenance",
+      "category": "Best Practices",
+      "description": "Strategies for efficiently updating and maintaining MTA test configurations, fixing construction errors, and automating revision downloads."
+    },
+    {
+      "title": "Test plan",
+      "url": "https://documentation.menditect.com/best-practice/testplan",
+      "category": "Best Practices",
+      "description": "Access Menditect's template and recommendations for creating a comprehensive test plan for Mendix application testing."
+    },
+    {
+      "title": "Backend test guide",
+      "url": "https://documentation.menditect.com/how-tos/backend-guide",
+      "category": "How-Tos & Guides",
+      "description": "Step-by-step guide for setting up, configuring, and executing your first backend microflow test in Menditect Test Automation."
+    },
+    {
+      "title": "Frontend test guide",
+      "url": "https://documentation.menditect.com/how-tos/frontend-guide",
+      "category": "How-Tos & Guides",
+      "description": "Comprehensive guide for preparing, designing, running, and analyzing Playwright-based frontend tests in Menditect Test Automation."
+    },
+    {
+      "title": "Agentic Testing Overview",
+      "url": "https://documentation.menditect.com/how-tos/agentic-testing-overview",
+      "category": "How-Tos & Guides",
+      "description": "This guide describes the **system architecture and unified interaction workflows** for running Agentic Test Automation with Menditect Test Automati..."
+    },
+    {
+      "title": "Access Mendix model",
+      "url": "https://documentation.menditect.com/how-tos/configure-mta/access-mendix-model",
+      "category": "How-Tos & Guides",
+      "description": "Learn how to create a Mendix Personal Access Token (PAT) and configure MTA to grant access to your Mendix models."
+    },
+    {
+      "title": "Configure MTA to use SAML SSO",
+      "url": "https://documentation.menditect.com/how-tos/configure-mta/configure-mta-saml",
+      "category": "How-Tos & Guides",
+      "description": "Step-by-step instructions for configuring SAML SSO authentication and user provisioning in Menditect Test Automation."
+    },
+    {
+      "title": "Offboard MTA",
+      "url": "https://documentation.menditect.com/how-tos/configure-mta/offboard",
+      "category": "How-Tos & Guides",
+      "description": "Checklist of recommended steps to clean up and remove Menditect Test Automation configurations, modules, and access settings when offboarding."
+    },
+    {
+      "title": "Prepare for using MTA for the first time",
+      "url": "https://documentation.menditect.com/how-tos/configure-mta/prepare-for-using-mta",
+      "category": "How-Tos & Guides",
+      "description": "Summary of prerequisite preparation steps for first-time setup of Menditect Test Automation."
+    },
+    {
+      "title": "Prepare Mendix project",
+      "url": "https://documentation.menditect.com/how-tos/configure-mta/prepare-mendix-project",
+      "category": "How-Tos & Guides",
+      "description": "Step-by-step guide to preparing your Mendix project for frontend and backend testing in MTA, including adding page classes and setting return values."
+    },
+    {
+      "title": "Assert JSON value",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/assert-json-value",
+      "category": "How-Tos & Guides",
+      "description": "Learn how to assert values inside JSON strings in Menditect Test Automation (MTA) using JsonPath query expressions and wrapper microflows."
+    },
+    {
+      "title": "Create a Custom Frontend Testkit",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/frontend-test-custom-testkit",
+      "category": "How-Tos & Guides",
+      "description": "Guide on creating custom frontend testkits in MTA to support custom or unsupported widgets using Playwright locators and filters."
+    },
+    {
+      "title": "Frontend Test on multiple Apps or Environments",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/frontend-test-multi-app",
+      "category": "How-Tos & Guides",
+      "description": "This document covers two scenario's:"
+    },
+    {
+      "title": "Generate Test",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/generate-test",
+      "category": "How-Tos & Guides",
+      "description": "How to generate Microflow tests automatically."
+    },
+    {
+      "title": "Record and complete teststeps",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/record-user-actions",
+      "category": "How-Tos & Guides",
+      "description": "Instructions on how to complete and verify recorded teststeps in MTA, including retrieval handling and review of constraints."
+    },
+    {
+      "title": "Set or Assert an Empty String",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/set-assert-empty-string",
+      "category": "How-Tos & Guides",
+      "description": "A workaround guide for setting and asserting empty or null strings in MTA using the MTA Commons module."
+    },
+    {
+      "title": "Test with anonymous user",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/test-anonymous-user",
+      "category": "How-Tos & Guides",
+      "description": "How to test Mendix application functionality for anonymous users in MTA by setting up local users with equivalent roles."
+    },
+    {
+      "title": "Test an API",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/test-api",
+      "category": "How-Tos & Guides",
+      "description": "Guide to testing REST APIs in MTA by calling underlying microflows that handle integration and processing logic."
+    },
+    {
+      "title": "Test Nanoflows",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/test-nanoflows",
+      "category": "How-Tos & Guides",
+      "description": "Methods for testing Mendix nanoflows in MTA, primarily by triggering them within frontend tests or recording user actions."
+    },
+    {
+      "title": "Test without local Account",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/test-without-local-account",
+      "category": "How-Tos & Guides",
+      "description": "Strategies for running tests in MTA without direct local user accounts, including SSO workarounds and creating accounts on-the-fly."
+    },
+    {
+      "title": "Use Datavariation with Objects",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/use-datavariation-with-objects",
+      "category": "How-Tos & Guides",
+      "description": "How to use MTA Datavariation with objects to vary the number of retrieved objects or handle empty references across test variations."
+    },
+    {
+      "title": "Use a previous teststep's data",
+      "url": "https://documentation.menditect.com/how-tos/design-tests/use-previous-teststeps-data",
+      "category": "How-Tos & Guides",
+      "description": "Detailed scenarios and mapping rules for using the output of a previous teststep as input for subsequent steps in MTA."
+    },
+    {
+      "title": "Change Application",
+      "url": "https://documentation.menditect.com/how-tos/manage-tests/change-application",
+      "category": "How-Tos & Guides",
+      "description": "Learn how to migrate and change the application associated with a Test Case in MTA by importing test suites across configurations."
+    },
+    {
+      "title": "Know when to adapt to next revision",
+      "url": "https://documentation.menditect.com/how-tos/manage-tests/know-when-to-adapt-revision",
+      "category": "How-Tos & Guides",
+      "description": "Understand when and how to adapt your MTA Test Configurations and Test Suites to a new Mendix application revision."
+    },
+    {
+      "title": "Share a test or test results",
+      "url": "https://documentation.menditect.com/how-tos/manage-tests/share-test-or-results",
+      "category": "How-Tos & Guides",
+      "description": "Step-by-step guide to copying and sharing links to test configurations, suites, cases, or results with colleagues in MTA."
+    },
+    {
+      "title": "Transfer a Test Case to another Test Configuration",
+      "url": "https://documentation.menditect.com/how-tos/manage-tests/store-test-case-to-collection",
+      "category": "How-Tos & Guides",
+      "description": "How to copy and transfer single Test Cases between Test Suites and Configurations to organize tests in collections."
+    },
+    {
+      "title": "Coverage listener",
+      "url": "https://documentation.menditect.com/how-tos/maximize-coverage/coverage-listener",
+      "category": "How-Tos & Guides",
+      "description": "Instructions on enabling and configuring the coverage listener in MTA to measure microflow coverage during manual or frontend tests."
+    },
+    {
+      "title": "Design Microflow testing",
+      "url": "https://documentation.menditect.com/how-tos/maximize-coverage/design-microflow",
+      "category": "How-Tos & Guides",
+      "description": "Best practices and strategic considerations for designing microflow tests in MTA, managing variations, and maximizing coverage."
+    },
+    {
+      "title": "Optimize Coverage Goals",
+      "url": "https://documentation.menditect.com/how-tos/maximize-coverage/optimize-coverage-goals",
+      "category": "How-Tos & Guides",
+      "description": "Guide to setting up and optimizing Coverage Goals and Exclude Filters on both application and test configuration levels in MTA."
+    },
+    {
+      "title": "MTA API Prerequisites",
+      "url": "https://documentation.menditect.com/how-tos/schedule-tests/cicd-config",
+      "category": "How-Tos & Guides",
+      "description": "Prerequisites and step-by-step configuration for setting up the MTA Public API for CI/CD integration, including API users and PATs."
+    },
+    {
+      "title": "Simple Test Scheduling",
+      "url": "https://documentation.menditect.com/how-tos/schedule-tests/cicd-get-started",
+      "category": "How-Tos & Guides",
+      "description": "Getting started with scheduling MTA tests in your CI/CD pipelines, including using key parameters and Mendix pipelines."
+    },
+    {
+      "title": "All Endpoints explained",
+      "url": "https://documentation.menditect.com/how-tos/schedule-tests/cicd-flow",
+      "category": "How-Tos & Guides",
+      "description": "Detailed reference of the MTA Public API endpoints used to search, query, and trigger test executions programmatically."
+    },
+    {
+      "title": "Handle Test Run Results",
+      "url": "https://documentation.menditect.com/how-tos/schedule-tests/cicd-result",
+      "category": "How-Tos & Guides",
+      "description": "How to retrieve and handle test results from CI/CD executions using the MTA UI, the GET API, or webhook push endpoints."
+    },
+    {
+      "title": "Handle files",
+      "url": "https://documentation.menditect.com/how-tos/tips-and-tricks/handle-files",
+      "category": "How-Tos & Guides",
+      "description": "Guide to downloading and uploading FileDocument and Image objects in MTA, including Base64 conversion workarounds."
+    },
+    {
+      "title": "Migrate Mendix Unit Tests",
+      "url": "https://documentation.menditect.com/how-tos/tips-and-tricks/migrate-unit-tests",
+      "category": "How-Tos & Guides",
+      "description": "Step-by-step process for migrating existing Mendix Unit Test module test cases into automated test cases in MTA."
+    },
+    {
+      "title": "Use Data Hub with MTA",
+      "url": "https://documentation.menditect.com/how-tos/tips-and-tricks/use-data-hub-with-mta",
+      "category": "How-Tos & Guides",
+      "description": "How to retrieve and create external OData entities connected via Mendix Data Hub within MTA test cases."
+    },
+    {
+      "title": "How-To Guides",
+      "url": "https://documentation.menditect.com/how-tos/",
+      "category": "How-Tos & Guides",
+      "description": "Overview of step-by-step how-to guides for Menditect Test Automation (MTA), covering topics like setup, test design, account management, and CI/CD ..."
+    },
+    {
+      "title": "Agentic Testing Setup",
+      "url": "https://documentation.menditect.com/installation/agentic-testing-setup",
+      "category": "Installation & Setup",
+      "description": "This guide describes the **core configuration** for running Agentic Test Automation with Menditect Test Automation (MTA) and AI assistants (such as..."
+    },
+    {
+      "title": "Connect an LLM to MTA",
+      "url": "https://documentation.menditect.com/installation/connect-llm-to-mta",
+      "category": "Installation & Setup",
+      "description": "This document describes how to connect any LLM (AI agentic conversational tool) to the MTA MCP Server."
+    },
+    {
+      "title": "MTA Exploratory Free Edition Setup Guide",
+      "url": "https://documentation.menditect.com/installation/exploratory-testing-setup",
+      "category": "Installation & Setup",
+      "description": "Welcome to the **Menditect Test Automation (MTA) Exploratory Free Edition**."
+    },
+    {
+      "title": "Install MTA Plugin",
+      "url": "https://documentation.menditect.com/installation/import-plugin",
+      "category": "Installation & Setup",
+      "description": "Instructions on importing and configuring the MTA Plugin in your Mendix App under test, including Git merge conflict workarounds."
+    },
+    {
+      "title": "Install MTA",
+      "url": "https://documentation.menditect.com/installation/",
+      "category": "Installation & Setup",
+      "description": "Guide for installing and hosting MTA on custom cloud or on-premise infrastructure with your own Mendix license."
+    },
+    {
+      "title": "Install Playwright Browser",
+      "url": "https://documentation.menditect.com/installation/install-playwright-browser",
+      "category": "Installation & Setup",
+      "description": "Hosting options and setup instructions for Playwright Browsers to execute frontend tests with MTA locally or in the cloud."
+    },
+    {
+      "title": "Frontend Testing Challenges Solved by Menditect",
+      "url": "https://documentation.menditect.com/knowledge-base/frontend-test-challenges-solved-by-mta",
+      "category": "Knowledge Base",
+      "description": "How MTA solves key frontend testing challenges like locator fragility, conditional visibility, and nested widget structures using the Mendix model."
+    },
+    {
+      "title": "Frontend Testing for Mendix Devs",
+      "url": "https://documentation.menditect.com/knowledge-base/frontend-testing-for-mendix-devs",
+      "category": "Knowledge Base",
+      "description": "An introduction to frontend testing concepts for Mendix developers covering locators, user actions, DOM interactions, and Playwright."
+    },
+    {
+      "title": "Knowledge Base",
+      "url": "https://documentation.menditect.com/knowledge-base/",
+      "category": "Knowledge Base",
+      "description": "Knowledge base index explaining core principles, concepts, and testability approaches in Menditect Test Automation."
+    },
+    {
+      "title": "Mendix introduction for testers",
+      "url": "https://documentation.menditect.com/knowledge-base/mendix-for-testers",
+      "category": "Knowledge Base",
+      "description": "A practical guide for software testers to understand Mendix low-code platform architecture, shift-left testing, and model-driven test strategies."
+    },
+    {
+      "title": "Menditect Testability Framework",
+      "url": "https://documentation.menditect.com/knowledge-base/testability",
+      "category": "Knowledge Base",
+      "description": "Overview and updates regarding the Menditect Testability Framework for optimizing Mendix applications for automated testing."
+    },
+    {
+      "title": "Merge Conflicts in Add-on modules",
+      "url": "https://documentation.menditect.com/known-issues/connect-mta/after-startup-error",
+      "category": "Known Issues & Workarounds",
+      "description": "Committing local changes while incoming changes exist can cause merge conflicts in Add-on module Java files due to random GUID generation in Mendix..."
+    },
+    {
+      "title": "Plugin falsely connected",
+      "url": "https://documentation.menditect.com/known-issues/connect-mta/plugin-falsely-connected",
+      "category": "Known Issues & Workarounds",
+      "description": "The MTA Plugin snippet may indicate 'Connected' even when MTA shows it is disconnected due to an invalid Application Token or app restart. Resolve ..."
+    },
+    {
+      "title": "Websocket error message",
+      "url": "https://documentation.menditect.com/known-issues/connect-mta/websocket-error-message",
+      "category": "Known Issues & Workarounds",
+      "description": "Local Mendix connections to MTA may fail with WebSocket error messages if corporate firewalls or network settings block WebSocket traffic. Ensure p..."
+    },
+    {
+      "title": "Websocket keeps reconnecting",
+      "url": "https://documentation.menditect.com/known-issues/connect-mta/websocket-keeps-reconnecting",
+      "category": "Known Issues & Workarounds",
+      "description": "In self-hosted MTA environments, container orchestration default timeouts can cause WebSocket connections to drop repeatedly during tests. Extend t..."
+    },
+    {
+      "title": "Generic random error message",
+      "url": "https://documentation.menditect.com/known-issues/configure-mta/generic-random-error-message",
+      "category": "Known Issues & Workarounds",
+      "description": "Intermittent generic error messages in MTA occur when the Mendix XAS interface slows down due to processing heavy data loads or inadequate cloud re..."
+    },
+    {
+      "title": "Infinite loop when using deeplink",
+      "url": "https://documentation.menditect.com/known-issues/configure-mta/infinite-loop-using-deeplink",
+      "category": "Known Issues & Workarounds",
+      "description": "Opening a direct deeplink after logging out of a SAML SSO session can cause an infinite redirect loop due to a Deeplink module limitation. Avoid th..."
+    },
+    {
+      "title": "Revision download fails",
+      "url": "https://documentation.menditect.com/known-issues/configure-mta/revision-download-fails",
+      "category": "Known Issues & Workarounds",
+      "description": "Users cannot download a Mendix App revision if their role lacks Develop edit permissions in Mendix Sprintr. Resolve this by having a Scrum Master s..."
+    },
+    {
+      "title": "Adapt failed",
+      "url": "https://documentation.menditect.com/known-issues/design-tests/adapt-failed",
+      "category": "Known Issues & Workarounds",
+      "description": "An Adapt Test Configuration action may freeze or fail due to low system resources, concurrency, or business rule validation errors. Recover by rest..."
+    },
+    {
+      "title": "Construction errors after move Entity",
+      "url": "https://documentation.menditect.com/known-issues/design-tests/construction-errors-after-moving-entity",
+      "category": "Known Issues & Workarounds",
+      "description": "Moving a domain model Entity between modules changes its internal Mendix ID, producing construction errors when adapted in MTA. Prevent this using ..."
+    },
+    {
+      "title": "Duplicate empty Test suite fails",
+      "url": "https://documentation.menditect.com/known-issues/design-tests/duplicate-empty-test-suite",
+      "category": "Known Issues & Workarounds",
+      "description": "Duplicating an empty Test Suite containing no Test Cases fails with an error message in MTA. Workaround by ensuring the suite has at least one Test..."
+    },
+    {
+      "title": "Microflow list covers Close button",
+      "url": "https://documentation.menditect.com/known-issues/design-tests/microflow-list-covers-close-button",
+      "category": "Known Issues & Workarounds",
+      "description": "The microflow list popup hides the bottom-right Close button when selecting a Microflow Call test step. Close the modal by clicking the 'X' in the ..."
+    },
+    {
+      "title": "Microflow missing from list",
+      "url": "https://documentation.menditect.com/known-issues/design-tests/microflow-missing",
+      "category": "Known Issues & Workarounds",
+      "description": "Microflows may not appear in MTA selection lists if the application revision is outdated or if the microflow belongs to a hidden or private module...."
+    },
+    {
+      "title": "Nothing happens when starting action",
+      "url": "https://documentation.menditect.com/known-issues/design-tests/nothing-happens",
+      "category": "Known Issues & Workarounds",
+      "description": "Background actions like running tests or downloading revisions may delay execution when MTA reaches its limit of concurrent background tasks. Wait ..."
+    },
+    {
+      "title": "Recorder fails",
+      "url": "https://documentation.menditect.com/known-issues/design-tests/recorder-fails",
+      "category": "Known Issues & Workarounds",
+      "description": "The deprecated MTA Recorder may fail to generate test steps if used on non-LTS Mendix releases or initialized after login. Resolve this by using a ..."
+    },
+    {
+      "title": "Session suddenly closed",
+      "url": "https://documentation.menditect.com/known-issues/design-tests/session-logs-out",
+      "category": "Known Issues & Workarounds",
+      "description": "Using the browser Back button in MTA can unexpectedly redirect users to the login page due to page handling behavior. The session remains active, s..."
+    },
+    {
+      "title": "Error on execute with a Retrieve action",
+      "url": "https://documentation.menditect.com/known-issues/run-tests/error-on-execute-retrieve-action",
+      "category": "Known Issues & Workarounds",
+      "description": "Executing chained Retrieve from Former Teststep actions on uncommitted objects causes test execution errors. Resolve by adding a Persist step, conf..."
+    },
+    {
+      "title": "Persist teststep fails",
+      "url": "https://documentation.menditect.com/known-issues/run-tests/persist-step-fails",
+      "category": "Known Issues & Workarounds",
+      "description": "Persist test steps may fail with unspecified errors when entity delete constraints are violated during batch deletions. Turn off Test Case Security..."
+    },
+    {
+      "title": "Test Case Run error regarding Validation Message",
+      "url": "https://documentation.menditect.com/known-issues/run-tests/test-case-run-error-validation-message",
+      "category": "Known Issues & Workarounds",
+      "description": "Test Case Runs fail with validation feedback errors when a validation message triggers on an object that is deleted later in the test. Fix by preve..."
+    },
+    {
+      "title": "Test Run timeout",
+      "url": "https://documentation.menditect.com/known-issues/run-tests/test-run-timeout",
+      "category": "Known Issues & Workarounds",
+      "description": "Test runs may time out without clear error details if a executed microflow gets trapped in an infinite loop due to unexpected data state. Troublesh..."
+    },
+    {
+      "title": "Known Issues & Workarounds",
+      "url": "https://documentation.menditect.com/known-issues/",
+      "category": "Known Issues & Workarounds",
+      "description": "Overview of known Menditect Test Automation (MTA) issues, including descriptions of common customer-reported problems and their corresponding solut..."
+    },
+    {
+      "title": "MTA Public API",
+      "url": "https://documentation.menditect.com/reference-guide/api",
+      "category": "Reference Guide",
+      "description": "Complete documentation of MTA's public API endpoints, authentication mechanisms, request headers, and response formats."
+    },
+    {
+      "title": "Account",
+      "url": "https://documentation.menditect.com/reference-guide/mta/account",
+      "category": "Reference Guide",
+      "description": "To manage MTA accounts, login as [MTA Manager](#mta-manager) and navigate to MTA Management -> MTA Users."
+    },
+    {
+      "title": "Application Instance",
+      "url": "https://documentation.menditect.com/reference-guide/mta/application-instance",
+      "category": "Reference Guide",
+      "description": "Definition, properties, and management instructions for deployed Mendix application testing environments."
+    },
+    {
+      "title": "Application Revision",
+      "url": "https://documentation.menditect.com/reference-guide/mta/application-revision",
+      "category": "Reference Guide",
+      "description": "Overview of Mendix model revisions, properties, and instructions for managing and adapting test configurations."
+    },
+    {
+      "title": "Application",
+      "url": "https://documentation.menditect.com/reference-guide/mta/application",
+      "category": "Reference Guide",
+      "description": "Guide to registering, configuring, and managing Mendix projects within Menditect Test Automation."
+    },
+    {
+      "title": "Archive",
+      "url": "https://documentation.menditect.com/reference-guide/mta/archive",
+      "category": "Reference Guide",
+      "description": "Overview of the MTA Archive function for persisting and auditing Test Run log event data."
+    },
+    {
+      "title": "Assert on Attribute",
+      "url": "https://documentation.menditect.com/reference-guide/mta/assert/assert-attribute",
+      "category": "Reference Guide",
+      "description": "Reference guide for configuring Asserts on Attribute in MTA to validate object properties and datavariation item rows."
+    },
+    {
+      "title": "Assert on Exception",
+      "url": "https://documentation.menditect.com/reference-guide/mta/assert/assert-exception",
+      "category": "Reference Guide",
+      "description": "Reference guide for configuring Asserts on Exception in MTA to verify expected errors and normal executions."
+    },
+    {
+      "title": "Assert on Microflow output",
+      "url": "https://documentation.menditect.com/reference-guide/mta/assert/assert-microflow-output",
+      "category": "Reference Guide",
+      "description": "How to define expectations on literal return values from Microflow calls in MTA, including range assertions."
+    },
+    {
+      "title": "Assert on Object Count",
+      "url": "https://documentation.menditect.com/reference-guide/mta/assert/assert-object-count",
+      "category": "Reference Guide",
+      "description": "Detailed documentation on defining expectations for the size of retrieved or returned object lists in MTA."
+    },
+    {
+      "title": "Assert on Validation feedback",
+      "url": "https://documentation.menditect.com/reference-guide/mta/assert/assert-validation-feedback",
+      "category": "Reference Guide",
+      "description": "Reference guide for evaluating validation feedback message text and members displayed during MTA test runs."
+    },
+    {
+      "title": "Assert",
+      "url": "https://documentation.menditect.com/reference-guide/mta/assert/",
+      "category": "Reference Guide",
+      "description": "An overview of Asserts in MTA, outlining the five assert types used to validate system behavior on test steps and test cases."
+    },
+    {
+      "title": "Branch Subscription",
+      "url": "https://documentation.menditect.com/reference-guide/mta/branch-subscription",
+      "category": "Reference Guide",
+      "description": "Explanation and instructions for configuring branch subscriptions to automatically poll and download Mendix revisions."
+    },
+    {
+      "title": "Construction Error",
+      "url": "https://documentation.menditect.com/reference-guide/mta/construction-error",
+      "category": "Reference Guide",
+      "description": "Explanation of construction errors in MTA, including how to locate and resolve test step data issues."
+    },
+    {
+      "title": "Coverage Calculation",
+      "url": "https://documentation.menditect.com/reference-guide/mta/coverage-calculation",
+      "category": "Reference Guide",
+      "description": "Reference guide on Coverage Calculation in MTA, explaining how test execution coverages are measured against Coverage Goals."
+    },
+    {
+      "title": "Coverage Exception",
+      "url": "https://documentation.menditect.com/reference-guide/mta/coverage-exception",
+      "category": "Reference Guide",
+      "description": "Learn how to use Coverage Exceptions to include specific microflows previously excluded by filters in MTA."
+    },
+    {
+      "title": "Coverage Exclude Filter",
+      "url": "https://documentation.menditect.com/reference-guide/mta/coverage-exclude-filter",
+      "category": "Reference Guide",
+      "description": "Reference guide for creating and configuring case-insensitive Exclude Filters to ignore certain microflows in MTA coverage reports."
+    },
+    {
+      "title": "Coverage Goal",
+      "url": "https://documentation.menditect.com/reference-guide/mta/coverage-goal",
+      "category": "Reference Guide",
+      "description": "Detailed reference on defining Coverage Goals in MTA to specify target microflows for automated test coverage calculations."
+    },
+    {
+      "title": "Datavariation Column",
+      "url": "https://documentation.menditect.com/reference-guide/mta/datavariation-column",
+      "category": "Reference Guide",
+      "description": "Reference page explaining Datavariation Columns in MTA and how they represent individual variations during execution."
+    },
+    {
+      "title": "Datavariation Item Row",
+      "url": "https://documentation.menditect.com/reference-guide/mta/datavariation-item-row",
+      "category": "Reference Guide",
+      "description": "Detailed documentation of Datavariation Item Rows, representing attribute inputs or asserts that vary per column."
+    },
+    {
+      "title": "Datavariations",
+      "url": "https://documentation.menditect.com/reference-guide/mta/datavariation",
+      "category": "Reference Guide",
+      "description": "Overview of MTA Datavariations on test suites and test cases to run identical test flows with varying inputs and asserts."
+    },
+    {
+      "title": "Execution User",
+      "url": "https://documentation.menditect.com/reference-guide/mta/execution-user",
+      "category": "Reference Guide",
+      "description": "Reference guide explaining how Execution Users define the Mendix user security context when executing backend and frontend tests."
+    },
+    {
+      "title": "Feedback Message",
+      "url": "https://documentation.menditect.com/reference-guide/mta/feedback-message",
+      "category": "Reference Guide",
+      "description": "Reference page for viewing and understanding Feedback Messages generated by Mendix microflow validation actions during tests."
+    },
+    {
+      "title": "Frontend Testing Glossary",
+      "url": "https://documentation.menditect.com/reference-guide/mta/frontend-glossary",
+      "category": "Reference Guide",
+      "description": "Glossary of frontend testing terminology, including Playwright elements, locators, actions, and assertions."
+    },
+    {
+      "title": "Frontend Test",
+      "url": "https://documentation.menditect.com/reference-guide/mta/frontend-test",
+      "category": "Reference Guide",
+      "description": "Reference guide for MTA Frontend Testing using Playwright to interact with Mendix application user interfaces."
+    },
+    {
+      "title": "Menditect Test Automation (MTA)",
+      "url": "https://documentation.menditect.com/reference-guide/mta/",
+      "category": "Reference Guide",
+      "description": "Main reference page for Menditect Test Automation (MTA), introducing core concepts, UI elements, and navigation guidelines."
+    },
+    {
+      "title": "Mendix Microflow",
+      "url": "https://documentation.menditect.com/reference-guide/mta/mendix-microflow",
+      "category": "Reference Guide",
+      "description": "Documentation on Mendix Microflows in MTA, covering metadata storage, hashes, parameter mapping, and test execution."
+    },
+    {
+      "title": "Mendix Page",
+      "url": "https://documentation.menditect.com/reference-guide/mta/mendix-page",
+      "category": "Reference Guide",
+      "description": "Reference guide for Mendix Pages in MTA, detailing class properties, module info, and page usage tracking."
+    },
+    {
+      "title": "Recording",
+      "url": "https://documentation.menditect.com/reference-guide/mta/recording",
+      "category": "Reference Guide",
+      "description": "Documentation on the deprecated Recording feature in MTA to automatically generate test steps from user UI interactions."
+    },
+    {
+      "title": "Snapshot",
+      "url": "https://documentation.menditect.com/reference-guide/mta/snapshot",
+      "category": "Reference Guide",
+      "description": "Reference guide for MTA Snapshots, which capture and restore the state of Test Configurations before revisions are adapted."
+    },
+    {
+      "title": "Test Case",
+      "url": "https://documentation.menditect.com/reference-guide/mta/test-case",
+      "category": "Reference Guide",
+      "description": "Detailed explanation of MTA Test Cases, their security context, data variations, execution settings, and relation to suites."
+    },
+    {
+      "title": "Test Configuration",
+      "url": "https://documentation.menditect.com/reference-guide/mta/test-configuration",
+      "category": "Reference Guide",
+      "description": "Reference guide for MTA Test Configurations, the top-level container mapping tested applications and suites."
+    },
+    {
+      "title": "Test Run",
+      "url": "https://documentation.menditect.com/reference-guide/mta/test-run",
+      "category": "Reference Guide",
+      "description": "Reference documentation for MTA Test Runs, capturing execution results, start dates, and detailed step outputs."
+    },
+    {
+      "title": "Test Setting",
+      "url": "https://documentation.menditect.com/reference-guide/mta/test-setting",
+      "category": "Reference Guide",
+      "description": "Reference guide for configuring MTA Test Settings to associate test configurations with target application instances."
+    },
+    {
+      "title": "Test Suite",
+      "url": "https://documentation.menditect.com/reference-guide/mta/test-suite",
+      "category": "Reference Guide",
+      "description": "Detailed reference for MTA Suites, the second level of the test structure containing ordered executable Test Cases."
+    },
+    {
+      "title": "Microflow call",
+      "url": "https://documentation.menditect.com/reference-guide/mta/teststep/microflow",
+      "category": "Reference Guide",
+      "description": "Reference page for the Microflow call teststep type, describing execution conditions, return values, and security."
+    },
+    {
+      "title": "Create Object",
+      "url": "https://documentation.menditect.com/reference-guide/mta/teststep/create",
+      "category": "Reference Guide",
+      "description": "Reference page for the Create Object teststep type, describing in-memory object creation and security rights checks."
+    },
+    {
+      "title": "Change Object",
+      "url": "https://documentation.menditect.com/reference-guide/mta/teststep/change",
+      "category": "Reference Guide",
+      "description": "Reference page for the Change Object teststep type, describing attribute and association modifications on in-memory objects."
+    },
+    {
+      "title": "Retrieve Object",
+      "url": "https://documentation.menditect.com/reference-guide/mta/teststep/retrieve",
+      "category": "Reference Guide",
+      "description": "Reference page for the Retrieve Object teststep type, explaining database retrieves, XPath filters, and list filtering."
+    },
+    {
+      "title": "Delete Object",
+      "url": "https://documentation.menditect.com/reference-guide/mta/teststep/delete",
+      "category": "Reference Guide",
+      "description": "Reference page for the Delete Object teststep type, explaining how in-memory objects are marked for database deletion."
+    },
+    {
+      "title": "Persist",
+      "url": "https://documentation.menditect.com/reference-guide/mta/teststep/persist",
+      "category": "Reference Guide",
+      "description": "Reference page for the Persist teststep type, explaining database commits, deletes, and domain model event triggers."
+    },
+    {
+      "title": "Teststep",
+      "url": "https://documentation.menditect.com/reference-guide/mta/teststep/",
+      "category": "Reference Guide",
+      "description": "Overview of MTA Teststeps, detailing microflow calls, object action steps, and execution sequence rules."
+    },
+    {
+      "title": "Teststep Exception",
+      "url": "https://documentation.menditect.com/reference-guide/mta/teststep-exception",
+      "category": "Reference Guide",
+      "description": "Reference guide explaining Teststep Exceptions in MTA and how unhandled and handled execution exceptions are reported."
+    },
+    {
+      "title": "MTA MCP Tools",
+      "url": "https://documentation.menditect.com/reference-guide/mta_mcp_tools",
+      "category": "Reference Guide",
+      "description": ":::info"
+    },
+    {
+      "title": "Reference Guide",
+      "url": "https://documentation.menditect.com/docs",
+      "category": "Docs",
+      "description": "Official reference guide index covering MTA components, tools, public API documentation, and system requirements."
+    },
+    {
+      "title": "Microflow Call Hierarchy Extension",
+      "url": "https://documentation.menditect.com/reference-guide/tools/call-hierarchy-extension",
+      "category": "Reference Guide",
+      "description": "Learn how to import, configure, and use the Microflow Call Hierarchy extension in Mendix Studio Pro for MTA test generation."
+    },
+    {
+      "title": "MTA Connectors",
+      "url": "https://documentation.menditect.com/reference-guide/tools/",
+      "category": "Reference Guide",
+      "description": "Overview of MTA Connectors, modules, and extensions that support test automation and frontend testing in Mendix."
+    },
+    {
+      "title": "MTA Commons",
+      "url": "https://documentation.menditect.com/reference-guide/tools/mta-commons",
+      "category": "Reference Guide",
+      "description": "Overview of the MTA Commons module, allowing MTA to utilize Mendix functions, session variables, and REST requests."
+    },
+    {
+      "title": "MTA Plugin",
+      "url": "https://documentation.menditect.com/reference-guide/tools/mta-plugin",
+      "category": "Reference Guide",
+      "description": "Guide to the MTA Plugin module, enabling communication between Menditect Test Automation and the Mendix application under test."
+    },
+    {
+      "title": "MTA Widget Finder",
+      "url": "https://documentation.menditect.com/reference-guide/tools/mta-widget-finder",
+      "category": "Reference Guide",
+      "description": "Browser extension for Chrome and Firefox to inspect Mendix widget names and build accurate test locators for frontend testing."
+    },
+    {
+      "title": "MTA Playwright Connector",
+      "url": "https://documentation.menditect.com/reference-guide/tools/playwright-connector",
+      "category": "Reference Guide",
+      "description": "Mendix add-on module integrating Playwright browser automation with MTA for executing frontend tests."
+    },
+    {
+      "title": "MTA Mendix Frontend Testkit",
+      "url": "https://documentation.menditect.com/reference-guide/tools/playwright-testkit",
+      "category": "Reference Guide",
+      "description": "Mendix Frontend Testkit providing widget locators, actions, and assertions for automated Playwright frontend testing in MTA."
+    }
+  ]
+}

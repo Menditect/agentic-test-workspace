@@ -92,6 +92,8 @@ function normalizeConfigAliases(cfg) {
   normalized.playwright_viewer_url = cfg.playwright_viewer_url || cfg.playwrightViewerUrl || '';
   normalized.tracefile_base_url = cfg.tracefile_base_url || cfg.tracefileBaseUrl || cfg.tracefile_url || '';
   normalized.studiopro_mcp_url = cfg.studiopro_mcp_url || cfg.studioproMcpUrl || cfg.studio_pro_mcp_url || '';
+  normalized.documentation_url = cfg.documentation_url || cfg.documentationUrl || 'https://documentation.menditect.com';
+  normalized.llms_txt_url = cfg.llms_txt_url || cfg.llmsTxtUrl || '';
   return normalized;
 }
 
@@ -1620,6 +1622,8 @@ async function run(options = {}) {
   const mcpEndpoint = mtaUrl ? (mtaUrl.replace(/\/$/, '') + '/primitivetools/mcp') : '';
   const defaultPlaywrightViewerUrl = existingConfig.playwright_viewer_url || 'https://trace.playwright.dev/?trace=';
   const defaultTracefileBaseUrl = existingConfig.tracefile_base_url || (mtaUrl ? `${mtaUrl.replace(/\/$/, '')}/rest/private/tracefile?fileUUID=` : '');
+  const defaultDocumentationUrl = existingConfig.documentation_url || 'https://documentation.menditect.com';
+  const defaultLlmsTxtUrl = existingConfig.llms_txt_url || `${defaultDocumentationUrl.replace(/\/$/, '')}/llms.txt`;
 
   const sanitizedInstances = state.appInstances.map(inst => {
     const item = {
@@ -1651,6 +1655,8 @@ async function run(options = {}) {
     plugin_mcp_url: state.pluginUrl,
     playwright_viewer_url: defaultPlaywrightViewerUrl,
     tracefile_base_url: defaultTracefileBaseUrl,
+    documentation_url: defaultDocumentationUrl,
+    llms_txt_url: defaultLlmsTxtUrl,
     app_instances: sanitizedInstances,
     default_app_instance: state.defaultInstanceName,
     default_app_instance_token: state.defaultInstanceToken,

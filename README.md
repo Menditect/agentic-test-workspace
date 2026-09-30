@@ -189,6 +189,8 @@ All Menditect Agentic Test Skills strictly consume `mta_config.json` as the prim
   "mta_base_url": "https://mta-instance.mendixcloud.com",
   "mcp_endpoint": "https://mta-instance.mendixcloud.com/primitivetools/mcp",
   "plugin_mcp_url": "http://localhost:[Port]/plugin/mcp",
+  "documentation_url": "https://documentation.menditect.com",
+  "llms_txt_url": "https://documentation.menditect.com/llms.txt",
   "app_instances": [
     {
       "name": "Local Development",
@@ -222,6 +224,8 @@ All Menditect Agentic Test Skills strictly consume `mta_config.json` as the prim
 | `mendix_mpr_path` | string | Absolute path to the Mendix `.mpr` project file used by `mxcli`. |
 | `mta_auth_header` | string | *(Deprecated)* HTTP Authorization header (`Bearer <session_token>`) for authenticating with MTA server. Stored in `.env` as `MTA_MCP_AUTH_HEADER`. |
 | `plugin_mcp_url` | string (URI) | Local runtime plugin MCP endpoint (`[ApplicationRootUrl]/plugin/mcp`) for sub-second in-memory exploratory test execution. |
+| `documentation_url` | string (URI) | Base URL of the Menditect MTA documentation site (default: `https://documentation.menditect.com`). Used for dynamic retrieval of official guides and `llms.txt`. |
+| `llms_txt_url` | string (URI) | Explicit override URL for the `llms.txt` documentation index (defaults to `${documentation_url}/llms.txt`). |
 | `plugin_mcp_token` | string | *(Deprecated)* Authorization header (e.g. `Bearer 1`) for the runtime plugin MCP endpoint. Stored in `.env` as `PLUGIN_MCP_TOKEN`. |
 | `app_instances` | array | Discovered application runtime instances with `name`, `token`, `mtaUrl`, `runtimeUrl`, `pluginUrl`, `pluginToken`, and `pluginPort`. |
 | `default_app_instance` | string | Name of the primary default application runtime instance. |

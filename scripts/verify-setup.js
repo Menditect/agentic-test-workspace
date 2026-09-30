@@ -553,6 +553,14 @@ function checkPlaywrightTraceSettings() {
   }
 }
 
+function checkDocumentationSettings() {
+  const docUrl = config.documentation_url || 'https://documentation.menditect.com';
+  const llmsUrl = config.llms_txt_url || `${docUrl.replace(/\/$/, '')}/llms.txt`;
+  console.log('Checking Menditect Documentation (llms.txt) configuration...');
+  console.log(`  ${INFO} Documentation URL : ${docUrl}`);
+  console.log(`  ${PASS} LLMs.txt Endpoint : ${llmsUrl}`);
+}
+
 function verifyMode(mode) {
   return new Promise((resolve) => {
     console.log(`Verifying ${mode} MCP server...`);
@@ -707,6 +715,9 @@ async function run() {
   console.log();
 
   checkPlaywrightTraceSettings();
+  console.log();
+
+  checkDocumentationSettings();
   console.log();
 
   const mtaResult = await verifyMode('mta');

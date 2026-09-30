@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "MTAConfiguration",
   "description": "Canonical configuration schema for Menditect Test Automation (MTA) workspace, MCP servers, runtime plugin, and tooling.",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "type": "object",
   "properties": {
     "$schema": {
@@ -103,6 +103,17 @@
     "tracefile_base_url": {
       "type": "string",
       "description": "Base URL used to retrieve Playwright trace files by FileUUID (e.g. 'https://[mta-or-runtime-domain]/rest/private/tracefile?fileUUID=' or derived from mta_base_url)."
+    },
+    "documentation_url": {
+      "type": "string",
+      "format": "uri",
+      "default": "https://documentation.menditect.com",
+      "description": "Base URL of the Menditect MTA documentation site. Suffixing with '/llms.txt' provides machine-readable documentation index following the llmstxt.org standard."
+    },
+    "llms_txt_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Optional explicit URL override for the llms.txt index file (defaults to '${documentation_url}/llms.txt')."
     },
     "app_instances": {
       "type": "array",
