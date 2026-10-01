@@ -4,6 +4,7 @@ This page lists all the releases of the Menditect Agent Workspace Template, with
 
 | Release Version | Date | Key Highlights / Release Message |
 | :--- | :--- | :--- |
+| [v1.10.0](releases/v1.10.0.md) | 2026-10-01 | added linter tools for checking execution plan and smoke audit in agentic mode |
 | [v1.9.5](releases/v1.9.5.md) | 2026-10-01 | improved setup for exploratory testing |
 | [v1.9.4](releases/v1.9.4.md) | 2026-10-01 | streamlined core mta mcp tools in mta_proxy |
 | [v1.9.3](releases/v1.9.3.md) | 2026-09-30 | improved mta_config with links to documentation |
