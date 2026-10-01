@@ -94,6 +94,7 @@ function normalizeConfigAliases(cfg) {
   normalized.studiopro_mcp_url = cfg.studiopro_mcp_url || cfg.studioproMcpUrl || cfg.studio_pro_mcp_url || '';
   normalized.documentation_url = cfg.documentation_url || cfg.documentationUrl || 'https://documentation.menditect.com';
   normalized.llms_txt_url = cfg.llms_txt_url || cfg.llmsTxtUrl || '';
+  normalized.mta_license_tier = cfg.mta_license_tier || cfg.license_tier || cfg.licenseTier || 'auto';
   return normalized;
 }
 
@@ -951,8 +952,16 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
       '  2. Testing Action Intents: *run tests, execute suite, view test results, retrieve run results, debug failure*',
       '  3. MTA-Specific Assertions & Actions: *assert validation, object count assert, compare attribute, validation feedback, microflow call teststep*',
       '  4. Contextual Combinations: User asks to *verify, assert, mock, or test* in combination with: *microflow, nanoflow, entity, association, page, or widget*',
+      `- **Application name is: ${appName || '[ApplicationName]'}**`,
+      `- **MTA Url: ${mtaUrl || '[MtaUrl]'}**`,
       '- **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json`.',
-      '- **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use native IDE MCP tools (`mta`, `mta_plugin`, `execute-testcase`, `call_mcp_tool`) for all Menditect MTA cloud authoring and test execution tasks. Never create, generate, or execute ad-hoc Node/shell runner scripts (e.g. `build-*.js`, `run-*.js`, CLI bridges) or manual HTTP/curl calls to interact with MTA.',
+      '- **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use the MTA Plugin MCP tool (`MTA_plugin.execute-testcase`) for all in-memory exploratory test executions.',
+      '- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).',
+      '- **EXPLORATORY EXECUTION STRATEGY:** Default to `auto_execute` (draft Execution Plan and execute immediately in a single turn without pausing). If you prefer explicit sign-off before running, set to `prompt_approval`.',
+      '- **MTA LICENSE TIER & CAPABILITIES:**',
+      '  * If `MTA` MCP server is not configured and `MtaPluginModule.MTAConnectionUrl` is `wss://services.menditect.com`, the user is operating under the **Free MTA Exploratory License**.',
+      '  * **Free Capabilities:** Unlimited local in-memory microflow testing (`execute-testcase`) and local Execution Plan generation (`EP_*.md`).',
+      '  * **Paid Platform Capabilities:** Persistent cloud/on-prem test suites, Playwright Frontend UI testing, and CI/CD automated regression pipelines require a paid MTA Platform License.',
       '- **MCP SUBPROCESS PROTECTION & TOKEN ROTATION:** NEVER execute terminal commands (`Stop-Process`, `taskkill`, `kill`) against running MCP server/proxy processes (`mta-proxy.js`, `node.exe`, or custom proxies). Terminating stdio child processes causes AI IDEs (Antigravity, Cursor, Claude Desktop, VS Code) to permanently disable MCP servers for the active session. The built-in proxy reloads `.env` dynamically on every request with zero restart needed. If using a static or custom proxy that returns HTTP 401, prompt the user to update their credentials and use their IDE\'s "Restart MCP Server" / "Reload Window" UI action.'
     ].join('\n');
   }
@@ -960,8 +969,16 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
   return [
     '# Menditect Architecture Setup',
     `- **CRITICAL OPERATIONAL COMMAND:** Always execute tasks using the core rules defined in \`${skillsRelPath}\`.`,
+    `- **Application name is: ${appName || '[ApplicationName]'}**`,
+    `- **MTA Url: ${mtaUrl || '[MtaUrl]'}**`,
     '- **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json`.',
-    '- **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use native IDE MCP tools (`mta`, `mta_plugin`, `execute-testcase`, `call_mcp_tool`) for all Menditect MTA cloud authoring and test execution tasks. Never create, generate, or execute ad-hoc Node/shell runner scripts (e.g. `build-*.js`, `run-*.js`, CLI bridges) or manual HTTP/curl calls to interact with MTA.',
+    '- **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use the MTA Plugin MCP tool (`MTA_plugin.execute-testcase`) for all in-memory exploratory test executions.',
+    '- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).',
+    '- **EXPLORATORY EXECUTION STRATEGY:** Default to `auto_execute` (draft Execution Plan and execute immediately in a single turn without pausing). If you prefer explicit sign-off before running, set to `prompt_approval`.',
+    '- **MTA LICENSE TIER & CAPABILITIES:**',
+    '  * If `MTA` MCP server is not configured and `MtaPluginModule.MTAConnectionUrl` is `wss://services.menditect.com`, the user is operating under the **Free MTA Exploratory License**.',
+    '  * **Free Capabilities:** Unlimited local in-memory microflow testing (`execute-testcase`) and local Execution Plan generation (`EP_*.md`).',
+    '  * **Paid Platform Capabilities:** Persistent cloud/on-prem test suites, Playwright Frontend UI testing, and CI/CD automated regression pipelines require a paid MTA Platform License.',
     '- **MCP SUBPROCESS PROTECTION & TOKEN ROTATION:** NEVER execute terminal commands (`Stop-Process`, `taskkill`, `kill`) against running MCP server/proxy processes (`mta-proxy.js`, `node.exe`, or custom proxies). Terminating stdio child processes causes AI IDEs (Antigravity, Cursor, Claude Desktop, VS Code) to permanently disable MCP servers for the active session. The built-in proxy reloads `.env` dynamically on every request with zero restart needed. If using a static or custom proxy that returns HTTP 401, prompt the user to update their credentials and use their IDE\'s "Restart MCP Server" / "Reload Window" UI action.'
   ].join('\n');
 }
@@ -1641,6 +1658,7 @@ async function run(options = {}) {
 
   const config = {
     $schema: './mta_config.schema.json',
+    mta_license_tier: state.licenseTier || existingConfig.mta_license_tier || 'auto',
     workspace_type: workspaceType,
     workspace_dir: workspaceDir,
     skills_dir: skillsDir,

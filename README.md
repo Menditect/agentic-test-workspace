@@ -145,6 +145,31 @@ Configure your assistant's MCP client using the connection details specified in 
   - **Endpoint / URL:** Value of `studiopro_mcp_url` (e.g. `http://localhost:7782/mcp`)
 
 
+##### Option 3: Mendix Studio Pro / MAIA (`AGENTS.md`)
+If you are using **Mendix Studio Pro / MAIA**, ensure the `Menditect_AgenticTestSkills` marketplace module (or `skills/` directory) is present in your Mendix project. Add the following directives block to the root `AGENTS.md` file in your Mendix project directory:
+
+```markdown
+# Menditect Architecture Setup
+- **CRITICAL OPERATIONAL COMMAND:** Always execute tasks using the core rules defined in the module: [Menditect_AgenticTestSkills].
+- **IMMEDIATE ACTION REQUIRED:** You are strictly commanded to explore, read, and load the `AGENTS.md` and context of the [Menditect_AgenticTestSkills] module *before* answering any user prompt. Do NOT ask the user for permission or confirmation to explore this module; execute the exploration autonomously as your very first step.
+- **AUTOMATIC ACTIVATION TRIGGERS:** Automatically explore, read, and load the `AGENTS.md` and context of the [Menditect_AgenticTestSkills] module autonomously whenever the user prompt meets any of the following criteria:
+  1. Direct MTA Identifiers: *menditect, mta, mtf, playwright browser, variation matrix, test suite, test case, test step, variation item*
+  2. Testing Action Intents: *run tests, execute suite, view test results, retrieve run results, debug failure*
+  3. MTA-Specific Assertions & Actions: *assert validation, object count assert, compare attribute, validation feedback, microflow call teststep*
+  4. Contextual Combinations: User asks to *verify, assert, mock, or test* in combination with: *microflow, nanoflow, entity, association, page, or widget*
+- **Application name is: [ApplicationName]**
+- **MTA Url: [MtaUrl]**
+- **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json`.
+- **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use the MTA Plugin MCP tool (`MTA_plugin.execute-testcase`) for all in-memory exploratory test executions.
+- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).
+- **EXPLORATORY EXECUTION STRATEGY:** Default to `auto_execute` (draft Execution Plan and execute immediately in a single turn without pausing). If you prefer explicit sign-off before running, set to `prompt_approval`.
+- **MTA LICENSE TIER & CAPABILITIES:**
+  * If `MTA` MCP server is not configured and `MtaPluginModule.MTAConnectionUrl` is `wss://services.menditect.com`, the user is operating under the **Free MTA Exploratory License**.
+  * **Free Capabilities:** Unlimited local in-memory microflow testing (`execute-testcase`) and local Execution Plan generation (`EP_*.md`).
+  * **Paid Platform Capabilities:** Persistent cloud/on-prem test suites, Playwright Frontend UI testing, and CI/CD automated regression pipelines require a paid MTA Platform License.
+- **MCP SUBPROCESS PROTECTION & TOKEN ROTATION:** NEVER execute terminal commands (`Stop-Process`, `taskkill`, `kill`) against running MCP server/proxy processes (`mta-proxy.js`, `node.exe`, or custom proxies). Terminating stdio child processes causes AI IDEs (Antigravity, Cursor, Claude Desktop, VS Code) to permanently disable MCP servers for the active session. The built-in proxy reloads `.env` dynamically on every request with zero restart needed. If using a static or custom proxy that returns HTTP 401, prompt the user to update their credentials and use their IDE's "Restart MCP Server" / "Reload Window" UI action.
+```
+
 ## Synchronization & updates
 
 The workspace includes a version inspection mechanism that queries GitHub releases (`mendixlabs/mxcli`) and repository skill frontmatters (`Menditect/agentic-test-skills`) to compare local versions against remote versions before prompting the user to confirm:
