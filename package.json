@@ -10,6 +10,10 @@
     "update:skills": "node scripts/sync-skills.js",
     "update:mxcli": "node scripts/sync-mxcli.js",
     "verify": "node scripts/verify-setup.js",
-    "release": "node scripts/create-release.js"
+    "release": "node scripts/create-release.js",
+    "lint:plan": "node tools/mta-lint.mjs plan",
+    "lint:audit": "node tools/mta-lint.mjs audit",
+    "lint:config": "node tools/mta-lint.mjs config",
+    "lint:test": "node tools/mta-lint.mjs self-test"
   }
 }

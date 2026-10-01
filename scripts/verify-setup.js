@@ -285,6 +285,28 @@ function checkMxcliBinary() {
   }
 }
 
+function checkLinterTooling() {
+  const linterPath = path.join(rootDir, 'tools', 'mta-lint.mjs');
+  if (!fs.existsSync(linterPath)) {
+    console.warn(`${WARN} MTA linter tool not found at ${linterPath}. Run "npm run update" to install it.`);
+    return false;
+  }
+  try {
+    const res = require('child_process').execSync(`node "${linterPath}" self-test --json`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    const data = JSON.parse(res);
+    if (data.valid === true) {
+      console.log(`${PASS} MTA Linter tooling is ready (${data.passedCount}/${data.totalCount} self-tests passed).`);
+      return true;
+    } else {
+      console.warn(`${WARN} MTA Linter self-test failed.`);
+      return false;
+    }
+  } catch (e) {
+    console.warn(`${WARN} Could not execute MTA Linter self-test: ${e.message}`);
+    return false;
+  }
+}
+
 function checkTokenPreflight(mode) {
   if (mode === 'mta') {
     const hasToken = process.env.MTA_MCP_AUTH_HEADER || (process.env.MTA_MCP_TOKEN ? `Bearer ${process.env.MTA_MCP_TOKEN}` : null) || (config.mta_auth_header && config.mta_auth_header.trim());
@@ -700,6 +722,8 @@ async function run() {
 
   console.log('Checking model tooling readiness...');
   checkMxcliBinary();
+  console.log();
+  checkLinterTooling();
   console.log();
 
   checkSecurityHygiene();
