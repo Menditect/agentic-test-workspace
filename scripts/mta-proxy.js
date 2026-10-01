@@ -138,14 +138,10 @@ const CORE_TOOLS = new Set([
   'EditTestCaseVariation', 'EditTestStep', 'EditTestStepAssociation', 'EditTestStepRetrieve',
   'EditTestSuite', 'EditTestSuiteVariation', 'ExecuteTest', 'GenerateMicroflowCallTestStepLocatePage',
   'GenerateMicroflowCallTestStepLocateWidget', 'GetApplicationDetails', 'GetAppModelData',
-  'GetExecutionPlan', 'GetExecutionUsers', 'GetTestCaseDetails', 'GetTestConfigurationDetails',
+  'GetExecutionUsers', 'GetTestCaseDetails', 'GetTestConfigurationDetails',
   'GetTestRunResults', 'GetTeststepDetails', 'GetTestSuiteDetails', 'MoveTestStepToOtherTestCase',
-  'SaveExecutionPlan', 'SetSequenceOfTestCase', 'SetSequenceOfTestStep', 'SetSequenceOfTestSuite',
-  'SetTestStepOutputForSelectObjectForChange', 'SetTestStepOutputForSelectObjectForDelete',
-  'GetApplicationByName', 'GetApplicationForApplicationInstanceToken', 'GetTestConfigurationsForApplicationKey',
-  'ExecuteTestConfiguration', 'GetTestSuites', 'ExecuteTestSuite', 'GetTestCases', 'ExecuteTestCase',
-  'GetTestSteps', 'CreateTestStepCreateObject', 'CreateTestStepChangeObject', 'CreateTestStepRetrieveObject',
-  'CreateTestStepDeleteObject', 'CreateTestStepPersist', 'GetPages', 'GetWidgets', 'RetrieveTestRunResults'
+  'SetSequenceOfTestCase', 'SetSequenceOfTestStep', 'SetSequenceOfTestSuite',
+  'SetTestStepOutputForSelectObjectForChange', 'SetTestStepOutputForSelectObjectForDelete'
 ]);
 
 const FALLBACK_PLUGIN_SCHEMA = {

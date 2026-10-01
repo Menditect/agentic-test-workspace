@@ -4,6 +4,7 @@ This page lists all the releases of the Menditect Agent Workspace Template, with
 
 | Release Version | Date | Key Highlights / Release Message |
 | :--- | :--- | :--- |
+| [v1.9.4](releases/v1.9.4.md) | 2026-10-01 | streamlined core mta mcp tools in mta_proxy |
 | [v1.9.3](releases/v1.9.3.md) | 2026-09-30 | improved mta_config with links to documentation |
 | [v1.9.2](releases/v1.9.2.md) | 2026-09-30 | updated script to set auto approve execution plan settings for exploratory tests |
 | [v1.9.1](releases/v1.9.1.md) | 2026-09-29 | improved documentation in script and verify mode |
