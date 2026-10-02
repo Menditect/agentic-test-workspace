@@ -8,10 +8,17 @@ When working with Mendix, remember:
 2. Read the skills in the `skills/` folder to understand MTA test execution and analysis flows.
 3. The SQLite catalog (`.mxcli/catalog.db`) powers code search and callers/callees. Rebuild via `./mxcli -c "REFRESH CATALOG SOURCE FORCE;"` (or `REFRESH CATALOG FULL FORCE;` for fast structural mode). Note: On large projects, compiling full MDL source definitions can take multiple minutes or up to 1 hour.
 
-## Skills Immutability & Customization Rule
-- Official MTA skills in `skills/` are managed upstream and are completely replaced during updates to prevent orphan files.
-- NEVER make inline modifications to official MTA skills in `skills/`. Any inline edits will be erased on update.
-- Custom organization or domain skills must always be added as separate, new skill folders alongside the MTA skills.
+## Skills & Tools Immutability & Customization Rule (PAT-113, ANTI-62)
+- Official MTA skills in `skills/` and linter tooling (`tools/mta-lint.mjs`) are managed upstream and completely replaced/overwritten during updates (`npm run update` or `npm run update:tools`).
+- **NEVER make inline modifications** to official MTA skills in `skills/` or `tools/mta-lint.mjs` in consumer workspaces (`ANTI-62`). Any inline edits will be erased on update.
+- **Custom Skills:** Custom organization or domain skills must always be added as separate, new skill folders alongside the MTA skills.
+- **Custom Linter Overrides (`tools/mta-lint.custom.mjs`):** If a local bug fix, custom check, or false-positive bypass is required:
+  1. Copy `tools/mta-lint.mjs` to `tools/mta-lint.custom.mjs`.
+  2. Apply changes strictly to `tools/mta-lint.custom.mjs`.
+  3. The linter runner (`tools/run-linter.mjs` used by `npm run lint:*`) automatically detects and executes `tools/mta-lint.custom.mjs`.
+- **Upstream Feedback & Contribution Protocol:** Whenever a bug, false positive, or required customization is encountered in skills or linters, the AI must proactively offer:
+  1. To create a branch and submit a GitHub Pull Request against `https://github.com/Menditect/agentic-test-workspace` (for linters/tools) or `https://github.com/Menditect/agentic-test-skills` (for skills).
+  2. OR output a structured bug report email template addressed to `support@menditect.com` containing the problem description, reproducible scenario, proposed code diff, and acceptance criteria.
 
 ## Repository Architecture & Upstream SSOT
 - **Skills Build Repository (`mta-ai-assistant`)**: The internal engineering repository meant for building MTA skills (work occurs on `development`). It is NOT the public contract source.

@@ -18,9 +18,17 @@ To ensure consistency, security, and stability for all customers:
 
 ## Reporting Issues & Feedback
 
-If you encounter an issue or have a feature suggestion:
-- Menditect customers are encouraged to report issues through the official Menditect Support Portal or directly to your Menditect customer success contact.
-- You may also submit feedback or inquiries to: https://menditect.com/contact
+If you encounter an issue, bug, false positive, or have a feature suggestion for linters or skills:
+- **Email Support:** Send detailed feedback, reproducible scenarios, and suggested fixes directly to **`support@menditect.com`**.
+- **GitHub Pull Requests:** Open a pull request against the appropriate repository:
+  - Tools, linters, workspace scripts: [agentic-test-workspace](https://github.com/Menditect/agentic-test-workspace)
+  - MTA Agent Skills: [agentic-test-skills](https://github.com/Menditect/agentic-test-skills)
+- **Support Portal:** Menditect customers may also submit tickets via the official Menditect Support Portal or at: https://menditect.com/contact
+
+### Linter & Skill Customization Policy (PAT-113, ANTI-62)
+Official skills and linters are managed upstream and will be overwritten during updates (`npm run update`). If you need local hotfixes or customized rules in your workspace:
+- Copy `tools/mta-lint.mjs` to `tools/mta-lint.custom.mjs` and apply changes to the copy. The workspace runner (`tools/run-linter.mjs`) automatically prioritizes your custom linter without risking overwrite.
+- Submit your changes upstream via PR or email to `support@menditect.com` so they can be reviewed and incorporated into the next official release.
 
 ## License
 

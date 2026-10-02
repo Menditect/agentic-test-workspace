@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-export const LINTER_VERSION = "1.1.0";
+export const LINTER_VERSION = "1.2.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -361,6 +361,11 @@ export function lintExecutionPlan(filePath) {
     validateVariationMatrix(variationMatrixTable, addCheck);
   }
 
+  // 3b. Cross-Table Semantic Audit: PAT-07 Empty-Guard & Null-Boundary Verification
+  if (stepLedgerTable && variationMatrixTable) {
+    validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, addCheck);
+  }
+
   // 4. Negative Anti-Pattern Scans
   scanAntiPatterns(content, stepLedgerTable, variationMatrixTable, addCheck);
 
@@ -383,8 +388,6 @@ function validateStepLedgerRules(table, metadata, addCheck) {
   const isBackend = !metadata || metadata.category === 'Backend';
   let previousAction = null;
   let previousOutputHandle = null;
-  let hasSentinelFilter = false;
-  let hasCountAssertion = false;
   let hasPat06Violation = false;
 
   for (let idx = 0; idx < table.rows.length; idx++) {
@@ -413,14 +416,6 @@ function validateStepLedgerRules(table, metadata, addCheck) {
       previousAction = 'Other';
     }
 
-    // Check PAT-07 Sentinel Filter & PAT-08 Object Count Assertion
-    if (/RetrieveObject/i.test(rowText) && /SentinelKey/i.test(rowText)) {
-      hasSentinelFilter = true;
-    }
-    if (/Assert\s+(?:Object\s+)?Count/i.test(rowText)) {
-      hasCountAssertion = true;
-    }
-
     // Settings rule for backend unit tests (None / Stop)
     if (isBackend) {
       const settingsCol = Object.keys(row).find(k => k.toLowerCase().includes('settings') || k.toLowerCase().includes('exec'));
@@ -437,12 +432,208 @@ function validateStepLedgerRules(table, metadata, addCheck) {
   if (!hasPat06Violation) {
     addCheck("PAT-06: Direct Attribute Init on CreateObject", true);
   }
+}
 
-  // Sentinel retrieval check (if sentinel is mentioned in table)
-  const allText = table.rawLines.join(' ');
-  if (/SentinelKey/i.test(allText)) {
-    addCheck("PAT-07: Sentinel Filter for Null Parameter Boundaries", hasSentinelFilter, "SentinelKey referenced but no RetrieveObject step filters by SentinelKey", "MISSING_SENTINEL_RETRIEVE");
-    addCheck("PAT-08: Object Count Assertion on Sentinel Retrieve", hasCountAssertion, "Sentinel filter step must embed an Object Count assertion", "MISSING_COUNT_ASSERTION");
+/**
+ * Cross-table semantic audit for PAT-07 & ANTI-48:
+ * Scans Section 4 (Variation Matrix) for empty/null object and unassigned association variations.
+ * If detected, enforces that Section 3 (Step Ledger) provisions the PAT-07 Retrieve-from-Teststep
+ * sentinel pattern with a scalar sentinel filter and embedded Assert Object Count (PAT-08).
+ */
+function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, addCheck) {
+  // 1. Identify scenario columns in variation matrix
+  const scenarioCols = variationMatrixTable.headers.filter(h => {
+    const trimmed = h.trim();
+    if (trimmed === '#' || trimmed.toLowerCase() === 'case') return false;
+    return /(?:scenario\s*#?\d+|^#\d+)/i.test(trimmed);
+  });
+
+  if (scenarioCols.length === 0) return;
+
+  // 2. Identify target column in variation matrix
+  const targetColKey = Object.keys(variationMatrixTable.rows[0] || {}).find(k => {
+    const l = k.toLowerCase().trim();
+    return (l.includes('target') || l.includes('step') || l.includes('item')) && !l.includes('exec') && l !== '#';
+  }) || (variationMatrixTable.headers.length > 1 && variationMatrixTable.headers[0].trim() === '#' ? variationMatrixTable.headers[1] : variationMatrixTable.headers[0]);
+
+  // 3. Extract Scenario Names and Descriptions maps
+  const scenarioNameMap = {};
+  const scenarioDescMap = {};
+
+  for (const sCol of scenarioCols) {
+    const parenMatch = sCol.match(/\(([^)]+)\)/);
+    if (parenMatch && parenMatch[1].trim()) {
+      scenarioNameMap[sCol] = parenMatch[1].trim();
+    } else {
+      scenarioNameMap[sCol] = sCol.trim();
+    }
+  }
+
+  for (const row of variationMatrixTable.rows) {
+    const rowLabel = targetColKey ? row[targetColKey] : Object.values(row)[0] || '';
+    const cleanLabel = rowLabel.replace(/[`*_]/g, '').trim();
+
+    if (/Scenario\s*Name/i.test(cleanLabel)) {
+      for (const sCol of scenarioCols) {
+        if (row[sCol] && row[sCol].trim()) {
+          scenarioNameMap[sCol] = row[sCol].trim();
+        }
+      }
+    } else if (/Scenario\s*Desc/i.test(cleanLabel)) {
+      for (const sCol of scenarioCols) {
+        if (row[sCol] && row[sCol].trim()) {
+          scenarioDescMap[sCol] = row[sCol].trim();
+        }
+      }
+    }
+  }
+
+  // 4. Scan Section 4 for empty/null object or unassigned association indicators
+  // Indicator tokens: /empty/i, /null/i, /unassigned/i, /missing/i, /no\s+[a-z]+/i, /no[A-Z][a-z]+/i, etc.
+  const emptyTokenRegex = /(?:empty|null|unassigned|missing|no\s+[a-z]+|no[A-Z][a-z]+|no_[a-z]+)/i;
+  const detectedEmptyScenarios = [];
+
+  for (const sCol of scenarioCols) {
+    const scenName = scenarioNameMap[sCol] || sCol;
+    const scenDesc = scenarioDescMap[sCol] || '';
+
+    // Check header string
+    if (emptyTokenRegex.test(sCol)) {
+      detectedEmptyScenarios.push({ col: sCol, name: scenName, reason: `Header '${sCol}' matches empty/null token` });
+      continue;
+    }
+
+    // Check Scenario Name
+    if (emptyTokenRegex.test(scenName)) {
+      detectedEmptyScenarios.push({ col: sCol, name: scenName, reason: `Scenario name '${scenName}' matches empty/null token` });
+      continue;
+    }
+
+    // Check Scenario Description
+    if (emptyTokenRegex.test(scenDesc)) {
+      detectedEmptyScenarios.push({ col: sCol, name: scenName, reason: `Scenario description '${scenDesc}' matches empty/null token` });
+      continue;
+    }
+
+    // Check Matrix Cells: targeting an object parameter or association handle
+    for (const row of variationMatrixTable.rows) {
+      const rowLabel = targetColKey ? row[targetColKey] : Object.values(row)[0] || '';
+      const cleanLabel = rowLabel.replace(/[`*_]/g, '').trim();
+
+      if (/Scenario\s*(?:Name|Desc)/i.test(cleanLabel)) continue;
+
+      const isObjectOrAssocTarget = /(?:assoc|association|handle|object|param|\b[A-Z][a-zA-Z0-9]*_[A-Z][a-zA-Z0-9]*\b)/i.test(cleanLabel);
+      const cellVal = (row[sCol] || '').replace(/[`*_\s]/g, '').toLowerCase();
+
+      if (isObjectOrAssocTarget) {
+        if (cellVal === 'empty' || cellVal === 'null' || cellVal === "''" || cellVal === '""' || cellVal === '-' || cellVal === '' || cellVal === 'none') {
+          detectedEmptyScenarios.push({ col: sCol, name: scenName, reason: `Cell '${cleanLabel}' is empty/null in scenario '${scenName}'` });
+          break;
+        }
+      }
+    }
+  }
+
+  // 5. Inspect Section 3 (Step Ledger) for PAT-07 & PAT-08
+  let hasRetrieveFromTeststep = false;
+  let hasValidSentinelFilter = false;
+  let hasSentinelCountAssertion = false;
+  let hasEnumFilterViolation = false;
+  let hasLongSentinelViolation = false;
+
+  for (let idx = 0; idx < stepLedgerTable.rows.length; idx++) {
+    const row = stepLedgerTable.rows[idx];
+    const rowText = Object.values(row).join(' ');
+
+    const isRetrieve = /Retrieve(?:Object|Objects)?/i.test(rowText);
+    const isTeststepOption = /(?:Teststep|from\s+Teststep|from\s+step|RetrieveOption\s*=\s*["']?Teststep["']?)/i.test(rowText);
+    const inputCol = Object.keys(row).find(k => k.toLowerCase().includes('input'));
+    const inputVal = inputCol ? (row[inputCol] || '').replace(/[`\s]/g, '') : '';
+    const hasPipedInput = inputVal && inputVal !== '-' && inputVal.toLowerCase() !== 'none';
+
+    if (isRetrieve && (isTeststepOption || hasPipedInput)) {
+      hasRetrieveFromTeststep = true;
+
+      // Filter check on scalar attribute (String or Integer, never Enum per PAT-07)
+      const isEnumFilter = /Enum_|\.Enum[A-Za-z0-9_]*/i.test(rowText);
+      if (isEnumFilter) {
+        hasEnumFilterViolation = true;
+      }
+
+      // Universal Short Sentinel Law (<= 4 chars: 'NONE', 'NULL', 'VALID')
+      if (/(?:NON_EXISTENT|DOES_NOT_EXIST|NOT_FOUND)/i.test(rowText)) {
+        hasLongSentinelViolation = true;
+      }
+
+      const hasFilterSpec = /(?:Filter|SentinelKey|Sentinel|[a-zA-Z0-9_]+)\s*(?:==|=|:)\s*(?:'[^']+'|"[^"]+"|\d+)/i.test(rowText) ||
+                            /(?:filter|SentinelKey)/i.test(rowText);
+      if (hasFilterSpec && !isEnumFilter && !hasLongSentinelViolation) {
+        hasValidSentinelFilter = true;
+      }
+
+      // Assert Object Count (PAT-08)
+      if (/Assert\s+(?:Object\s+)?Count|Object\s+Count/i.test(rowText)) {
+        hasSentinelCountAssertion = true;
+      }
+    }
+  }
+
+  // Also check if step ledger mentions SentinelKey in raw lines
+  const ledgerRawText = stepLedgerTable.rawLines.join(' ');
+  if (/SentinelKey/i.test(ledgerRawText) && hasRetrieveFromTeststep && !hasEnumFilterViolation && !hasLongSentinelViolation) {
+    hasValidSentinelFilter = true;
+  }
+  if (/Assert\s+(?:Object\s+)?Count/i.test(ledgerRawText) && hasRetrieveFromTeststep) {
+    hasSentinelCountAssertion = true;
+  }
+
+  // 6. Enforce checks based on whether empty-object scenarios were detected
+  if (detectedEmptyScenarios.length > 0) {
+    const primaryScen = detectedEmptyScenarios[0];
+    const scenarioName = primaryScen.name;
+
+    const meetsPat07 = hasRetrieveFromTeststep && hasValidSentinelFilter && !hasEnumFilterViolation && !hasLongSentinelViolation;
+    if (!meetsPat07) {
+      addCheck(
+        "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
+        false,
+        `Scenario '${scenarioName}' tests an empty/null object or unassigned association, but Section 3 (Master Step Ledger) lacks a PAT-07 Retrieve-from-Teststep sentinel step. Persistent MTA test cases cannot dynamically omit steps; empty object boundaries must be driven via PAT-07 sentinel filtering.`,
+        "ANTI-48_VIOLATION"
+      );
+    } else {
+      addCheck(
+        "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
+        true,
+        null,
+        null,
+        `Scenario '${scenarioName}' tests empty/null boundary using PAT-07 Retrieve-from-Teststep sentinel filter`
+      );
+    }
+
+    if (!hasSentinelCountAssertion) {
+      addCheck(
+        "PAT-08: Object Count Assertion on Sentinel Retrieve",
+        false,
+        `Scenario '${scenarioName}' tests empty/null boundaries with sentinel retrieve, but Section 3 lacks an embedded Assert Object Count assertion (PAT-08)`,
+        "MISSING_COUNT_ASSERTION"
+      );
+    } else {
+      addCheck("PAT-08: Object Count Assertion on Sentinel Retrieve", true);
+    }
+  } else if (/SentinelKey/i.test(ledgerRawText)) {
+    // If no empty scenarios explicitly named but SentinelKey is used in Section 3
+    addCheck(
+      "PAT-07: Sentinel Filter for Null Parameter Boundaries",
+      hasRetrieveFromTeststep && hasValidSentinelFilter,
+      "SentinelKey referenced but no RetrieveObject step filters by SentinelKey",
+      "MISSING_SENTINEL_RETRIEVE"
+    );
+    addCheck(
+      "PAT-08: Object Count Assertion on Sentinel Retrieve",
+      hasSentinelCountAssertion,
+      "Sentinel filter step must embed an Object Count assertion",
+      "MISSING_COUNT_ASSERTION"
+    );
   }
 }
 
@@ -457,7 +648,11 @@ function validateVariationMatrix(table, addCheck) {
     const l = k.toLowerCase().trim();
     return (l.includes('target') || l.includes('step')) && !l.includes('exec') && l !== '#';
   }) || (table.headers.length > 1 && table.headers[0].trim() === '#' ? table.headers[1] : table.headers[0]);
-  const scenarioCols = table.headers.filter(h => /scenario\s*#?\d+/i.test(h));
+  const scenarioCols = table.headers.filter(h => {
+    const trimmed = h.trim();
+    if (trimmed === '#' || trimmed.toLowerCase() === 'case') return false;
+    return /(?:scenario\s*#?\d+|^#\d+)/i.test(trimmed);
+  });
 
   if (scenarioCols.length === 0) {
     addCheck("Variation Matrix Scenario Columns Found", false, "Matrix must have columns formatted as 'Scenario #1', 'Scenario #2', etc.", "INVALID_MATRIX_COLUMNS");
@@ -529,8 +724,19 @@ function scanAntiPatterns(content, stepTable, matrixTable, addCheck) {
 
   // ANTI-20: Frontend UI vs Microflow Substitution
   if (content.includes("MenditectMxFrontendTestKit")) {
-    const hasSubstitutedMicroflow = /CallMicroflow.*(?:ACT_|SUB_).*(?:button|click|page)/i.test(content);
-    addCheck("ANTI-20: Frontend Isolation (No Microflow Substitution)", !hasSubstitutedMicroflow, "UI actions must drive the browser via FrontendTestKit, not backend microflows", "ANTI-20_VIOLATION");
+    const lines = content.split(/\r?\n/);
+    const hasSubstitutedMicroflow = lines.some(line => {
+      return /CallMicroflow/i.test(line) &&
+        !line.includes("MenditectMxFrontendTestKit") &&
+        !line.includes("MenditectPlaywrightConnector") &&
+        /(?:ACT_|SUB_).*(?:button|click|page)/i.test(line);
+    });
+    addCheck(
+      "ANTI-20: Frontend Isolation (No Microflow Substitution)",
+      !hasSubstitutedMicroflow,
+      "UI actions must drive the browser via FrontendTestKit, not backend microflows",
+      "ANTI-20_VIOLATION"
+    );
   }
 
   // ANTI-60: Unified Promotable Blueprint (No unrolled steps)
@@ -896,6 +1102,32 @@ category: "Backend"
       const res = lintExecutionPlan(invalidAnti01);
       const caughtAnti01 = res.errors.some(e => e.code === 'ANTI-01_VIOLATION');
       addCheck("Fixture: invalid_step_anti01.md caught ANTI-01", !res.valid && caughtAnti01, "Expected invalid with ANTI-01");
+    }
+
+    const validFrontendPlan = path.join(fixturesDir, 'valid_frontend_plan.md');
+    if (fs.existsSync(validFrontendPlan)) {
+      const res = lintExecutionPlan(validFrontendPlan);
+      addCheck("Fixture: valid_frontend_plan.md passes ANTI-20", res.valid, `Expected valid, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
+    const invalidFrontendAnti20 = path.join(fixturesDir, 'invalid_frontend_anti20.md');
+    if (fs.existsSync(invalidFrontendAnti20)) {
+      const res = lintExecutionPlan(invalidFrontendAnti20);
+      const caughtAnti20 = res.errors.some(e => e.code === 'ANTI-20_VIOLATION');
+      addCheck("Fixture: invalid_frontend_anti20.md caught ANTI-20", !res.valid && caughtAnti20, "Expected invalid with ANTI-20");
+    }
+
+    const invalidEmptyPlan = path.join(fixturesDir, 'invalid_empty_object_no_sentinel.md');
+    if (fs.existsSync(invalidEmptyPlan)) {
+      const res = lintExecutionPlan(invalidEmptyPlan);
+      const caughtPat07 = res.errors.some(e => e.code === 'ANTI-48_VIOLATION' && e.message.includes('lacks a PAT-07 Retrieve-from-Teststep sentinel step'));
+      addCheck("Fixture: invalid_empty_object_no_sentinel.md caught PAT-07 & ANTI-48", !res.valid && caughtPat07, "Expected invalid with PAT-07 & ANTI-48 violation");
+    }
+
+    const validSentinelPlan = path.join(fixturesDir, 'valid_plan_with_sentinel.md');
+    if (fs.existsSync(validSentinelPlan)) {
+      const res = lintExecutionPlan(validSentinelPlan);
+      addCheck("Fixture: valid_plan_with_sentinel.md passes", res.valid, `Expected valid with PAT-07 sentinel filter, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
     }
 
     if (fs.existsSync(validPlan) && fs.existsSync(passServer)) {

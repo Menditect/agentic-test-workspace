@@ -648,11 +648,38 @@ async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir } = {}) {
     console.warn(`[WARN] Could not download latest mta-lint.mjs from upstream: ${err.message}`);
   }
 
+  // Also sync run-linter.mjs dispatcher
+  try {
+    const runnerUrl = 'https://raw.githubusercontent.com/Menditect/agentic-test-workspace/main/tools/run-linter.mjs';
+    const runnerCode = await fetchRawText(runnerUrl);
+    if (runnerCode && runnerCode.includes('spawnSync')) {
+      fs.writeFileSync(path.join(rootToolsDir, 'run-linter.mjs'), runnerCode, 'utf8');
+      if (targetWsDir && path.resolve(targetWsDir) !== path.resolve(targetRootDir)) {
+        const wsToolsDir = path.join(targetWsDir, 'tools');
+        if (!fs.existsSync(wsToolsDir)) fs.mkdirSync(wsToolsDir, { recursive: true });
+        fs.writeFileSync(path.join(wsToolsDir, 'run-linter.mjs'), runnerCode, 'utf8');
+      }
+      console.log('[PASS] Synchronized tools/run-linter.mjs dispatcher.');
+    }
+  } catch (err) {
+    // Non-fatal if offline or not yet merged on upstream main
+  }
+
+  // Check and preserve custom linter override if present
+  const customLinterPath = path.join(rootToolsDir, 'mta-lint.custom.mjs');
+  if (fs.existsSync(customLinterPath)) {
+    console.log('[NOTICE] Preserving local custom linter override: tools/mta-lint.custom.mjs');
+  }
+
   // Sync test fixtures if available
   const fixtureFiles = [
     'valid_plan.md',
     'invalid_matrix_assoc.md',
     'invalid_step_anti01.md',
+    'valid_frontend_plan.md',
+    'invalid_frontend_anti20.md',
+    'invalid_empty_object_no_sentinel.md',
+    'valid_plan_with_sentinel.md',
     'server_response_pass.json',
     'server_response_fail.json',
     'server_response_doc_mismatch.json'

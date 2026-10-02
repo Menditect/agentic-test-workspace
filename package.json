@@ -1,6 +1,6 @@
 {
   "name": "agentic-test-workspace",
-  "version": "1.10.1",
+  "version": "1.10.2",
   "description": "Menditect Agent Workspace Template",
   "scripts": {
     "setup": "node scripts/setup.js",
@@ -12,9 +12,9 @@
     "update:mxcli": "node scripts/sync-mxcli.js",
     "verify": "node scripts/verify-setup.js",
     "release": "node scripts/create-release.js",
-    "lint:plan": "node tools/mta-lint.mjs plan",
-    "lint:audit": "node tools/mta-lint.mjs audit",
-    "lint:config": "node tools/mta-lint.mjs config",
-    "lint:test": "node tools/mta-lint.mjs self-test"
+    "lint:plan": "node tools/run-linter.mjs plan",
+    "lint:audit": "node tools/run-linter.mjs audit",
+    "lint:config": "node tools/run-linter.mjs config",
+    "lint:test": "node tools/run-linter.mjs self-test"
   }
 }
