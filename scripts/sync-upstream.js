@@ -307,6 +307,34 @@ async function getRemoteSkillVersions() {
   return { results, commitInfo };
 }
 
+function getLocalLinterVersion(rDir) {
+  const linterPath = path.join(rDir, 'tools', 'mta-lint.mjs');
+  if (!fs.existsSync(linterPath)) {
+    return { installed: false, version: null };
+  }
+  try {
+    const content = fs.readFileSync(linterPath, 'utf8');
+    const m = content.match(/export\s+const\s+LINTER_VERSION\s*=\s*["']([^"']+)["']/);
+    if (m) return { installed: true, version: m[1] };
+    const m2 = content.match(/VERSION\s*=\s*["']([^"']+)["']/);
+    return { installed: true, version: m2 ? m2[1] : 'Unknown' };
+  } catch (e) {
+    return { installed: false, version: null, error: e.message };
+  }
+}
+
+async function getRemoteLinterVersion() {
+  try {
+    const raw = await fetchRawText('https://raw.githubusercontent.com/Menditect/agentic-test-workspace/main/tools/mta-lint.mjs');
+    const m = raw.match(/export\s+const\s+LINTER_VERSION\s*=\s*["']([^"']+)["']/);
+    if (m) return { available: true, version: m[1] };
+    const m2 = raw.match(/VERSION\s*=\s*["']([^"']+)["']/);
+    return { available: true, version: m2 ? m2[1] : 'Unknown' };
+  } catch (e) {
+    return { available: false, version: null, error: e.message };
+  }
+}
+
 async function checkVersions(options = {}) {
   const config = options.config || loadConfig();
   const targetSkillsDir = (options.config && options.config.skills_dir) || config.skills_dir || path.join(rootDir, 'skills');
@@ -316,6 +344,7 @@ async function checkVersions(options = {}) {
   const report = {
     mxcli: null,
     skills: null,
+    linter: null,
     hasUpdates: false,
     summary: []
   };
@@ -415,6 +444,39 @@ async function checkVersions(options = {}) {
     if (skillsUpdateAvailable) report.hasUpdates = true;
   }
 
+  if (target === 'all' || target === 'skills' || target === 'tools') {
+    const local = getLocalLinterVersion(rootDir);
+    const remote = await getRemoteLinterVersion();
+
+    let status = 'Unknown';
+    let updateAvailable = false;
+    if (!local.installed) {
+      status = 'Not installed (Download available)';
+      updateAvailable = remote.available;
+    } else if (!remote.available) {
+      status = 'Remote check failed';
+    } else if (local.version && remote.version) {
+      const cleanLocal = local.version.replace(/^v/, '');
+      const cleanRemote = remote.version.replace(/^v/, '');
+      if (cleanLocal === cleanRemote) {
+        status = 'Up to date';
+      } else {
+        status = 'Update available';
+        updateAvailable = true;
+      }
+    }
+
+    report.linter = {
+      local: local.version || '(not installed)',
+      remote: remote.version || '(failed to fetch)',
+      status,
+      updateAvailable,
+      rawRemote: remote.version
+    };
+
+    if (updateAvailable) report.hasUpdates = true;
+  }
+
   return report;
 }
 
@@ -458,9 +520,23 @@ function printVersionTable(report) {
     console.log();
   }
 
+  if (report.linter) {
+    console.log('--- MTA Linter Tooling (Menditect/agentic-test-workspace/tools) ---');
+    console.log(`${pad('Component', 35)} | ${pad('Local Version', 16)} | ${pad('Remote Version', 20)} | Status`);
+    console.log('-'.repeat(88));
+    console.log(
+      `${pad('tools/mta-lint.mjs', 35)} | ` +
+      `${pad(report.linter.local, 16)} | ` +
+      `${pad(report.linter.remote, 20)} | ` +
+      `${report.linter.status}`
+    );
+    console.log();
+  }
+
   console.log('--------------------------------------------------------------------------------');
   const countUpdates = [];
   if (report.mxcli && report.mxcli.updateAvailable) countUpdates.push('mxcli binary');
+  if (report.linter && report.linter.updateAvailable) countUpdates.push('mta-lint tooling');
   if (report.skills) {
     const updatedCount = report.skills.items.filter(i => i.needsUpdate).length;
     if (updatedCount > 0) countUpdates.push(`${updatedCount} skill(s) / orchestrator`);
@@ -547,6 +623,69 @@ function updateDirectives(targetDir, appName, mtaUrl, skillsStyle) {
   }
 }
 
+async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir } = {}) {
+  const targetRootDir = rDir || rootDir;
+  const targetWsDir = wsDir || loadConfig().workspace_dir || targetRootDir;
+
+  console.log('Syncing MTA linter tooling (tools/mta-lint.mjs) from Menditect/agentic-test-workspace...');
+  const rootToolsDir = path.join(targetRootDir, 'tools');
+  const rootFixturesDir = path.join(rootToolsDir, 'fixtures');
+  if (!fs.existsSync(rootFixturesDir)) fs.mkdirSync(rootFixturesDir, { recursive: true });
+
+  try {
+    const linterCode = await fetchRawText('https://raw.githubusercontent.com/Menditect/agentic-test-workspace/main/tools/mta-lint.mjs');
+    if (linterCode && linterCode.includes('LINTER_VERSION')) {
+      fs.writeFileSync(path.join(rootToolsDir, 'mta-lint.mjs'), linterCode, 'utf8');
+
+      if (targetWsDir && path.resolve(targetWsDir) !== path.resolve(targetRootDir)) {
+        const wsToolsDir = path.join(targetWsDir, 'tools');
+        if (!fs.existsSync(wsToolsDir)) fs.mkdirSync(wsToolsDir, { recursive: true });
+        fs.writeFileSync(path.join(wsToolsDir, 'mta-lint.mjs'), linterCode, 'utf8');
+      }
+      console.log('[PASS] Synchronized tools/mta-lint.mjs from upstream workspace repository.');
+    }
+  } catch (err) {
+    console.warn(`[WARN] Could not download latest mta-lint.mjs from upstream: ${err.message}`);
+  }
+
+  // Sync test fixtures if available
+  const fixtureFiles = [
+    'valid_plan.md',
+    'invalid_matrix_assoc.md',
+    'invalid_step_anti01.md',
+    'server_response_pass.json',
+    'server_response_fail.json',
+    'server_response_doc_mismatch.json'
+  ];
+
+  for (const f of fixtureFiles) {
+    try {
+      const fixUrl = `https://raw.githubusercontent.com/Menditect/agentic-test-workspace/main/tools/fixtures/${f}`;
+      const content = await fetchRawText(fixUrl);
+      if (content && content.length > 0) {
+        fs.writeFileSync(path.join(rootFixturesDir, f), content, 'utf8');
+        if (targetWsDir && path.resolve(targetWsDir) !== path.resolve(targetRootDir)) {
+          const wsFixDir = path.join(targetWsDir, 'tools', 'fixtures');
+          if (!fs.existsSync(wsFixDir)) fs.mkdirSync(wsFixDir, { recursive: true });
+          fs.writeFileSync(path.join(wsFixDir, f), content, 'utf8');
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Always run self-test verification
+  try {
+    const linterPath = path.join(targetRootDir, 'tools', 'mta-lint.mjs');
+    if (fs.existsSync(linterPath)) {
+      console.log('Running linter health self-test...');
+      execSync(`node "${linterPath}" self-test`, { stdio: 'inherit' });
+    }
+  } catch (testErr) {
+    console.warn(`[WARN] Linter self-test verification reported errors: ${testErr.message}`);
+  }
+  return true;
+}
+
 async function syncSkills(options = {}) {
   const config = options.config || loadConfig();
   let targetSkillsDir = (options.config && options.config.skills_dir) || config.skills_dir || path.join(rootDir, 'skills');
@@ -628,6 +767,10 @@ async function syncSkills(options = {}) {
           console.warn(`[WARN] Could not update mta_config.schema.json from upstream: ${schemaErr.message}`);
         }
       }
+
+      // Synchronize MTA linter tooling and execute health self-test
+      await syncLinterTools({ rootDir, workspaceDir });
+
       return true;
     } else {
       console.warn('[WARN] AgenticTestSkills directory not found in repository.');
@@ -781,6 +924,8 @@ async function run(cliTarget = null) {
   console.log('\nStarting update...\n');
   if (target === 'skills') {
     await syncSkills();
+  } else if (target === 'tools') {
+    await syncLinterTools();
   } else if (target === 'mxcli') {
     await syncMxcli();
   } else {
@@ -793,6 +938,7 @@ async function run(cliTarget = null) {
 
 module.exports = {
   syncSkills,
+  syncLinterTools,
   syncMxcli,
   checkVersions,
   printVersionTable,
@@ -800,6 +946,8 @@ module.exports = {
   getRemoteMxcliRelease,
   getLocalSkillVersions,
   getRemoteSkillVersions,
+  getLocalLinterVersion,
+  getRemoteLinterVersion,
   run
 };
 

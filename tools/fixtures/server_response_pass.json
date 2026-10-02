@@ -1,9 +1,10 @@
 {
   "testCaseKey": "TC_12345",
   "name": "TC_SampleValid",
+  "description": "Validates sales order processing logic and discount rules.",
   "testSteps": [
-    { "key": "101", "name": "CreateObject", "actionType": "CreateObject" },
-    { "key": "102", "name": "CallMicroflow", "actionType": "MicroflowCall" }
+    { "key": "101", "name": "CreateObject", "actionType": "CreateObject", "description": "[Pattern: Direct Initialization on Create Object PAT-06] - Instantiate Sales.Order with Amount" },
+    { "key": "102", "name": "CallMicroflow", "actionType": "MicroflowCall", "description": "[Pattern: Microflow Execution & Embedded Assertion PAT-14] - Execute Sales.ACT_Process and assert result" }
   ],
   "dataVariationItems": [
     { "key": "201", "name": "Step 1: Order.Amount" },

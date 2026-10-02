@@ -18,7 +18,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-const VERSION = "1.0.0";
+export const LINTER_VERSION = "1.1.0";
+const VERSION = LINTER_VERSION;
 
 // ==========================================
 // CLI Argument Dispatcher
@@ -593,25 +594,153 @@ export function runSmokeAudit(planPath, serverJsonPath) {
   const phase2Pass = plannedVarRows.length === serverVarItems.length || serverVarItems.length >= plannedVarRows.length;
   addCheck("Phase 2: Variation Item Registration Parity", phase2Pass, phase2Pass ? null : `Planned variation rows: ${plannedVarRows.length}, Server registered items: ${serverVarItems.length}`, "VARIATION_ITEM_MISMATCH", `Planned: ${plannedVarRows.length} | Registered: ${serverVarItems.length}`);
 
-  // Phase 3: Scenario Metadata (Columns, Names, Descriptions)
+  // Helper to normalize cell strings for comparison
+  const cleanCell = (str) => {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/^[`'"]+|[`'"]+$/g, '')
+      .replace(/^\*\*|\*\*$/g, '')
+      .trim();
+  };
+
+  // Phase 3: Scenario Metadata (Columns, Names, Descriptions Value Parity)
   const scenarioCols = variationMatrixTable ? variationMatrixTable.headers.filter(h => /scenario\s*#?\d+/i.test(h)) : [];
   const serverScenarios = serverData.scenarios || serverData.dataVariations || [];
-  const phase3Pass = scenarioCols.length <= serverScenarios.length || serverScenarios.length > 0;
-  addCheck("Phase 3: Scenario Metadata Registration", phase3Pass, phase3Pass ? null : `Planned scenarios: ${scenarioCols.length}, Server scenarios: ${serverScenarios.length}`, "SCENARIO_COUNT_MISMATCH", `Planned: ${scenarioCols.length} | Server: ${serverScenarios.length}`);
+  const phase3CountPass = scenarioCols.length <= serverScenarios.length || serverScenarios.length > 0;
+  addCheck("Phase 3: Scenario Count Registration", phase3CountPass, phase3CountPass ? null : `Planned scenarios: ${scenarioCols.length}, Server scenarios: ${serverScenarios.length}`, "SCENARIO_COUNT_MISMATCH", `Planned: ${scenarioCols.length} | Server: ${serverScenarios.length}`);
+
+  // Find Scenario Name row and Scenario Description row in variationMatrixTable
+  let scenarioNameRow = null;
+  let scenarioDescRow = null;
+  if (variationMatrixTable) {
+    for (const r of variationMatrixTable.rows) {
+      const rowStr = Object.values(r).join(' ').toLowerCase();
+      if (rowStr.includes('scenario name')) {
+        scenarioNameRow = r;
+      } else if (rowStr.includes('scenario desc')) {
+        scenarioDescRow = r;
+      }
+    }
+  }
+
+  let scenarioNamesMatched = 0;
+  let scenarioDescsMatched = 0;
+
+  if (scenarioCols.length > 0 && serverScenarios.length > 0) {
+    for (let idx = 0; idx < scenarioCols.length; idx++) {
+      const colHeader = scenarioCols[idx];
+      const serverVar = serverScenarios[idx];
+      if (!serverVar) continue;
+
+      const serverName = cleanCell(serverVar.name || serverVar.Name || '');
+      const serverDesc = cleanCell(serverVar.description || serverVar.Description || '');
+
+      if (scenarioNameRow) {
+        const plannedName = cleanCell(scenarioNameRow[colHeader]);
+        if (plannedName) {
+          const match = serverName === plannedName;
+          addCheck(
+            `Phase 3: Scenario #${idx + 1} Name Parity (PAT-77)`,
+            match,
+            match ? null : `Scenario #${idx + 1} name mismatch: expected '${plannedName}', found '${serverName}'`,
+            "SCENARIO_NAME_MISMATCH",
+            `Planned: '${plannedName}' | Server: '${serverName}'`
+          );
+          if (match) scenarioNamesMatched++;
+        }
+      }
+
+      if (scenarioDescRow) {
+        const plannedDesc = cleanCell(scenarioDescRow[colHeader]);
+        if (plannedDesc) {
+          const match = serverDesc === plannedDesc;
+          addCheck(
+            `Phase 3: Scenario #${idx + 1} Description Parity (PAT-77)`,
+            match,
+            match ? null : `Scenario #${idx + 1} description mismatch: expected '${plannedDesc}', found '${serverDesc}'`,
+            "SCENARIO_DESCRIPTION_MISMATCH",
+            `Planned: '${plannedDesc}' | Server: '${serverDesc}'`
+          );
+          if (match) scenarioDescsMatched++;
+        }
+      }
+    }
+  }
 
   // Phase 4: MTA Construction Errors Check
   const constructionErrors = serverData.constructionErrors !== undefined ? serverData.constructionErrors : (serverData.TCER_TestConstructionErrors || 0);
   const phase4Pass = constructionErrors === 0;
   addCheck("Phase 4: Server Model Construction Errors", phase4Pass, phase4Pass ? null : `Server reported ${constructionErrors} construction error(s)`, "CONSTRUCTION_ERRORS", `TCER_TestConstructionErrors: ${constructionErrors}`);
 
-  const valid = phase1Pass && phase2Pass && phase3Pass && phase4Pass;
+  // Phase 5: Documentation & Pattern Annotations Verification (PAT-12)
+  let stepDocCount = 0;
+  let stepPatternTagMatches = 0;
+  let totalPatternTagsExpected = 0;
+
+  for (let idx = 0; idx < serverSteps.length; idx++) {
+    const serverStep = serverSteps[idx];
+    const stepDesc = cleanCell(serverStep.description || serverStep.Description || '');
+    const plannedStepRow = plannedSteps[idx];
+
+    if (!stepDesc) {
+      addCheck(
+        `Phase 5: Step ${idx + 1} Description Populated (PAT-12)`,
+        false,
+        `Step ${idx + 1} (${serverStep.name || serverStep.actionType || 'Step'}) has no description on server`,
+        "STEP_DESCRIPTION_EMPTY"
+      );
+    } else {
+      addCheck(
+        `Phase 5: Step ${idx + 1} Description Populated (PAT-12)`,
+        true,
+        null,
+        null,
+        stepDesc
+      );
+      stepDocCount++;
+
+      // If planned step references PAT-xx, verify it is annotated in server step description
+      if (plannedStepRow) {
+        const plannedRowText = Object.values(plannedStepRow).join(' ');
+        const patTags = plannedRowText.match(/PAT-\d+/gi);
+        if (patTags) {
+          for (const tag of patTags) {
+            totalPatternTagsExpected++;
+            const hasTag = stepDesc.toUpperCase().includes(tag.toUpperCase());
+            addCheck(
+              `Phase 5: Step ${idx + 1} Pattern Annotation (${tag})`,
+              hasTag,
+              hasTag ? null : `Step ${idx + 1} description missing expected pattern tag '${tag}'`,
+              "STEP_PATTERN_TAG_MISMATCH",
+              `Expected: '${tag}' in '${stepDesc}'`
+            );
+            if (hasTag) stepPatternTagMatches++;
+          }
+        }
+      }
+    }
+  }
+
+  // Test Case Description Check
+  const tcDesc = cleanCell(serverData.description || serverData.Description || (serverData.testCase && serverData.testCase.description) || '');
+  const tcDescPass = tcDesc.length > 0;
+  addCheck(
+    "Phase 5: Test Case Description Populated",
+    tcDescPass,
+    tcDescPass ? null : "Test Case description is empty on server",
+    "TESTCASE_DESCRIPTION_EMPTY",
+    tcDescPass ? tcDesc : "Empty"
+  );
+
+  const valid = errors.length === 0;
 
   // Generate Receipt
   const receipt = `
 * **Phase 1 (Step Count Parity):** Planned: ${pCount} | Server: ${sCount} | Status: ${phase1Pass ? 'PASS' : 'FAIL'}
 * **Phase 2 (Variation Item Registration):** Planned: ${plannedVarRows.length} | Registered: ${serverVarItems.length} | Status: ${phase2Pass ? 'PASS' : 'FAIL'}
-* **Phase 3 (Scenario Metadata):** Planned Columns: ${scenarioCols.length} | Server Scenarios: ${serverScenarios.length} | Status: ${phase3Pass ? 'PASS' : 'FAIL'}
+* **Phase 3 (Scenario Metadata & Doc Parity):** Planned Columns: ${scenarioCols.length} | Names Verified: ${scenarioNamesMatched}/${scenarioCols.length} | Descriptions Verified: ${scenarioDescsMatched}/${scenarioCols.length} | Status: ${errors.some(e => e.code.startsWith('SCENARIO_')) ? 'FAIL' : 'PASS'}
 * **Phase 4 (Construction Errors):** TCER_TestConstructionErrors == ${constructionErrors} | Status: ${phase4Pass ? 'PASS' : 'FAIL'}
+* **Phase 5 (Documentation & Pattern Annotations):** Steps Documented: ${stepDocCount}/${serverSteps.length} | Pattern Tags: ${stepPatternTagMatches}/${totalPatternTagsExpected} | TC Description: ${tcDescPass ? 'PASS' : 'EMPTY'} | Status: ${errors.some(e => e.code.startsWith('STEP_') || e.code.startsWith('TESTCASE_')) ? 'FAIL' : 'PASS'}
 * **Overall Smoke Audit Verdict:** ${valid ? 'PASS (0 Discrepancies)' : 'FAIL'}
 `.trim();
 
@@ -777,6 +906,13 @@ category: "Backend"
     if (fs.existsSync(validPlan) && fs.existsSync(failServer)) {
       const res = runSmokeAudit(validPlan, failServer);
       addCheck("Fixture: Smoke audit fails on mismatching data", !res.valid, "Expected failed smoke audit");
+    }
+
+    const docMismatchServer = path.join(fixturesDir, 'server_response_doc_mismatch.json');
+    if (fs.existsSync(validPlan) && fs.existsSync(docMismatchServer)) {
+      const res = runSmokeAudit(validPlan, docMismatchServer);
+      const caughtDocMismatch = res.errors.some(e => e.code.startsWith('SCENARIO_') || e.code.startsWith('STEP_') || e.code.startsWith('TESTCASE_'));
+      addCheck("Fixture: Smoke audit catches documentation & metadata mismatches", !res.valid && caughtDocMismatch, "Expected failed smoke audit on doc mismatches");
     }
   }
 

@@ -22,10 +22,10 @@ category: "Backend"
 <details>
 <summary><b>View detailed step specifications (Click to expand)</b></summary>
 
-| # | Case | Step Action & Target | Input Handle | Output Handle | Parameters, Bindings & Initial Values | Embedded Assertions | Exec Settings |
-| :-: | :--: | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | Case 1 | `CreateObject` (`Sales.Order`) | - | `orderHandle` | `Amount = 100` | - | `None` / `Stop` |
-| **2** | Case 1 | `CallMicroflow` (`Sales.ACT_Process`) | `orderHandle` | `resultHandle` | `Order = orderHandle` | `Assert result == true` | `None` / `Stop` |
+| # | Case | Step Action & Target | Input Handle | Output Handle | Parameters, Bindings & Initial Values | Embedded Assertions | Exec Settings | Pattern Tag |
+| :-: | :--: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **1** | Case 1 | `CreateObject` (`Sales.Order`) | - | `orderHandle` | `Amount = 100` | - | `None` / `Stop` | `PAT-06` |
+| **2** | Case 1 | `CallMicroflow` (`Sales.ACT_Process`) | `orderHandle` | `resultHandle` | `Order = orderHandle` | `Assert result == true` | `None` / `Stop` | `PAT-14` |
 
 </details>
 

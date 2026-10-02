@@ -1,0 +1,18 @@
+{
+  "testCaseKey": "TC_12345",
+  "name": "TC_SampleValid",
+  "description": "",
+  "testSteps": [
+    { "key": "101", "name": "CreateObject", "actionType": "CreateObject", "description": "" },
+    { "key": "102", "name": "CallMicroflow", "actionType": "MicroflowCall", "description": "Execute Sales.ACT_Process without pattern tag" }
+  ],
+  "dataVariationItems": [
+    { "key": "201", "name": "Step 1: Order.Amount" },
+    { "key": "202", "name": "Step 2: Assert Return Value" }
+  ],
+  "dataVariations": [
+    { "key": "301", "name": "Mismatched Scenario Name", "description": "Standard verification" },
+    { "key": "302", "name": "VIP Customer", "description": "Mismatched scenario description" }
+  ],
+  "TCER_TestConstructionErrors": 0
+}

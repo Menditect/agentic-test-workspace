@@ -1,6 +1,6 @@
 {
   "name": "agentic-test-workspace",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "description": "Menditect Agent Workspace Template",
   "scripts": {
     "setup": "node scripts/setup.js",
@@ -8,6 +8,7 @@
     "update": "node scripts/sync-upstream.js",
     "update:check": "node scripts/sync-upstream.js --check",
     "update:skills": "node scripts/sync-skills.js",
+    "update:tools": "node scripts/sync-tools.js",
     "update:mxcli": "node scripts/sync-mxcli.js",
     "verify": "node scripts/verify-setup.js",
     "release": "node scripts/create-release.js",
