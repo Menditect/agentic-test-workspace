@@ -1,6 +1,6 @@
 {
   "name": "agentic-test-workspace",
-  "version": "1.10.2",
+  "version": "1.10.3",
   "description": "Menditect Agent Workspace Template",
   "scripts": {
     "setup": "node scripts/setup.js",

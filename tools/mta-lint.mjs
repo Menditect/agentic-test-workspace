@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-export const LINTER_VERSION = "1.2.0";
+export const LINTER_VERSION = "1.3.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -351,6 +351,7 @@ export function lintExecutionPlan(filePath) {
 
     // Step Rules Validation
     validateStepLedgerRules(stepLedgerTable, metadata, addCheck);
+    validatePipedRetrieveObjectCount(stepLedgerTable, addCheck);
   }
 
   // Validate Target-Bound Data Variation Matrix
@@ -365,6 +366,9 @@ export function lintExecutionPlan(filePath) {
   if (stepLedgerTable && variationMatrixTable) {
     validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, addCheck);
   }
+
+  // 3c. DateTime & DatePicker Format Audit (PAT-94, PAT-42, ANTI-45, ANTI-53)
+  validateDateTimeAndDatePickerFormats(content, stepLedgerTable, variationMatrixTable, metadata, tables, addCheck);
 
   // 4. Negative Anti-Pattern Scans
   scanAntiPatterns(content, stepLedgerTable, variationMatrixTable, addCheck);
@@ -431,6 +435,190 @@ function validateStepLedgerRules(table, metadata, addCheck) {
   // Record PAT-06 check if no violation was recorded
   if (!hasPat06Violation) {
     addCheck("PAT-06: Direct Attribute Init on CreateObject", true);
+  }
+}
+
+/**
+ * Rule: PAT-08 & ANTI-03: Retrieve Output Object Count Assertion
+ * Any Retrieve Object step that pipes its output handle into downstream teststeps
+ * (microflow parameters, change/delete actions, associations, etc.) MUST embed
+ * an Assert Object Count assertion to guarantee object existence and prevent
+ * silent downstream null-pointer or parameter-unbound errors.
+ */
+function validatePipedRetrieveObjectCount(table, addCheck) {
+  let hasAnti03Violation = false;
+  let totalPipedRetrieves = 0;
+
+  const cleanAction = (str) => String(str).replace(/[`*_]/g, '').trim().split('\n')[0];
+
+  for (let idx = 0; idx < table.rows.length; idx++) {
+    const row = table.rows[idx];
+    const rowText = Object.values(row).join(' ');
+
+    const actionCol = Object.keys(row).find(k => k.toLowerCase().includes('action') || k.toLowerCase().includes('target'));
+    const actionVal = actionCol ? row[actionCol] : rowText;
+    const isRetrieve = /Retrieve(?:Object|Objects)?/i.test(actionVal) || /Retrieve(?:Object|Objects)?/i.test(rowText);
+
+    if (!isRetrieve) continue;
+
+    // Retrieve output handle
+    const outHandleCol = Object.keys(row).find(k => k.toLowerCase().includes('output'));
+    const outHandle = outHandleCol ? (row[outHandleCol] || '').replace(/[`\s]/g, '') : null;
+
+    if (!outHandle || outHandle === '-' || outHandle.toLowerCase() === 'none') {
+      continue;
+    }
+
+    // Check downstream consumption
+    let isPipedDownstream = false;
+    let downstreamStepNumber = null;
+
+    const escapedHandle = outHandle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const handleRegex = new RegExp(`\\b${escapedHandle}\\b`);
+
+    for (let j = idx + 1; j < table.rows.length; j++) {
+      const downRow = table.rows[j];
+      const downInCol = Object.keys(downRow).find(k => k.toLowerCase().includes('input'));
+      const downInVal = downInCol ? (downRow[downInCol] || '').replace(/[`\s]/g, '') : '';
+      const downInList = downInVal.split(',').map(s => s.trim());
+
+      const downParamCol = Object.keys(downRow).find(k => k.toLowerCase().includes('param') || k.toLowerCase().includes('binding') || k.toLowerCase().includes('initial'));
+      const downParamVal = downParamCol ? downRow[downParamCol] || '' : '';
+
+      if (downInList.includes(outHandle) || handleRegex.test(downInVal) || handleRegex.test(downParamVal)) {
+        isPipedDownstream = true;
+        downstreamStepNumber = j + 1;
+        break;
+      }
+    }
+
+    if (isPipedDownstream) {
+      totalPipedRetrieves++;
+      const assertCol = Object.keys(row).find(k => k.toLowerCase().includes('assert'));
+      const assertVal = assertCol ? row[assertCol] || '' : '';
+      const hasCountAssert = /(?:Assert\s+(?:Object\s+)?Count|Object\s+Count)/i.test(assertVal) ||
+                             /(?:Assert\s+(?:Object\s+)?Count|Object\s+Count)/i.test(rowText);
+
+      if (!hasCountAssert) {
+        addCheck(
+          "PAT-08 & ANTI-03: Retrieve Output Object Count Assertion",
+          false,
+          `Step ${idx + 1} (${cleanAction(actionVal)}) provides output handle '${outHandle}' to downstream step ${downstreamStepNumber}, but lacks an embedded Assert Object Count assertion (ANTI-03). Retrieve steps that pipe output must verify existence with Assert Object Count.`,
+          "ANTI-03_VIOLATION"
+        );
+        hasAnti03Violation = true;
+      }
+    }
+  }
+
+  if (!hasAnti03Violation) {
+    addCheck(
+      "PAT-08 & ANTI-03: Retrieve Output Object Count Assertion",
+      true,
+      null,
+      null,
+      totalPipedRetrieves > 0 ? `${totalPipedRetrieves} piped retrieve step(s) verified with Assert Object Count` : "No unasserted piped retrieve outputs detected"
+    );
+  }
+}
+
+/**
+ * Validates DateTime & DatePicker Formats (PAT-42, PAT-94, ANTI-45, ANTI-53).
+ * 1. General / Backend: Verifies that no unparsed runtime date macros (e.g. '[%CurrentDateTime%]')
+ *    are passed as literal strings into step parameters or variation matrices (ANTI-53).
+ * 2. Frontend: When DatePicker widgets are used or ACT_Fill_DatePicker_Input is called,
+ *    verifies that CustomDateFormat pattern (e.g. 'dd-MM-yyyy') is documented (PAT-94)
+ *    and not defaulted/assumed (ANTI-45).
+ */
+function validateDateTimeAndDatePickerFormats(content, stepLedgerTable, variationMatrixTable, metadata, tables, addCheck) {
+  // A. Check for unparsed Mendix date macros in step ledger and variation matrix (ANTI-53)
+  const dateMacroRegex = /\[%(?:CurrentDateTime|BeginOfCurrentDay|EndOfCurrentDay|BeginOfCurrentWeek|EndOfCurrentWeek|BeginOfCurrentMonth|EndOfCurrentMonth)[\s\S]*?%\]/i;
+  
+  let unparsedMacroFound = false;
+  let unparsedMacroLocation = null;
+
+  if (stepLedgerTable) {
+    for (const row of stepLedgerTable.rows) {
+      const rowText = Object.values(row).join(' ');
+      const match = rowText.match(dateMacroRegex);
+      if (match) {
+        unparsedMacroFound = true;
+        unparsedMacroLocation = `Step Ledger: '${match[0]}'`;
+        break;
+      }
+    }
+  }
+
+  if (!unparsedMacroFound && variationMatrixTable) {
+    for (const row of variationMatrixTable.rows) {
+      const rowText = Object.values(row).join(' ');
+      const match = rowText.match(dateMacroRegex);
+      if (match) {
+        unparsedMacroFound = true;
+        unparsedMacroLocation = `Variation Matrix: '${match[0]}'`;
+        break;
+      }
+    }
+  }
+
+  if (unparsedMacroFound) {
+    addCheck(
+      "ANTI-53: Zero Unparsed Date Macros in Payloads",
+      false,
+      `Found unparsed Mendix runtime date macro in ${unparsedMacroLocation} (ANTI-53). Literal macro strings like '[%CurrentDateTime%]' cannot be evaluated at runtime; use ISO-8601 UTC timestamps or MTA offset actions (PAT-42).`,
+      "ANTI-53_VIOLATION"
+    );
+  } else {
+    addCheck(
+      "ANTI-53: Zero Unparsed Date Macros in Payloads",
+      true,
+      null,
+      null,
+      "No unparsed Mendix date macros found"
+    );
+  }
+
+  // B. Check Frontend DatePicker interactions (PAT-94, ANTI-45)
+  const isFrontend = metadata && metadata.category === 'Frontend';
+  const hasDatePickerStep = stepLedgerTable && stepLedgerTable.rows.some(r => {
+    const text = Object.values(r).join(' ');
+    return /ACT_Fill_DatePicker_Input|ASR_Has_Value_DatePicker_Input|Locate_MxWidget_DatePicker/i.test(text);
+  });
+  const hasDatePickerInInventory = tables && tables.some(t => {
+    const headerStr = t.headers.join(' ').toLowerCase();
+    if (headerStr.includes('widget') || headerStr.includes('locator')) {
+      return t.rows.some(r => Object.values(r).join(' ').toLowerCase().includes('datepicker'));
+    }
+    return false;
+  });
+
+  if (isFrontend && (hasDatePickerStep || hasDatePickerInInventory)) {
+    // Check if CustomDateFormat is explicitly documented in the inventory or plan
+    // Standard format pattern tokens: e.g. dd-MM-yyyy, yyyy-MM-dd, MM/dd/yyyy, dd/MM/yyyy, dd.MM.yyyy
+    const hasCustomDateFormatDoc = /(?:CustomDateFormat|dateformPattern|Date\s*Format)[\s\S]*?(?:dd[-/. ]MM[-/. ]yyyy|yyyy[-/. ]MM[-/. ]dd|MM[-/. ]dd[-/. ]yyyy|dd[-/. ]MM[-/. ]yy)/i.test(content) ||
+      /Date\s*Format\s*\/\s*Constraint\s*\(PAT-94\)[\s\S]*?(?:dd[-/. ]MM[-/. ]yyyy|yyyy[-/. ]MM[-/. ]dd|MM[-/. ]dd[-/. ]yyyy)/i.test(content) ||
+      /CustomDateFormat\s*via\s*mxcli\s*bson\s*dump/i.test(content);
+
+    // Explicitly check for defaulted or assumed date format indicators (ANTI-45)
+    const hasAssumedFormatIndicator = /(?:default\s*date\s*format|assumed\s*date\s*format|default\s*US\s*format|\bDefault\b\s*\|\s*`?Locate_MxWidget_DatePicker)/i.test(content) ||
+      /\|\s*`?[a-zA-Z0-9_]*DatePicker[a-zA-Z0-9_]*`?\s*\|\s*`?DatePicker`?\s*\|\s*(?:Default|-|N\/A|\s*)\s*\|/i.test(content);
+
+    if (!hasCustomDateFormatDoc || hasAssumedFormatIndicator) {
+      addCheck(
+        "PAT-94 & ANTI-45: Mandatory DatePicker Format Model Extraction",
+        false,
+        "Frontend test interacts with DatePicker widget, but no verified CustomDateFormat pattern (e.g. 'dd-MM-yyyy', 'yyyy-MM-dd') is documented in Section 4 Input Widget Inventory (PAT-94 / ANTI-45). Date formats must be extracted via 'mxcli bson dump' and never guessed or defaulted.",
+        "ANTI-45_VIOLATION"
+      );
+    } else {
+      addCheck(
+        "PAT-94 & ANTI-45: Mandatory DatePicker Format Model Extraction",
+        true,
+        null,
+        null,
+        "DatePicker CustomDateFormat verified and documented"
+      );
+    }
   }
 }
 
@@ -938,6 +1126,43 @@ export function runSmokeAudit(planPath, serverJsonPath) {
     tcDescPass ? tcDesc : "Empty"
   );
 
+  // Phase 6: DateTime & DatePicker Configuration Parity (PAT-94, PAT-42, ANTI-45, ANTI-53)
+  let dateStepErrors = [];
+  let datePickerStepChecked = false;
+
+  for (let idx = 0; idx < serverSteps.length; idx++) {
+    const sStep = serverSteps[idx];
+    const sText = JSON.stringify(sStep);
+
+    // Check for unparsed macros on server
+    const macroMatch = sText.match(/\[%(?:CurrentDateTime|BeginOfCurrentDay|EndOfCurrentDay)[\s\S]*?%\]/i);
+    if (macroMatch) {
+      dateStepErrors.push(`Step ${idx + 1} contains unparsed date macro '${macroMatch[0]}' on server (ANTI-53)`);
+    }
+
+    // Check DatePicker steps on server
+    if (/ACT_Fill_DatePicker_Input/i.test(sText) || (sStep.name && /DatePicker/i.test(sStep.name))) {
+      datePickerStepChecked = true;
+      // If the execution plan documented a custom date format, verify step description or parameter contains date formatting info
+      if (/(?:CustomDateFormat|dd-MM-yyyy|yyyy-MM-dd|MM\/dd\/yyyy)/i.test(planContent)) {
+        const hasDateDesc = sStep.description && /(?:CustomDateFormat|date|format|dd|yyyy|MM)/i.test(sStep.description);
+        const hasDateParam = sStep.parameters && JSON.stringify(sStep.parameters).length > 2;
+        if (!hasDateDesc && !hasDateParam && !sStep.description) {
+          dateStepErrors.push(`Step ${idx + 1} (${sStep.name || 'DatePicker'}) missing date format documentation or parameters on server (PAT-94)`);
+        }
+      }
+    }
+  }
+
+  const phase6Pass = dateStepErrors.length === 0;
+  addCheck(
+    "Phase 6: DateTime & DatePicker Configuration Parity",
+    phase6Pass,
+    phase6Pass ? null : dateStepErrors.join('; '),
+    "DATETIME_CONFIG_MISMATCH",
+    datePickerStepChecked ? "DatePicker step verified on server" : "No DatePicker steps or macro violations detected"
+  );
+
   const valid = errors.length === 0;
 
   // Generate Receipt
@@ -947,6 +1172,7 @@ export function runSmokeAudit(planPath, serverJsonPath) {
 * **Phase 3 (Scenario Metadata & Doc Parity):** Planned Columns: ${scenarioCols.length} | Names Verified: ${scenarioNamesMatched}/${scenarioCols.length} | Descriptions Verified: ${scenarioDescsMatched}/${scenarioCols.length} | Status: ${errors.some(e => e.code.startsWith('SCENARIO_')) ? 'FAIL' : 'PASS'}
 * **Phase 4 (Construction Errors):** TCER_TestConstructionErrors == ${constructionErrors} | Status: ${phase4Pass ? 'PASS' : 'FAIL'}
 * **Phase 5 (Documentation & Pattern Annotations):** Steps Documented: ${stepDocCount}/${serverSteps.length} | Pattern Tags: ${stepPatternTagMatches}/${totalPatternTagsExpected} | TC Description: ${tcDescPass ? 'PASS' : 'EMPTY'} | Status: ${errors.some(e => e.code.startsWith('STEP_') || e.code.startsWith('TESTCASE_')) ? 'FAIL' : 'PASS'}
+* **Phase 6 (DateTime & DatePicker Formats):** Macro Violations: ${dateStepErrors.length} | DatePicker Verified: ${datePickerStepChecked ? 'YES' : 'N/A'} | Status: ${phase6Pass ? 'PASS' : 'FAIL'}
 * **Overall Smoke Audit Verdict:** ${valid ? 'PASS (0 Discrepancies)' : 'FAIL'}
 `.trim();
 
@@ -1104,6 +1330,13 @@ category: "Backend"
       addCheck("Fixture: invalid_step_anti01.md caught ANTI-01", !res.valid && caughtAnti01, "Expected invalid with ANTI-01");
     }
 
+    const invalidAnti03 = path.join(fixturesDir, 'invalid_piped_retrieve_no_count.md');
+    if (fs.existsSync(invalidAnti03)) {
+      const res = lintExecutionPlan(invalidAnti03);
+      const caughtAnti03 = res.errors.some(e => e.code === 'ANTI-03_VIOLATION');
+      addCheck("Fixture: invalid_piped_retrieve_no_count.md caught ANTI-03", !res.valid && caughtAnti03, "Expected invalid with ANTI-03");
+    }
+
     const validFrontendPlan = path.join(fixturesDir, 'valid_frontend_plan.md');
     if (fs.existsSync(validFrontendPlan)) {
       const res = lintExecutionPlan(validFrontendPlan);
@@ -1115,6 +1348,20 @@ category: "Backend"
       const res = lintExecutionPlan(invalidFrontendAnti20);
       const caughtAnti20 = res.errors.some(e => e.code === 'ANTI-20_VIOLATION');
       addCheck("Fixture: invalid_frontend_anti20.md caught ANTI-20", !res.valid && caughtAnti20, "Expected invalid with ANTI-20");
+    }
+
+    const invalidDatePicker = path.join(fixturesDir, 'invalid_datepicker_no_format.md');
+    if (fs.existsSync(invalidDatePicker)) {
+      const res = lintExecutionPlan(invalidDatePicker);
+      const caughtAnti45 = res.errors.some(e => e.code === 'ANTI-45_VIOLATION');
+      addCheck("Fixture: invalid_datepicker_no_format.md caught ANTI-45", !res.valid && caughtAnti45, "Expected invalid with ANTI-45");
+    }
+
+    const invalidDateMacro = path.join(fixturesDir, 'invalid_date_macro.md');
+    if (fs.existsSync(invalidDateMacro)) {
+      const res = lintExecutionPlan(invalidDateMacro);
+      const caughtAnti53 = res.errors.some(e => e.code === 'ANTI-53_VIOLATION');
+      addCheck("Fixture: invalid_date_macro.md caught ANTI-53", !res.valid && caughtAnti53, "Expected invalid with ANTI-53");
     }
 
     const invalidEmptyPlan = path.join(fixturesDir, 'invalid_empty_object_no_sentinel.md');

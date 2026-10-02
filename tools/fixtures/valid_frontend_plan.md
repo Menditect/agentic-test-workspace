@@ -11,7 +11,7 @@ category: "Frontend"
 </details>
 
 ## 1. Purpose & Scope
-Frontend test verifying order submission via browser UI.
+Frontend test verifying order submission and date selection via browser UI.
 
 ## 2. Component Under Test
 MenditectMxFrontendTestKit driving Order_NewEdit page.
@@ -21,18 +21,27 @@ MenditectMxFrontendTestKit driving Order_NewEdit page.
 | # | Case | Step Action & Target | Input Handle | Output Handle | Parameters, Bindings & Initial Values | Embedded Assertions | Exec Settings | Pattern Tag |
 | :-: | :--: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1** | Case 1 | `CreateObject` (`Sales.Order`) | - | `orderHandle` | `Amount = 100` | - | `Always` / `_Continue` | `PAT-17` |
-| **2** | Case 2 | `CallMicroflow` (`MenditectMxFrontendTestKit.ACT_Click_Button`) | - | - | `WidgetName = 'btnSubmit'` | - | `None` / `Stop` | `PAT-64` |
-| **3** | Case 3 | `ObjectAction` (`DeleteObjects`) | `orderHandle` | - | - | - | `Always` / `_Continue` | `PAT-18` |
+| **2** | Case 2 | `CallMicroflow` (`MenditectMxFrontendTestKit.ACT_Fill_DatePicker_Input`) | - | - | `Value = '15-05-2026'` | - | `None` / `Stop` | `PAT-64`, `PAT-94` |
+| **3** | Case 2 | `CallMicroflow` (`MenditectMxFrontendTestKit.ACT_Click_Button`) | - | - | `WidgetName = 'btnSubmit'` | - | `None` / `Stop` | `PAT-64` |
+| **4** | Case 3 | `ObjectAction` (`DeleteObjects`) | `orderHandle` | - | - | - | `Always` / `_Continue` | `PAT-18` |
 
 ## 4. Test Scenarios & Test Data
+
+### Input Widget Inventory
+| # | Widget Name | Widget Type | Date Format / Constraint (PAT-94) | Testkit Locator & Action Microflow |
+| :-: | :--- | :--- | :--- | :--- |
+| 1 | `datePicker_OrderDate` | `DatePicker` | `dd-MM-yyyy (CustomDateFormat via mxcli bson dump)` | `Locate_MxWidget_DatePicker` ➔ `ACT_Fill_DatePicker_Input` |
+| 2 | `btnSubmit` | `Button` | - | `Locate_MxWidget_Button` ➔ `ACT_Click_Button` |
 
 | # | Step Target | Scenario #1 | Scenario #2 |
 | :---: | :--- | :--- | :--- |
 | **0** | **Scenario Name** | Standard Order | Bulk Order |
 | **0** | **Scenario Description** | Click submit button standard | Click submit button bulk |
 | 1 | Step 1: `Order.Amount` | `100` | `200` |
-| 2 | Step 2: `WidgetName` | `'btnSubmit'` | `'btnSubmit'` |
+| 2 | Step 2: `Value` | `'15-05-2026'` | `'16-05-2026'` |
+| 3 | Step 3: `WidgetName` | `'btnSubmit'` | `'btnSubmit'` |
 
 ## 5. Quality & Compliance Checks
 
 - [x] Verified Frontend Isolation
+- [x] Verified DatePicker Format (PAT-94)
