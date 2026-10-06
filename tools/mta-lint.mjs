@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-export const LINTER_VERSION = "1.3.0";
+export const LINTER_VERSION = "1.4.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -370,6 +370,9 @@ export function lintExecutionPlan(filePath) {
   // 3c. DateTime & DatePicker Format Audit (PAT-94, PAT-42, ANTI-45, ANTI-53)
   validateDateTimeAndDatePickerFormats(content, stepLedgerTable, variationMatrixTable, metadata, tables, addCheck);
 
+  // 3d. Frontend Validation Feedback Assertions (PAT-119, ANTI-20, PAT-12)
+  validateFrontendValidationFeedback(content, stepLedgerTable, metadata, addCheck);
+
   // 4. Negative Anti-Pattern Scans
   scanAntiPatterns(content, stepLedgerTable, variationMatrixTable, addCheck);
 
@@ -619,6 +622,237 @@ function validateDateTimeAndDatePickerFormats(content, stepLedgerTable, variatio
         "DatePicker CustomDateFormat verified and documented"
       );
     }
+  }
+}
+
+/**
+ * Validates Frontend Event-Driven Validation Feedback Assertions (PAT-119, ANTI-20, PAT-12).
+ * 1. Validates that every Locate_MxWidget_*_ValidationMessage step maps to the correct widget type.
+ * 2. Enforces that output handles from validation locators are immediately consumed by assertion steps
+ *    (ASR_Is_Hidden_MxLocator for happy path, or ASR_Is_Visible_MxLocator / ASR_Has_Text for negative tests).
+ * 3. Enforces that each validation locator and assertion step contains a non-empty Description
+ *    documenting the triggering event (onChange, onLeave, onEnterPress, while typing, Save/Submit button)
+ *    and the flow origin (microflow or nanoflow).
+ * 4. Catches ANTI-20 domain violations: prohibits backend validation assertion actions in Frontend UI plans.
+ */
+function validateFrontendValidationFeedback(content, stepLedgerTable, metadata, addCheck) {
+  const isFrontend = metadata && metadata.category === 'Frontend';
+  if (!stepLedgerTable || !isFrontend) return;
+
+  const VALIDATION_LOCATOR_MAP = {
+    'Locate_MxWidget_TextBox_ValidationMessage': {
+      paramName: 'TextBoxLocator',
+      expectedWidget: 'TextBox',
+      locatorPattern: /Locate_MxWidget_TextBox(?!_ValidationMessage)/i
+    },
+    'Locate_MxWidget_DropDown_ValidationMessage': {
+      paramName: 'DropDownLocator',
+      expectedWidget: 'DropDown',
+      locatorPattern: /Locate_MxWidget_DropDown(?!_ValidationMessage)/i
+    },
+    'Locate_MxWidget_DatePicker_ValidationMessage': {
+      paramName: 'DatePickerLocator',
+      expectedWidget: 'DatePicker',
+      locatorPattern: /Locate_MxWidget_DatePicker(?!_ValidationMessage)/i
+    },
+    'Locate_MxWidget_ReferenceSelector_ValidationMessage': {
+      paramName: 'ReferenceSelectorLocator',
+      expectedWidget: 'ReferenceSelector',
+      locatorPattern: /Locate_MxWidget_ReferenceSelector(?!_ValidationMessage)/i
+    },
+    'Locate_MxWidget_ComboBox_ValidationMessage': {
+      paramName: 'ComboBoxLocator',
+      expectedWidget: 'ComboBox',
+      locatorPattern: /Locate_MxWidget_ComboBox(?!_ValidationMessage)/i
+    },
+    'Locate_MxWidget_CheckBox_ValidationMessage': {
+      paramName: 'CheckBoxLocator',
+      expectedWidget: 'CheckBox',
+      locatorPattern: /Locate_MxWidget_CheckBox(?!_ValidationMessage)/i
+    },
+    'Locate_MxWidget_RadioButtons_ValidationMessage': {
+      paramName: 'RadioButtonsLocator',
+      expectedWidget: 'RadioButtons',
+      locatorPattern: /Locate_MxWidget_RadioButtons(?!_ValidationMessage)/i
+    }
+  };
+
+  const rows = stepLedgerTable.rows;
+  let validationLocatorCount = 0;
+  let hasChainingViolation = false;
+  let hasTypeViolation = false;
+  let hasDescViolation = false;
+  let hasBackendAssertViolation = false;
+
+  // Track widget locator outputs: map handle -> { stepNum, widgetType, actionText }
+  const widgetHandles = {};
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    const rowText = Object.values(row).join(' ');
+    const outCol = Object.keys(row).find(k => k.toLowerCase().includes('output'));
+    const outHandle = outCol ? (row[outCol] || '').replace(/[`\s]/g, '') : null;
+
+    if (outHandle && outHandle !== '-' && outHandle.toLowerCase() !== 'none') {
+      for (const [, info] of Object.entries(VALIDATION_LOCATOR_MAP)) {
+        if (info.locatorPattern.test(rowText)) {
+          widgetHandles[outHandle] = {
+            stepNum: idx + 1,
+            widgetType: info.expectedWidget,
+            actionText: rowText
+          };
+          break;
+        }
+      }
+    }
+  }
+
+  // Scan rows for validation message steps and backend assertion violations
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    const rowText = Object.values(row).join(' ');
+
+    // 1. Check for prohibited backend validation assertions in Frontend (ANTI-20)
+    if (/(?:CreateAssertValidationFeedbackMessage|Assert\s+Validation\s+Feedback\s+(?:Count|Compare)|TCEX_RS_ValidationFeedback)/i.test(rowText)) {
+      hasBackendAssertViolation = true;
+      addCheck(
+        "ANTI-20: Zero Backend Validation Assertions in Frontend Tests",
+        false,
+        `Step ${idx + 1} contains backend validation assertion in a Frontend execution plan (ANTI-20). Frontend UI tests must assert validation messages via FrontendTestKit locators (Locate_MxWidget_*_ValidationMessage -> ASR_Is_Hidden_MxLocator / ASR_Is_Visible_MxLocator).`,
+        "ANTI-20_VIOLATION"
+      );
+    }
+
+    // 2. Check for Locate_MxWidget_*_ValidationMessage calls
+    let matchedLocatorKey = null;
+    let matchedLocatorInfo = null;
+
+    for (const [locKey, info] of Object.entries(VALIDATION_LOCATOR_MAP)) {
+      if (rowText.includes(locKey)) {
+        matchedLocatorKey = locKey;
+        matchedLocatorInfo = info;
+        break;
+      }
+    }
+
+    if (matchedLocatorKey) {
+      validationLocatorCount++;
+
+      // A. Check Output Handle
+      const outCol = Object.keys(row).find(k => k.toLowerCase().includes('output'));
+      const outHandle = outCol ? (row[outCol] || '').replace(/[`\s]/g, '') : null;
+
+      if (!outHandle || outHandle === '-' || outHandle.toLowerCase() === 'none') {
+        hasChainingViolation = true;
+        addCheck(
+          `PAT-119: Step ${idx + 1} Validation Locator Output Handle`,
+          false,
+          `Step ${idx + 1} calls '${matchedLocatorKey}' but does not define an output handle to pipe into downstream assertions`,
+          "MISSING_OUTPUT_HANDLE"
+        );
+      }
+
+      // B. Check Input Handle & Widget Type Parity
+      const inCol = Object.keys(row).find(k => k.toLowerCase().includes('input'));
+      const inHandle = inCol ? (row[inCol] || '').replace(/[`\s]/g, '') : null;
+
+      if (inHandle && widgetHandles[inHandle]) {
+        const upstream = widgetHandles[inHandle];
+        if (upstream.widgetType !== matchedLocatorInfo.expectedWidget) {
+          hasTypeViolation = true;
+          addCheck(
+            `PAT-119: Step ${idx + 1} Locator Type Parity`,
+            false,
+            `Step ${idx + 1} calls '${matchedLocatorKey}' with input handle '${inHandle}' from Step ${upstream.stepNum} (${upstream.widgetType}), but expected a ${matchedLocatorInfo.expectedWidget} locator.`,
+            "LOCATOR_TYPE_MISMATCH"
+          );
+        }
+      }
+
+      // C. Check Downstream Assertion Consumption (No Orphaned Locators)
+      if (outHandle && outHandle !== '-' && outHandle.toLowerCase() !== 'none') {
+        let isAssertedDownstream = false;
+        const escapedOut = outHandle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const handleRegex = new RegExp(`\\b${escapedOut}\\b`);
+
+        for (let j = idx + 1; j < rows.length; j++) {
+          const downRow = rows[j];
+          const downText = Object.values(downRow).join(' ');
+          const downInCol = Object.keys(downRow).find(k => k.toLowerCase().includes('input'));
+          const downInVal = downInCol ? (downRow[downInCol] || '').replace(/[`\s]/g, '') : '';
+          const downInList = downInVal.split(',').map(s => s.trim());
+
+          if (downInList.includes(outHandle) || handleRegex.test(downText)) {
+            if (/ASR_Is_Hidden_MxLocator|ASR_Is_Visible_MxLocator|ASR_Has_Text/i.test(downText)) {
+              isAssertedDownstream = true;
+              break;
+            }
+          }
+        }
+
+        if (!isAssertedDownstream) {
+          hasChainingViolation = true;
+          addCheck(
+            `PAT-119: Step ${idx + 1} Validation Locator Assertion Chaining`,
+            false,
+            `Step ${idx + 1} calls '${matchedLocatorKey}' producing output handle '${outHandle}', but no downstream step asserts its visibility using ASR_Is_Hidden_MxLocator or ASR_Is_Visible_MxLocator (PAT-119).`,
+            "ORPHANED_VALIDATION_LOCATOR"
+          );
+        }
+      }
+
+      // D. Check Step Description Documentation (PAT-12 / PAT-119)
+      const descRegex = /(?:onChange|onLeave|onEnterPress|while typing|delay|Save|Submit|ACT_|OCh_|DS_|ON_|microflow|nanoflow|validation|regress|error|hidden|visible)/i;
+      if (!descRegex.test(rowText)) {
+        hasDescViolation = true;
+        addCheck(
+          `PAT-12 & PAT-119: Step ${idx + 1} Validation Intent Documentation`,
+          false,
+          `Step ${idx + 1} (${matchedLocatorKey}) lacks an explicit Description documenting the triggering event (onChange/onLeave/onEnterPress/Save button) or microflow/nanoflow origin (PAT-119).`,
+          "MISSING_STEP_DESCRIPTION"
+        );
+      }
+    }
+  }
+
+  // Summary checks if validation steps were evaluated
+  if (validationLocatorCount > 0) {
+    if (!hasChainingViolation) {
+      addCheck(
+        "PAT-119: Validation Message Locator & Assertion Chaining",
+        true,
+        null,
+        null,
+        `${validationLocatorCount} validation locator(s) correctly chained to assertions`
+      );
+    }
+    if (!hasTypeViolation) {
+      addCheck(
+        "PAT-119: Validation Locator Type Parity",
+        true,
+        null,
+        null,
+        `All ${validationLocatorCount} validation locator(s) match parent widget locator types`
+      );
+    }
+    if (!hasDescViolation) {
+      addCheck(
+        "PAT-12 & PAT-119: Validation Step Rationale Documented",
+        true,
+        null,
+        null,
+        "Validation locator and assertion steps document triggering event/flow origin"
+      );
+    }
+  }
+
+  if (!hasBackendAssertViolation) {
+    addCheck(
+      "ANTI-20: Frontend Validation Feedback Isolation",
+      true,
+      null,
+      null,
+      "No prohibited backend validation assertions detected in Frontend plan"
+    );
   }
 }
 
@@ -1163,6 +1397,42 @@ export function runSmokeAudit(planPath, serverJsonPath) {
     datePickerStepChecked ? "DatePicker step verified on server" : "No DatePicker steps or macro violations detected"
   );
 
+  // Phase 6b: Frontend Validation Feedback Configuration Parity (PAT-119)
+  let valStepErrors = [];
+  let plannedValLocators = 0;
+  let serverValSteps = 0;
+
+  if (stepLedgerTable) {
+    for (const r of stepLedgerTable.rows) {
+      const text = Object.values(r).join(' ');
+      if (/Locate_MxWidget_[A-Za-z0-9]+_ValidationMessage/i.test(text)) {
+        plannedValLocators++;
+      }
+    }
+  }
+
+  for (let idx = 0; idx < serverSteps.length; idx++) {
+    const sStep = serverSteps[idx];
+    const sText = JSON.stringify(sStep);
+
+    if (/Locate_MxWidget_[A-Za-z0-9]+_ValidationMessage/i.test(sText) || (sStep.name && /ValidationMessage/i.test(sStep.name))) {
+      serverValSteps++;
+      const hasDesc = sStep.description && sStep.description.length > 5;
+      if (!hasDesc) {
+        valStepErrors.push(`Step ${idx + 1} (${sStep.name || 'ValidationMessage'}) missing description documenting triggering event or flow on server (PAT-12)`);
+      }
+    }
+  }
+
+  const phase6bPass = valStepErrors.length === 0;
+  addCheck(
+    "Phase 6b: Frontend Validation Feedback Assertions (PAT-119)",
+    phase6bPass,
+    phase6bPass ? null : valStepErrors.join('; '),
+    "FRONTEND_VALIDATION_CONFIG_MISMATCH",
+    plannedValLocators > 0 ? `Planned: ${plannedValLocators} | Server Verified: ${serverValSteps}` : "No frontend validation message steps planned"
+  );
+
   const valid = errors.length === 0;
 
   // Generate Receipt
@@ -1173,6 +1443,7 @@ export function runSmokeAudit(planPath, serverJsonPath) {
 * **Phase 4 (Construction Errors):** TCER_TestConstructionErrors == ${constructionErrors} | Status: ${phase4Pass ? 'PASS' : 'FAIL'}
 * **Phase 5 (Documentation & Pattern Annotations):** Steps Documented: ${stepDocCount}/${serverSteps.length} | Pattern Tags: ${stepPatternTagMatches}/${totalPatternTagsExpected} | TC Description: ${tcDescPass ? 'PASS' : 'EMPTY'} | Status: ${errors.some(e => e.code.startsWith('STEP_') || e.code.startsWith('TESTCASE_')) ? 'FAIL' : 'PASS'}
 * **Phase 6 (DateTime & DatePicker Formats):** Macro Violations: ${dateStepErrors.length} | DatePicker Verified: ${datePickerStepChecked ? 'YES' : 'N/A'} | Status: ${phase6Pass ? 'PASS' : 'FAIL'}
+* **Phase 6b (Frontend Validation Assertions):** Planned: ${plannedValLocators} | Server: ${serverValSteps} | Status: ${phase6bPass ? 'PASS' : 'FAIL'}
 * **Overall Smoke Audit Verdict:** ${valid ? 'PASS (0 Discrepancies)' : 'FAIL'}
 `.trim();
 
@@ -1375,6 +1646,33 @@ category: "Backend"
     if (fs.existsSync(validSentinelPlan)) {
       const res = lintExecutionPlan(validSentinelPlan);
       addCheck("Fixture: valid_plan_with_sentinel.md passes", res.valid, `Expected valid with PAT-07 sentinel filter, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
+    const validValPlan = path.join(fixturesDir, 'valid_frontend_validation_feedback_plan.md');
+    if (fs.existsSync(validValPlan)) {
+      const res = lintExecutionPlan(validValPlan);
+      addCheck("Fixture: valid_frontend_validation_feedback_plan.md passes", res.valid, `Expected valid, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
+    const invalidOrphanedVal = path.join(fixturesDir, 'invalid_frontend_orphaned_validation_locator.md');
+    if (fs.existsSync(invalidOrphanedVal)) {
+      const res = lintExecutionPlan(invalidOrphanedVal);
+      const caughtOrphan = res.errors.some(e => e.code === 'ORPHANED_VALIDATION_LOCATOR');
+      addCheck("Fixture: invalid_frontend_orphaned_validation_locator.md caught ORPHANED_VALIDATION_LOCATOR", !res.valid && caughtOrphan, "Expected invalid with ORPHANED_VALIDATION_LOCATOR");
+    }
+
+    const invalidWrongTypeVal = path.join(fixturesDir, 'invalid_frontend_wrong_locator_type.md');
+    if (fs.existsSync(invalidWrongTypeVal)) {
+      const res = lintExecutionPlan(invalidWrongTypeVal);
+      const caughtMismatch = res.errors.some(e => e.code === 'LOCATOR_TYPE_MISMATCH');
+      addCheck("Fixture: invalid_frontend_wrong_locator_type.md caught LOCATOR_TYPE_MISMATCH", !res.valid && caughtMismatch, "Expected invalid with LOCATOR_TYPE_MISMATCH");
+    }
+
+    const invalidBackendAssertVal = path.join(fixturesDir, 'invalid_frontend_backend_assert_in_ui.md');
+    if (fs.existsSync(invalidBackendAssertVal)) {
+      const res = lintExecutionPlan(invalidBackendAssertVal);
+      const caughtAnti20 = res.errors.some(e => e.code === 'ANTI-20_VIOLATION');
+      addCheck("Fixture: invalid_frontend_backend_assert_in_ui.md caught ANTI-20", !res.valid && caughtAnti20, "Expected invalid with ANTI-20");
     }
 
     if (fs.existsSync(validPlan) && fs.existsSync(passServer)) {
