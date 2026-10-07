@@ -180,30 +180,126 @@ function extractMetadata(content) {
   return null;
 }
 
+function parseYamlScalar(val) {
+  if (typeof val !== 'string') return val;
+  val = val.trim();
+  // Strip trailing comments if any (outside quotes)
+  if (!val.startsWith('"') && !val.startsWith("'")) {
+    const hashIdx = val.indexOf('#');
+    if (hashIdx !== -1) val = val.slice(0, hashIdx).trim();
+  }
+  if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+    return val.slice(1, -1);
+  } else if (val === 'true') {
+    return true;
+  } else if (val === 'false') {
+    return false;
+  } else if (val === 'null' || val === '~' || val === '') {
+    return null;
+  } else if (val === '[]') {
+    return [];
+  } else if (val === '{}') {
+    return {};
+  } else if (!isNaN(Number(val)) && val !== '') {
+    return Number(val);
+  }
+  return val;
+}
+
 function parseSimpleYaml(yamlStr) {
   const meta = {};
   const lines = yamlStr.split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
+  let currentKey = null;
+  let currentArrayKey = null;
+  let currentObjKey = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const indent = rawLine.search(/\S/);
+
+    // Array item
+    if (trimmed.startsWith('- ')) {
+      const itemContent = trimmed.slice(2).trim();
+      const targetArrayKey = currentArrayKey || currentKey;
+      if (targetArrayKey) {
+        if (!Array.isArray(meta[targetArrayKey])) {
+          meta[targetArrayKey] = [];
+        }
+        const colonIdx = itemContent.indexOf(':');
+        if (colonIdx !== -1) {
+          const itemKey = itemContent.slice(0, colonIdx).trim();
+          const itemVal = parseYamlScalar(itemContent.slice(colonIdx + 1).trim());
+          const itemObj = { [itemKey]: itemVal };
+          meta[targetArrayKey].push(itemObj);
+
+          // Peek following lines that are part of this object
+          while (i + 1 < lines.length) {
+            const nextRaw = lines[i + 1];
+            const nextTrimmed = nextRaw.trim();
+            if (!nextTrimmed || nextTrimmed.startsWith('#')) {
+              i++;
+              continue;
+            }
+            const nextIndent = nextRaw.search(/\S/);
+            if (nextIndent > indent && !nextTrimmed.startsWith('- ')) {
+              const nextColon = nextTrimmed.indexOf(':');
+              if (nextColon !== -1) {
+                const subK = nextTrimmed.slice(0, nextColon).trim();
+                const subV = parseYamlScalar(nextTrimmed.slice(nextColon + 1).trim());
+                itemObj[subK] = subV;
+              }
+              i++;
+            } else {
+              break;
+            }
+          }
+        } else {
+          meta[targetArrayKey].push(parseYamlScalar(itemContent));
+        }
+      }
+      continue;
+    }
+
+    // Key-value pair
     const colonIdx = trimmed.indexOf(':');
     if (colonIdx === -1) continue;
+
     const key = trimmed.slice(0, colonIdx).trim();
-    let val = trimmed.slice(colonIdx + 1).trim();
-    // Strip quotes
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
-    } else if (val === 'true') {
-      val = true;
-    } else if (val === 'false') {
-      val = false;
-    } else if (val === 'null') {
-      val = null;
-    } else if (!isNaN(Number(val)) && val !== '') {
-      val = Number(val);
+    const rawVal = trimmed.slice(colonIdx + 1).trim();
+
+    if (indent === 0) {
+      currentKey = key;
+      currentArrayKey = null;
+      currentObjKey = null;
+
+      // Check if value is empty -> indicates nested map or array
+      let peekIdx = i + 1;
+      while (peekIdx < lines.length && (!lines[peekIdx].trim() || lines[peekIdx].trim().startsWith('#'))) {
+        peekIdx++;
+      }
+      if ((rawVal === '' || rawVal === null) && peekIdx < lines.length) {
+        const nextTrimmed = lines[peekIdx].trim();
+        const nextIndent = lines[peekIdx].search(/\S/);
+        if (nextIndent > 0) {
+          if (nextTrimmed.startsWith('- ')) {
+            currentArrayKey = key;
+            meta[key] = [];
+          } else {
+            currentObjKey = key;
+            meta[key] = {};
+          }
+          continue;
+        }
+      }
+      meta[key] = parseYamlScalar(rawVal);
+    } else if (indent > 0 && currentObjKey) {
+      meta[currentObjKey][key] = parseYamlScalar(rawVal);
     }
-    meta[key] = val;
   }
+
   return meta;
 }
 
@@ -372,6 +468,9 @@ export function lintExecutionPlan(filePath) {
 
   // 3d. Frontend Validation Feedback Assertions (PAT-119, ANTI-20, PAT-12)
   validateFrontendValidationFeedback(content, stepLedgerTable, metadata, addCheck);
+
+  // 3e. Intent Classification & Ground Truth Traceability (PAT-121, ANTI-68..ANTI-72)
+  validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variationMatrixTable, addCheck);
 
   // 4. Negative Anti-Pattern Scans
   scanAntiPatterns(content, stepLedgerTable, variationMatrixTable, addCheck);
@@ -853,6 +952,137 @@ function validateFrontendValidationFeedback(content, stepLedgerTable, metadata, 
       null,
       "No prohibited backend validation assertions detected in Frontend plan"
     );
+  }
+}
+
+/**
+ * Validates test intent classification, specification source traceability, risk coverage,
+ * and exact return value assertion presence (PAT-121, ANTI-68..ANTI-72).
+ */
+function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variationMatrixTable, addCheck) {
+  if (!metadata) return;
+
+  const validIntents = ['regression', 'exploratory_robustness', 'exploratory_feature', 'tdd', 'data_seeding'];
+  const intent = metadata.test_intent;
+  const schemaVersion = metadata.schema_version || '2.0.0';
+  const isSchema21Plus = typeof schemaVersion === 'string' && (schemaVersion.startsWith('2.1') || schemaVersion.localeCompare('2.1.0', undefined, { numeric: true }) >= 0);
+
+  // 1. Intent Validity Check (CHECK_INTENT_VALIDITY)
+  if (intent) {
+    if (validIntents.includes(intent)) {
+      addCheck("PAT-121: Test Intent Validity", true, null, null, { intent });
+    } else {
+      addCheck("PAT-121: Test Intent Validity", false, `Invalid 'test_intent': '${intent}'. Must be one of: ${validIntents.join(', ')}`, "INVALID_TEST_INTENT");
+      return;
+    }
+  } else if (isSchema21Plus) {
+    addCheck("PAT-121: Test Intent Validity", false, "Missing 'test_intent' in metadata for schema 2.1.0+", "MISSING_TEST_INTENT");
+    return;
+  } else {
+    // Legacy schema (< 2.1.0) without test_intent - valid by backward compatibility
+    return;
+  }
+
+  // 2. Specification Substance & Anti-Circular Specs (CHECK_SPEC_SUBSTANCE, ANTI-69, ANTI-71)
+  if (intent === 'exploratory_feature' || intent === 'tdd') {
+    const specSource = metadata.spec_source;
+    if (!specSource) {
+      addCheck("ANTI-69: Specification Source Substance", false, `Intent '${intent}' requires 'spec_source' to prevent tautological testing against unverified code (PAT-121)`, "MISSING_SPEC_SOURCE");
+    } else {
+      const specType = specSource.type;
+      const specSummary = specSource.summary;
+
+      if (specType === 'model_baseline') {
+        addCheck("ANTI-69: Non-Circular Ground Truth Source", false, `Intent '${intent}' cannot use 'model_baseline' as ground truth. An external specification or prompt criteria is required (ANTI-69)`, "ANTI-69_CIRCULAR_SPEC");
+      } else {
+        addCheck("ANTI-69: Non-Circular Ground Truth Source", true);
+      }
+
+      if (typeof specSummary !== 'string' || specSummary.trim().length < 30) {
+        addCheck("ANTI-71: Specification Substance Length", false, `spec_source.summary must be at least 30 characters describing concrete expected behavior, found: '${specSummary || ''}' (${(specSummary || '').trim().length} chars) (ANTI-71)`, "ANTI-71_TRIVIAL_SPEC_ECHO");
+      } else {
+        // Anti-Loophole: Check for circular tautology blacklist
+        const circularRegex = /\b(as\s+implemented|derived\s+from\s+code|same\s+as\s+model|what\s+the\s+code\s+does|current\s+implementation)\b/i;
+        if (circularRegex.test(specSummary)) {
+          addCheck("ANTI-69: Circular Specification Blacklist", false, `spec_source.summary contains circular reference ('${specSummary}'). Must specify independent business criteria (ANTI-69)`, "ANTI-69_CIRCULAR_SPEC");
+        } else {
+          addCheck("ANTI-69: Circular Specification Blacklist", true);
+        }
+
+        // Anti-Loophole: Check for conditional or expected outcome keywords
+        const outcomeKeywordRegex = /\b(if|when|must|should|equal|equals|returns|validates|rejects|ensures|throws|calculates|prevents)\b/i;
+        if (!outcomeKeywordRegex.test(specSummary)) {
+          addCheck("ANTI-71: Specification Outcome Keywords", false, `spec_source.summary must specify concrete outcomes or conditionals (if, when, must, should, equal, returns, validates, etc.) (ANTI-71)`, "ANTI-71_TRIVIAL_SPEC_ECHO");
+        } else {
+          addCheck("ANTI-71: Specification Outcome Keywords", true);
+        }
+      }
+    }
+  }
+
+  // 3. Risk Diversity & Matrix Coverage (CHECK_RISK_DIVERSITY, ANTI-70)
+  if (metadata.risks_covered) {
+    if (!Array.isArray(metadata.risks_covered) || metadata.risks_covered.length === 0) {
+      addCheck("ANTI-70: Risk Coverage Presence", false, "risks_covered must be a non-empty array of risk items (ANTI-70)", "ANTI-70_EMPTY_RISK_MATRIX");
+    } else {
+      const riskKeywordRegex = /\b(null|empty|exceed|unauthorized|negative|boundary|invalid|fail|failure|timeout|zero|overflow|exceeds|forbidden|exception|crash)\b/i;
+      let hasTrivialRisk = false;
+      let unresolvedScenario = null;
+
+      for (const item of metadata.risks_covered) {
+        const riskText = (item && item.risk) ? String(item.risk) : '';
+        if (!riskKeywordRegex.test(riskText)) {
+          hasTrivialRisk = true;
+          addCheck("ANTI-70: Non-Trivial Risk Mitigation", false, `Risk '${riskText}' does not address a non-trivial boundary or failure mode (ANTI-70)`, "ANTI-70_RUBBER_STAMP_RISK");
+          break;
+        }
+
+        if (variationMatrixTable && item.mitigating_scenario) {
+          const scenRef = String(item.mitigating_scenario).trim();
+          const inHeaders = variationMatrixTable.headers.some(h => h.toLowerCase().includes(scenRef.toLowerCase()));
+          const inRows = variationMatrixTable.rows.some(r => Object.values(r).some(c => String(c).toLowerCase().includes(scenRef.toLowerCase())));
+          const numMatch = scenRef.match(/\d+/);
+          const numInHeaders = numMatch && variationMatrixTable.headers.some(h => h.includes(numMatch[0]));
+
+          if (!inHeaders && !inRows && !numInHeaders) {
+            unresolvedScenario = scenRef;
+          }
+        }
+      }
+
+      if (!hasTrivialRisk) {
+        addCheck("ANTI-70: Non-Trivial Risk Mitigation", true);
+      }
+
+      if (unresolvedScenario) {
+        addCheck("PAT-121: Mitigating Scenario Resolution", false, `Mitigating scenario '${unresolvedScenario}' in risks_covered not found in Data Variation Matrix headers or rows`, "UNRESOLVED_RISK_SCENARIO");
+      } else if (variationMatrixTable) {
+        addCheck("PAT-121: Mitigating Scenario Resolution", true);
+      }
+    }
+  } else if ((intent === 'exploratory_feature' || intent === 'tdd' || intent === 'exploratory_robustness') && isSchema21Plus) {
+    addCheck("ANTI-70: Risk Coverage Presence", false, `Schema 2.1.0+ plans with intent '${intent}' must specify 'risks_covered' array (ANTI-70)`, "ANTI-70_EMPTY_RISK_MATRIX");
+  }
+
+  // 4. Exact Assertion Presence Guardrail (CHECK_EXACT_ASSERTION_PRESENCE, ANTI-72)
+  if ((intent === 'exploratory_feature' || intent === 'tdd') && metadata.category === 'Backend' && stepLedgerTable) {
+    const microflowRow = stepLedgerTable.rows.find(r => Object.values(r).some(v => /CallMicroflow/i.test(String(v))));
+    if (microflowRow) {
+      const assertionsCol = Object.keys(microflowRow).find(k => k.toLowerCase().includes('assertion'));
+      const assertionText = assertionsCol ? String(microflowRow[assertionsCol]) : '';
+
+      const hasReturnAssertInStep = /Assert\s+Return\s+Value/i.test(assertionText) || /Assert\s+result/i.test(assertionText);
+      const hasReturnAssertInMatrix = variationMatrixTable && variationMatrixTable.rows.some(r => Object.values(r).some(v => /Assert\s+Return/i.test(String(v))));
+
+      if (hasReturnAssertInStep || hasReturnAssertInMatrix) {
+        const isSoftenedOnly = /!=\s*empty/i.test(assertionText) && !/==/i.test(assertionText) && !/equals/i.test(assertionText) && !hasReturnAssertInMatrix;
+        if (isSoftenedOnly) {
+          addCheck("ANTI-72: Exact Return Value Assertion", false, `Exploratory feature test return assertion is softened to non-empty ('${assertionText}'). Must verify exact expected scalar values (ANTI-72)`, "ANTI-72_ASSERTION_SOFTENING");
+        } else {
+          addCheck("ANTI-72: Exact Return Value Assertion", true);
+        }
+      }
+    }
   }
 }
 
@@ -1673,6 +1903,33 @@ category: "Backend"
       const res = lintExecutionPlan(invalidBackendAssertVal);
       const caughtAnti20 = res.errors.some(e => e.code === 'ANTI-20_VIOLATION');
       addCheck("Fixture: invalid_frontend_backend_assert_in_ui.md caught ANTI-20", !res.valid && caughtAnti20, "Expected invalid with ANTI-20");
+    }
+
+    const validIntentPlan = path.join(fixturesDir, 'valid_intent_feature_plan.md');
+    if (fs.existsSync(validIntentPlan)) {
+      const res = lintExecutionPlan(validIntentPlan);
+      addCheck("Fixture: valid_intent_feature_plan.md passes", res.valid, `Expected valid, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
+    const invalidCircularSpec = path.join(fixturesDir, 'invalid_intent_circular_spec.md');
+    if (fs.existsSync(invalidCircularSpec)) {
+      const res = lintExecutionPlan(invalidCircularSpec);
+      const caughtAnti69 = res.errors.some(e => e.code === 'ANTI-69_CIRCULAR_SPEC');
+      addCheck("Fixture: invalid_intent_circular_spec.md caught ANTI-69", !res.valid && caughtAnti69, "Expected invalid with ANTI-69");
+    }
+
+    const invalidTrivialRisk = path.join(fixturesDir, 'invalid_intent_trivial_risk.md');
+    if (fs.existsSync(invalidTrivialRisk)) {
+      const res = lintExecutionPlan(invalidTrivialRisk);
+      const caughtAnti70 = res.errors.some(e => e.code === 'ANTI-70_RUBBER_STAMP_RISK');
+      addCheck("Fixture: invalid_intent_trivial_risk.md caught ANTI-70", !res.valid && caughtAnti70, "Expected invalid with ANTI-70");
+    }
+
+    const invalidMissingSpec = path.join(fixturesDir, 'invalid_intent_missing_spec.md');
+    if (fs.existsSync(invalidMissingSpec)) {
+      const res = lintExecutionPlan(invalidMissingSpec);
+      const caughtMissingSpec = res.errors.some(e => e.code === 'MISSING_SPEC_SOURCE');
+      addCheck("Fixture: invalid_intent_missing_spec.md caught MISSING_SPEC_SOURCE", !res.valid && caughtMissingSpec, "Expected invalid with MISSING_SPEC_SOURCE");
     }
 
     if (fs.existsSync(validPlan) && fs.existsSync(passServer)) {

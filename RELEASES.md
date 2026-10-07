@@ -4,6 +4,7 @@ This page lists all the releases of the Menditect Agent Workspace Template, with
 
 | Release Version | Date | Key Highlights / Release Message |
 | :--- | :--- | :--- |
+| [v1.10.5](releases/v1.10.5.md) | 2026-10-07 | improved updating of skills and linter tools |
 | [v1.10.4](releases/v1.10.4.md) | 2026-10-06 | added linter support for validation feedback asserting |
 | [v1.10.3](releases/v1.10.3.md) | 2026-10-02 | added more linters to verify execution plan and smoke audit |
 | [v1.10.2](releases/v1.10.2.md) | 2026-10-02 | improved linting rules |

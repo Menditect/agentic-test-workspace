@@ -172,13 +172,16 @@ If you are using **Mendix Studio Pro / MAIA**, ensure the `Menditect_AgenticTest
 
 ## Synchronization & updates
 
-The workspace includes a version inspection mechanism that queries GitHub releases (`mendixlabs/mxcli`) and repository skill frontmatters (`Menditect/agentic-test-skills`) to compare local versions against remote versions before prompting the user to confirm:
+The workspace includes a version inspection mechanism that queries GitHub releases (`mendixlabs/mxcli`) and repository skill frontmatters (`Menditect/agentic-test-skills`) to compare local versions against remote versions before prompting the user to confirm.
+
+> [!NOTE]
+> The MTA testing skills (`skills/`) and the MTA linter engine (`tools/mta-lint.mjs`) are tightly coupled. Whenever you run `npm run update:skills` (or `npm run update`), the linter tools and test fixtures are automatically synchronized in lockstep with the skills so that test plan validation and smoke audit rules always match the latest skill definitions.
 
 ```bash
 # Synchronization & Updates
 npm run update:check       # Check versions without downloading (Dry Run)
-npm run update             # Interactively update all components (skills + mxcli)
-npm run update:skills      # Update MTA testing skills only
+npm run update             # Interactively update all components (skills + linter tools + mxcli)
+npm run update:skills      # Update MTA testing skills and coupled linter tools (skills/ + tools/)
 npm run update:mxcli       # Update mxcli binary only
 npm run update -- --yes    # Auto-approve available updates (non-interactive / CI)
 npm run update -- --force  # Force re-download/re-sync even if up to date

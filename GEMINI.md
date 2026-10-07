@@ -9,7 +9,7 @@ When working with Mendix, remember:
 3. The SQLite catalog (`.mxcli/catalog.db`) powers code search and callers/callees. Rebuild via `./mxcli -c "REFRESH CATALOG SOURCE FORCE;"` (or `REFRESH CATALOG FULL FORCE;` for fast structural mode). Note: On large projects, compiling full MDL source definitions can take multiple minutes or up to 1 hour.
 
 ## Skills & Tools Immutability & Customization Rule (PAT-113, ANTI-62)
-- Official MTA skills in `skills/` and linter tooling (`tools/mta-lint.mjs`) are managed upstream and completely replaced/overwritten during updates (`npm run update` or `npm run update:tools`).
+- Official MTA skills in `skills/` and linter tooling (`tools/mta-lint.mjs`) are managed upstream and completely replaced/overwritten during updates (`npm run update` or `npm run update:skills`).
 - **NEVER make inline modifications** to official MTA skills in `skills/` or `tools/mta-lint.mjs` in consumer workspaces (`ANTI-62`). Any inline edits will be erased on update.
 - **Custom Skills:** Custom organization or domain skills must always be added as separate, new skill folders alongside the MTA skills.
 - **Custom Linter Overrides (`tools/mta-lint.custom.mjs`):** If a local bug fix, custom check, or false-positive bypass is required:

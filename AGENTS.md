@@ -14,7 +14,7 @@ Read the core instruction set located at: `skills/AGENTS.md`.
 All Menditect MTA skills (like test design, analysis, installation) are located in the `skills/` directory. Check there for detailed step-by-step instructions when asked to design tests, fix errors, or execute test plans.
 
 ## Skills & Tools Immutability & Customization Rule (PAT-113, ANTI-62)
-- Official MTA skills in `skills/` and linter tooling (`tools/mta-lint.mjs`) are managed upstream and completely replaced/overwritten during updates (`npm run update` or `npm run update:tools`).
+- Official MTA skills in `skills/` and linter tooling (`tools/mta-lint.mjs`) are managed upstream and completely replaced/overwritten during updates (`npm run update` or `npm run update:skills`).
 - **NEVER make inline modifications** to official MTA skills in `skills/` or `tools/mta-lint.mjs` in consumer workspaces (`ANTI-62`). Any inline edits will be erased on update.
 - **Custom Skills:** Custom organization or domain skills must always be added as separate, new skill folders alongside the MTA skills.
 - **Custom Linter Overrides (`tools/mta-lint.custom.mjs`):** If a local bug fix, custom check, or false-positive bypass is required:

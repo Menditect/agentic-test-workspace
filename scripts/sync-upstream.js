@@ -678,6 +678,14 @@ async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir } = {}) {
     'invalid_step_anti01.md',
     'valid_frontend_plan.md',
     'invalid_frontend_anti20.md',
+    'invalid_frontend_backend_assert_in_ui.md',
+    'invalid_frontend_orphaned_validation_locator.md',
+    'invalid_frontend_wrong_locator_type.md',
+    'valid_frontend_validation_feedback_plan.md',
+    'valid_intent_feature_plan.md',
+    'invalid_intent_circular_spec.md',
+    'invalid_intent_missing_spec.md',
+    'invalid_intent_trivial_risk.md',
     'invalid_piped_retrieve_no_count.md',
     'invalid_datepicker_no_format.md',
     'invalid_date_macro.md',
@@ -952,14 +960,17 @@ async function run(cliTarget = null) {
   }
 
   console.log('\nStarting update...\n');
-  if (target === 'skills') {
+  if (target === 'skills' || target === 'tools') {
     await syncSkills();
-  } else if (target === 'tools') {
+    console.log();
     await syncLinterTools();
   } else if (target === 'mxcli') {
     await syncMxcli();
   } else {
+    // 'all' (default: npm run update)
     await syncSkills();
+    console.log();
+    await syncLinterTools();
     console.log();
     await syncMxcli();
   }
