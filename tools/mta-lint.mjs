@@ -460,7 +460,7 @@ export function lintExecutionPlan(filePath) {
 
   // 3b. Cross-Table Semantic Audit: PAT-07 Empty-Guard & Null-Boundary Verification
   if (stepLedgerTable && variationMatrixTable) {
-    validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, addCheck);
+    validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, metadata, addCheck);
   }
 
   // 3c. DateTime & DatePicker Format Audit (PAT-94, PAT-42, ANTI-45, ANTI-53)
@@ -684,7 +684,7 @@ function validateDateTimeAndDatePickerFormats(content, stepLedgerTable, variatio
   const isFrontend = metadata && metadata.category === 'Frontend';
   const hasDatePickerStep = stepLedgerTable && stepLedgerTable.rows.some(r => {
     const text = Object.values(r).join(' ');
-    return /ACT_Fill_DatePicker_Input|ASR_Has_Value_DatePicker_Input|Locate_MxWidget_DatePicker/i.test(text);
+    return /ACT_Fill_DatePicker_Input|ACT_Set_DatePicker_Date|ASR_Has_Value_DatePicker_Input|Locate_MxWidget_DatePicker/i.test(text);
   });
   const hasDatePickerInInventory = tables && tables.some(t => {
     const headerStr = t.headers.join(' ').toLowerCase();
@@ -698,8 +698,12 @@ function validateDateTimeAndDatePickerFormats(content, stepLedgerTable, variatio
     // Check if CustomDateFormat is explicitly documented in the inventory or plan
     // Standard format pattern tokens: e.g. dd-MM-yyyy, yyyy-MM-dd, MM/dd/yyyy, dd/MM/yyyy, dd.MM.yyyy
     const hasCustomDateFormatDoc = /(?:CustomDateFormat|dateformPattern|Date\s*Format)[\s\S]*?(?:dd[-/. ]MM[-/. ]yyyy|yyyy[-/. ]MM[-/. ]dd|MM[-/. ]dd[-/. ]yyyy|dd[-/. ]MM[-/. ]yy)/i.test(content) ||
-      /Date\s*Format\s*\/\s*Constraint\s*\(PAT-94\)[\s\S]*?(?:dd[-/. ]MM[-/. ]yyyy|yyyy[-/. ]MM[-/. ]dd|MM[-/. ]dd[-/. ]yyyy)/i.test(content) ||
-      /CustomDateFormat\s*via\s*mxcli\s*bson\s*dump/i.test(content);
+      /Date\s*Format\s*(?:\/|\()\s*(?:Constraint|PAT-94)[\s\S]*?(?:dd[-/. ]MM[-/. ]yyyy|yyyy[-/. ]MM[-/. ]dd|MM[-/. ]dd[-/. ]yyyy)/i.test(content) ||
+      /CustomDateFormat\s*via\s*mxcli\s*bson\s*dump/i.test(content) ||
+      /formattingInfo\.customDateFormat/i.test(content);
+
+    // Check for explicit BSON model path documentation (PAT-94)
+    const hasBsonModelPath = /(?:bson\s*dump|bson\s*model\s*path|formattingInfo|widgets\[.*?\]\.formattingInfo)/i.test(content);
 
     // Explicitly check for defaulted or assumed date format indicators (ANTI-45)
     const hasAssumedFormatIndicator = /(?:default\s*date\s*format|assumed\s*date\s*format|default\s*US\s*format|\bDefault\b\s*\|\s*`?Locate_MxWidget_DatePicker)/i.test(content) ||
@@ -725,7 +729,7 @@ function validateDateTimeAndDatePickerFormats(content, stepLedgerTable, variatio
 }
 
 /**
- * Validates Frontend Event-Driven Validation Feedback Assertions (PAT-119, ANTI-20, PAT-12).
+ * Validates Frontend Event-Driven Validation Feedback Assertions (PAT-119, ANTI-20, PAT-12, ANTI-74).
  * 1. Validates that every Locate_MxWidget_*_ValidationMessage step maps to the correct widget type.
  * 2. Enforces that output handles from validation locators are immediately consumed by assertion steps
  *    (ASR_Is_Hidden_MxLocator for happy path, or ASR_Is_Visible_MxLocator / ASR_Has_Text for negative tests).
@@ -733,6 +737,7 @@ function validateDateTimeAndDatePickerFormats(content, stepLedgerTable, variatio
  *    documenting the triggering event (onChange, onLeave, onEnterPress, while typing, Save/Submit button)
  *    and the flow origin (microflow or nanoflow).
  * 4. Catches ANTI-20 domain violations: prohibits backend validation assertion actions in Frontend UI plans.
+ * 5. Enforces ANTI-74: Premature Validation Assertion sequencing (assertions must follow the submit Action Button click or inline field trigger).
  */
 function validateFrontendValidationFeedback(content, stepLedgerTable, metadata, addCheck) {
   const isFrontend = metadata && metadata.category === 'Frontend';
@@ -913,6 +918,51 @@ function validateFrontendValidationFeedback(content, stepLedgerTable, metadata, 
     }
   }
 
+  // 3. Event-Driven Validation Trigger Sequencing (PAT-119, ANTI-74)
+  // Form validation feedback assertions MUST occur AFTER the submit button click (ACT_Click_MxButton / FormValidations = "All")
+  // or explicitly document an inline field event (onChange / onLeave / onEnterPress / while typing).
+  let lastInputStepIdx = -1;
+  let lastButtonClickIdx = -1;
+  let hasPrematureValidationViolation = false;
+  let hiddenAssertCount = 0;
+
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    const rowText = Object.values(row).join(' ');
+
+    // Track input action steps (e.g. ACT_Fill_TextBox_Input, ACT_Set_DatePicker_Date, ACT_Select_DropDown_Option, etc.)
+    if (/ACT_(?:Fill|Set|Select|Check|Uncheck)_/i.test(rowText)) {
+      lastInputStepIdx = idx;
+    }
+
+    // Track button click steps (e.g. ACT_Click_MxButton, ACT_Click_Button, Click_MxButton)
+    if (/ACT_Click_(?:MxButton|Button|LinkButton)|Click_MxButton/i.test(rowText)) {
+      lastButtonClickIdx = idx;
+    }
+
+    // Check hidden assertion count (diagnostic assertions in happy path)
+    if (/ASR_Is_Hidden_MxLocator/i.test(rowText)) {
+      hiddenAssertCount++;
+    }
+
+    // Check validation message locator steps
+    if (/Locate_MxWidget_[a-zA-Z0-9_]+_ValidationMessage/i.test(rowText)) {
+      const isInlineEvent = /(?:onChange|onLeave|onEnterPress|while typing|on\s*change|on\s*leave|field\s*blur)/i.test(rowText);
+      // If it's not an inline field event, it's a form-level validation that requires a preceding submit button click
+      if (!isInlineEvent) {
+        if (lastInputStepIdx !== -1 && (lastButtonClickIdx === -1 || lastButtonClickIdx < lastInputStepIdx)) {
+          hasPrematureValidationViolation = true;
+          addCheck(
+            `PAT-119 & ANTI-74: Step ${idx + 1} Premature Validation Assertion`,
+            false,
+            `Step ${idx + 1} checks validation feedback before submit button click (ACT_Click_MxButton) without an inline field event trigger (onChange/onLeave) (ANTI-74). Validation message assertions must occur AFTER the submit button click that triggers Mendix form validation (FormValidations = 'All').`,
+            "ANTI-74_VIOLATION"
+          );
+        }
+      }
+    }
+  }
+
   // Summary checks if validation steps were evaluated
   if (validationLocatorCount > 0) {
     if (!hasChainingViolation) {
@@ -942,6 +992,25 @@ function validateFrontendValidationFeedback(content, stepLedgerTable, metadata, 
         "Validation locator and assertion steps document triggering event/flow origin"
       );
     }
+    if (!hasPrematureValidationViolation) {
+      addCheck(
+        "PAT-119 & ANTI-74: Event-Driven Validation Trigger Sequencing",
+        true,
+        null,
+        null,
+        "Validation feedback assertion sequence conforms to trigger lifecycle (post-submit or event-driven)"
+      );
+    }
+  }
+
+  if (hiddenAssertCount > 0) {
+    addCheck(
+      "PAT-119: Diagnostic Validation Assertion Coverage",
+      true,
+      null,
+      null,
+      `${hiddenAssertCount} diagnostic hidden-validation assertion(s) protecting form inputs in happy-path flows`
+    );
   }
 
   if (!hasBackendAssertViolation) {
@@ -1092,7 +1161,10 @@ function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variat
  * If detected, enforces that Section 3 (Step Ledger) provisions the PAT-07 Retrieve-from-Teststep
  * sentinel pattern with a scalar sentinel filter and embedded Assert Object Count (PAT-08).
  */
-function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, addCheck) {
+function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, metadata, addCheck) {
+  // PAT-07 sentinel retrieves apply strictly to Backend tests with object parameters/associations
+  if (metadata && metadata.category === 'Frontend') return;
+
   // 1. Identify scenario columns in variation matrix
   const scenarioCols = variationMatrixTable.headers.filter(h => {
     const trimmed = h.trim();
@@ -1140,58 +1212,13 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, add
     }
   }
 
-  // 4. Scan Section 4 for empty/null object or unassigned association indicators
-  // Indicator tokens: /empty/i, /null/i, /unassigned/i, /missing/i, /no\s+[a-z]+/i, /no[A-Z][a-z]+/i, etc.
-  const emptyTokenRegex = /(?:empty|null|unassigned|missing|no\s+[a-z]+|no[A-Z][a-z]+|no_[a-z]+)/i;
-  const detectedEmptyScenarios = [];
-
-  for (const sCol of scenarioCols) {
-    const scenName = scenarioNameMap[sCol] || sCol;
-    const scenDesc = scenarioDescMap[sCol] || '';
-
-    // Check header string
-    if (emptyTokenRegex.test(sCol)) {
-      detectedEmptyScenarios.push({ col: sCol, name: scenName, reason: `Header '${sCol}' matches empty/null token` });
-      continue;
-    }
-
-    // Check Scenario Name
-    if (emptyTokenRegex.test(scenName)) {
-      detectedEmptyScenarios.push({ col: sCol, name: scenName, reason: `Scenario name '${scenName}' matches empty/null token` });
-      continue;
-    }
-
-    // Check Scenario Description
-    if (emptyTokenRegex.test(scenDesc)) {
-      detectedEmptyScenarios.push({ col: sCol, name: scenName, reason: `Scenario description '${scenDesc}' matches empty/null token` });
-      continue;
-    }
-
-    // Check Matrix Cells: targeting an object parameter or association handle
-    for (const row of variationMatrixTable.rows) {
-      const rowLabel = targetColKey ? row[targetColKey] : Object.values(row)[0] || '';
-      const cleanLabel = rowLabel.replace(/[`*_]/g, '').trim();
-
-      if (/Scenario\s*(?:Name|Desc)/i.test(cleanLabel)) continue;
-
-      const isObjectOrAssocTarget = /(?:assoc|association|handle|object|param|\b[A-Z][a-zA-Z0-9]*_[A-Z][a-zA-Z0-9]*\b)/i.test(cleanLabel);
-      const cellVal = (row[sCol] || '').replace(/[`*_\s]/g, '').toLowerCase();
-
-      if (isObjectOrAssocTarget) {
-        if (cellVal === 'empty' || cellVal === 'null' || cellVal === "''" || cellVal === '""' || cellVal === '-' || cellVal === '' || cellVal === 'none') {
-          detectedEmptyScenarios.push({ col: sCol, name: scenName, reason: `Cell '${cleanLabel}' is empty/null in scenario '${scenName}'` });
-          break;
-        }
-      }
-    }
-  }
-
-  // 5. Inspect Section 3 (Step Ledger) for PAT-07 & PAT-08
+  // 4. Inspect Section 3 (Step Ledger) for PAT-07 Sentinel Retrieves mapped by entity
   let hasRetrieveFromTeststep = false;
   let hasValidSentinelFilter = false;
   let hasSentinelCountAssertion = false;
   let hasEnumFilterViolation = false;
   let hasLongSentinelViolation = false;
+  const sentinelEntities = new Map();
 
   for (let idx = 0; idx < stepLedgerTable.rows.length; idx++) {
     const row = stepLedgerTable.rows[idx];
@@ -1227,10 +1254,21 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, add
       if (/Assert\s+(?:Object\s+)?Count|Object\s+Count/i.test(rowText)) {
         hasSentinelCountAssertion = true;
       }
+
+      // Robust entity extraction from Retrieve step
+      const cleanRowText = rowText.replace(/[`*_]/g, '');
+      const entMatch = cleanRowText.match(/Retrieve(?:Object|Objects)?\s*\(\s*(?:([A-Z][a-zA-Z0-9_]*)\.)?([A-Z][a-zA-Z0-9_]*)\s*\)/i) ||
+                        cleanRowText.match(/Retrieve(?:Object|Objects)?\s+([A-Z][a-zA-Z0-9_]*)/i);
+      if (entMatch) {
+        const entName = (entMatch[2] || entMatch[1]).replace(/(?:Handle|Sentinel|Obj|Object|_Sentinel)$/i, '');
+        sentinelEntities.set(entName.toLowerCase(), {
+          entity: entName,
+          isValid: hasFilterSpec && !isEnumFilter && !hasLongSentinelViolation
+        });
+      }
     }
   }
 
-  // Also check if step ledger mentions SentinelKey in raw lines
   const ledgerRawText = stepLedgerTable.rawLines.join(' ');
   if (/SentinelKey/i.test(ledgerRawText) && hasRetrieveFromTeststep && !hasEnumFilterViolation && !hasLongSentinelViolation) {
     hasValidSentinelFilter = true;
@@ -1239,8 +1277,84 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, add
     hasSentinelCountAssertion = true;
   }
 
-  // 6. Enforce checks based on whether empty-object scenarios were detected
-  if (detectedEmptyScenarios.length > 0) {
+  // 5. Scan Section 4 for empty/null object parameter variations and enforce parameter-level sentinel matching
+  const emptyTokenRegex = /(?:empty|null|unassigned|missing|\bno\s+[a-z]+|\bno_[a-z]+|\bnone\b|\bwithout\b)/i;
+  const detectedEmptyScenarios = [];
+  const missingSentinelErrors = [];
+
+  for (const sCol of scenarioCols) {
+    const scenName = scenarioNameMap[sCol] || sCol;
+    const scenDesc = scenarioDescMap[sCol] || '';
+    const isHeaderEmpty = emptyTokenRegex.test(sCol) || emptyTokenRegex.test(scenName) || emptyTokenRegex.test(scenDesc) || /\bNo[A-Z]/.test(scenName) || /\bno[A-Z]/.test(scenName);
+
+    let cellEmptyFound = false;
+
+    // Check cells targeting object parameters or associations
+    for (const row of variationMatrixTable.rows) {
+      const rowLabel = targetColKey ? row[targetColKey] : Object.values(row)[0] || '';
+      const cleanLabel = rowLabel.replace(/[`*_]/g, '').trim();
+
+      if (/Scenario\s*(?:Name|Desc)/i.test(cleanLabel)) continue;
+
+      const cellVal = (row[sCol] || '').replace(/[`*_\s]/g, '').toLowerCase();
+
+      if (cellVal === 'empty' || cellVal === 'null' || cellVal === "''" || cellVal === '""' || cellVal === '-' || cellVal === 'none' || cellVal === 'unassigned') {
+        cellEmptyFound = true;
+        // Extract parameter/entity name
+        let targetEntity = cleanLabel;
+        const entMatch = cleanLabel.match(/(?:Step\s*\d+:?\s*)?\$?([A-Z][a-zA-Z0-9_]*)(?:\.([A-Z][a-zA-Z0-9_]*))?/);
+        if (entMatch) {
+          targetEntity = entMatch[1];
+        }
+        const normEntity = targetEntity.replace(/^Step\s*\d+:?\s*/i, '').replace(/^Parameter\s*\$?/i, '').replace(/[\$:._].*$/, '').trim();
+
+        detectedEmptyScenarios.push({ col: sCol, name: scenName, entity: normEntity, rowLabel: cleanLabel });
+
+        const sentinelRecord = sentinelEntities.get(normEntity.toLowerCase());
+        const hasEntitySentinel = sentinelRecord && sentinelRecord.isValid;
+
+        if (!hasEntitySentinel && normEntity.length > 1) {
+          missingSentinelErrors.push({
+            scenName,
+            entity: normEntity,
+            paramName: cleanLabel
+          });
+        }
+      }
+    }
+
+    if (!cellEmptyFound && isHeaderEmpty) {
+      // Header or description mentions empty/unassigned (e.g. "CarSize is unassigned")
+      const textToScan = `${scenName} ${scenDesc} ${sCol}`;
+      const entMatch = textToScan.match(/\b([A-Z][a-zA-Z0-9_]*)\b/);
+      const targetEntity = entMatch ? entMatch[1] : "Object Parameter";
+
+      detectedEmptyScenarios.push({ col: sCol, name: scenName, entity: targetEntity, rowLabel: sCol });
+
+      const sentinelRecord = sentinelEntities.get(targetEntity.toLowerCase());
+      const hasEntitySentinel = sentinelRecord && sentinelRecord.isValid;
+
+      if (!hasEntitySentinel) {
+        missingSentinelErrors.push({
+          scenName,
+          entity: targetEntity,
+          paramName: targetEntity
+        });
+      }
+    }
+  }
+
+  // 6. Report checks
+  if (missingSentinelErrors.length > 0) {
+    for (const err of missingSentinelErrors) {
+      addCheck(
+        "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
+        false,
+        `Scenario '${err.scenName}' tests an empty/null object for parameter '${err.paramName}', but Section 3 (Master Step Ledger) lacks a PAT-07 Retrieve-from-Teststep sentinel step specifically for entity '${err.entity}'. Persistent MTA test cases cannot dynamically omit steps; empty object boundaries must be driven via PAT-07 sentinel filtering.`,
+        "ANTI-48_VIOLATION"
+      );
+    }
+  } else if (detectedEmptyScenarios.length > 0) {
     const primaryScen = detectedEmptyScenarios[0];
     const scenarioName = primaryScen.name;
 
@@ -1261,19 +1375,7 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, add
         `Scenario '${scenarioName}' tests empty/null boundary using PAT-07 Retrieve-from-Teststep sentinel filter`
       );
     }
-
-    if (!hasSentinelCountAssertion) {
-      addCheck(
-        "PAT-08: Object Count Assertion on Sentinel Retrieve",
-        false,
-        `Scenario '${scenarioName}' tests empty/null boundaries with sentinel retrieve, but Section 3 lacks an embedded Assert Object Count assertion (PAT-08)`,
-        "MISSING_COUNT_ASSERTION"
-      );
-    } else {
-      addCheck("PAT-08: Object Count Assertion on Sentinel Retrieve", true);
-    }
   } else if (/SentinelKey/i.test(ledgerRawText)) {
-    // If no empty scenarios explicitly named but SentinelKey is used in Section 3
     addCheck(
       "PAT-07: Sentinel Filter for Null Parameter Boundaries",
       hasRetrieveFromTeststep && hasValidSentinelFilter,
@@ -1286,6 +1388,19 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, add
       "Sentinel filter step must embed an Object Count assertion",
       "MISSING_COUNT_ASSERTION"
     );
+  }
+
+  if (detectedEmptyScenarios.length > 0) {
+    if (!hasSentinelCountAssertion) {
+      addCheck(
+        "PAT-08: Object Count Assertion on Sentinel Retrieve",
+        false,
+        `Scenario '${detectedEmptyScenarios[0].name}' tests empty/null boundaries with sentinel retrieve, but Section 3 lacks an embedded Assert Object Count assertion (PAT-08)`,
+        "MISSING_COUNT_ASSERTION"
+      );
+    } else {
+      addCheck("PAT-08: Object Count Assertion on Sentinel Retrieve", true);
+    }
   }
 }
 
@@ -1434,9 +1549,55 @@ export function runSmokeAudit(planPath, serverJsonPath) {
     if (!pass) errors.push({ code: code || 'AUDIT_FAILED', message: reason });
   };
 
+  // Phase 0: Test Case Count & Sequence Parity (for Suite Audit)
+  const plannedCases = new Set();
+  if (stepLedgerTable) {
+    const caseColKey = Object.keys(stepLedgerTable.rows[0] || {}).find(k => /case|container/i.test(k));
+    if (caseColKey) {
+      for (const r of stepLedgerTable.rows) {
+        const val = (r[caseColKey] || '').trim();
+        if (val && val !== '-') plannedCases.add(val);
+      }
+    }
+  }
+  const plannedCaseCount = plannedCases.size > 0 ? plannedCases.size : 1;
+  const serverCases = serverData.testCases || serverData.testCaseList || [];
+
+  if (serverCases.length > 0) {
+    const caseCountPass = serverCases.length === plannedCaseCount;
+    addCheck(
+      "Phase 0: Suite Test Case Count Parity (PAT-03)",
+      caseCountPass,
+      caseCountPass ? null : `Planned test cases: ${plannedCaseCount}, Server test cases in suite: ${serverCases.length}`,
+      "CASE_COUNT_MISMATCH",
+      `Planned: ${plannedCaseCount} | Server: ${serverCases.length}`
+    );
+
+    let sequenceErrors = [];
+    for (let i = 0; i < serverCases.length; i++) {
+      const tc = serverCases[i];
+      const seq = tc.SequenceNumber !== undefined ? tc.SequenceNumber : (tc.sequenceNumber !== undefined ? tc.sequenceNumber : (i + 1));
+      const expectedSeq = i + 1;
+      if (seq !== expectedSeq) {
+        sequenceErrors.push(`Case '${tc.name || tc.key || i + 1}' has SequenceNumber ${seq}, expected ${expectedSeq}`);
+      }
+    }
+    const sequencePass = sequenceErrors.length === 0;
+    addCheck(
+      "Phase 0: Suite Test Case Sequence Parity (PAT-11)",
+      sequencePass,
+      sequencePass ? null : sequenceErrors.join('; '),
+      "CASE_SEQUENCE_MISMATCH",
+      sequencePass ? "All test cases ordered sequentially (1..N)" : sequenceErrors.join('; ')
+    );
+  }
+
   // Phase 1: Step Count & Action Type Parity
   const plannedSteps = stepLedgerTable ? stepLedgerTable.rows : [];
-  const serverSteps = serverData.testSteps || serverData.steps || [];
+  let serverSteps = serverData.testSteps || serverData.steps || [];
+  if (serverSteps.length === 0 && serverCases.length > 0) {
+    serverSteps = serverCases.flatMap(tc => tc.testSteps || tc.steps || []);
+  }
   const pCount = plannedSteps.length;
   const sCount = serverSteps.length;
 
@@ -1666,8 +1827,12 @@ export function runSmokeAudit(planPath, serverJsonPath) {
   const valid = errors.length === 0;
 
   // Generate Receipt
+  const phase0Line = serverCases.length > 0
+    ? `* **Phase 0 (Suite Cases & Sequence):** Planned Cases: ${plannedCaseCount} | Server Cases: ${serverCases.length} | Status: ${serverCases.length === plannedCaseCount && errors.every(e => !e.code.startsWith('CASE_')) ? 'PASS' : 'FAIL'}\n`
+    : '';
+
   const receipt = `
-* **Phase 1 (Step Count Parity):** Planned: ${pCount} | Server: ${sCount} | Status: ${phase1Pass ? 'PASS' : 'FAIL'}
+${phase0Line}* **Phase 1 (Step Count Parity):** Planned: ${pCount} | Server: ${sCount} | Status: ${phase1Pass ? 'PASS' : 'FAIL'}
 * **Phase 2 (Variation Item Registration):** Planned: ${plannedVarRows.length} | Registered: ${serverVarItems.length} | Status: ${phase2Pass ? 'PASS' : 'FAIL'}
 * **Phase 3 (Scenario Metadata & Doc Parity):** Planned Columns: ${scenarioCols.length} | Names Verified: ${scenarioNamesMatched}/${scenarioCols.length} | Descriptions Verified: ${scenarioDescsMatched}/${scenarioCols.length} | Status: ${errors.some(e => e.code.startsWith('SCENARIO_')) ? 'FAIL' : 'PASS'}
 * **Phase 4 (Construction Errors):** TCER_TestConstructionErrors == ${constructionErrors} | Status: ${phase4Pass ? 'PASS' : 'FAIL'}
@@ -1872,6 +2037,19 @@ category: "Backend"
       addCheck("Fixture: invalid_empty_object_no_sentinel.md caught PAT-07 & ANTI-48", !res.valid && caughtPat07, "Expected invalid with PAT-07 & ANTI-48 violation");
     }
 
+    const invalidMultiParamPlan = path.join(fixturesDir, 'invalid_multi_param_pat07.md');
+    if (fs.existsSync(invalidMultiParamPlan)) {
+      const res = lintExecutionPlan(invalidMultiParamPlan);
+      const caughtMultiPat07 = res.errors.some(e => e.code === 'ANTI-48_VIOLATION' && e.message.includes("entity 'Car'"));
+      addCheck("Fixture: invalid_multi_param_pat07.md caught parameter-level PAT-07 violation for Car", !res.valid && caughtMultiPat07, "Expected invalid with parameter-level PAT-07 violation for Car");
+    }
+
+    const validMultiParamPlan = path.join(fixturesDir, 'valid_multi_param_pat07.md');
+    if (fs.existsSync(validMultiParamPlan)) {
+      const res = lintExecutionPlan(validMultiParamPlan);
+      addCheck("Fixture: valid_multi_param_pat07.md passes multi-parameter PAT-07 check", res.valid, `Expected valid with multi-parameter PAT-07, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
     const validSentinelPlan = path.join(fixturesDir, 'valid_plan_with_sentinel.md');
     if (fs.existsSync(validSentinelPlan)) {
       const res = lintExecutionPlan(validSentinelPlan);
@@ -1903,6 +2081,19 @@ category: "Backend"
       const res = lintExecutionPlan(invalidBackendAssertVal);
       const caughtAnti20 = res.errors.some(e => e.code === 'ANTI-20_VIOLATION');
       addCheck("Fixture: invalid_frontend_backend_assert_in_ui.md caught ANTI-20", !res.valid && caughtAnti20, "Expected invalid with ANTI-20");
+    }
+
+    const invalidPrematureVal = path.join(fixturesDir, 'invalid_frontend_premature_validation.md');
+    if (fs.existsSync(invalidPrematureVal)) {
+      const res = lintExecutionPlan(invalidPrematureVal);
+      const caughtAnti74 = res.errors.some(e => e.code === 'ANTI-74_VIOLATION');
+      addCheck("Fixture: invalid_frontend_premature_validation.md caught ANTI-74", !res.valid && caughtAnti74, "Expected invalid with ANTI-74");
+    }
+
+    const validOrderedVal = path.join(fixturesDir, 'valid_frontend_ordered_validation.md');
+    if (fs.existsSync(validOrderedVal)) {
+      const res = lintExecutionPlan(validOrderedVal);
+      addCheck("Fixture: valid_frontend_ordered_validation.md passes", res.valid, `Expected valid, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
     }
 
     const validIntentPlan = path.join(fixturesDir, 'valid_intent_feature_plan.md');
@@ -1947,6 +2138,20 @@ category: "Backend"
       const res = runSmokeAudit(validPlan, docMismatchServer);
       const caughtDocMismatch = res.errors.some(e => e.code.startsWith('SCENARIO_') || e.code.startsWith('STEP_') || e.code.startsWith('TESTCASE_'));
       addCheck("Fixture: Smoke audit catches documentation & metadata mismatches", !res.valid && caughtDocMismatch, "Expected failed smoke audit on doc mismatches");
+    }
+
+    const suitePassServer = path.join(fixturesDir, 'suite_response_pass.json');
+    const suiteFailServer = path.join(fixturesDir, 'suite_response_fail.json');
+
+    if (fs.existsSync(validOrderedVal) && fs.existsSync(suitePassServer)) {
+      const res = runSmokeAudit(validOrderedVal, suitePassServer);
+      addCheck("Fixture: Suite smoke audit passes on matching 3-case suite", res.valid, `Expected valid suite audit, got errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
+    if (fs.existsSync(validOrderedVal) && fs.existsSync(suiteFailServer)) {
+      const res = runSmokeAudit(validOrderedVal, suiteFailServer);
+      const caughtCaseMismatch = res.errors.some(e => e.code === 'CASE_COUNT_MISMATCH');
+      addCheck("Fixture: Suite smoke audit catches monolithic single-case drift", !res.valid && caughtCaseMismatch, "Expected failed suite audit on case count mismatch");
     }
   }
 

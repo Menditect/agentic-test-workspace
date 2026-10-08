@@ -1,0 +1,17 @@
+{
+  "testSuiteKey": "TS_101",
+  "name": "TS_ValidFrontendOrderedValidation",
+  "description": "Validates frontend ordered validation submission flow",
+  "testCases": [
+    {
+      "key": "1294",
+      "name": "EP_ValidFrontendOrderedValidation - Monolithic Case",
+      "SequenceNumber": 1,
+      "description": "Collapsed single case violating 3-case architecture"
+    }
+  ],
+  "testSteps": [
+    { "key": "1", "name": "CreateObject", "description": "[Pattern: Setup PAT-17] - Instantiate Customer with email" }
+  ],
+  "TCER_TestConstructionErrors": 0
+}

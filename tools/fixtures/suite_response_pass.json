@@ -1,0 +1,44 @@
+{
+  "testSuiteKey": "TS_101",
+  "name": "TS_ValidFrontendOrderedValidation",
+  "description": "Validates frontend ordered validation submission flow",
+  "testCases": [
+    {
+      "key": "101",
+      "name": "EP_ValidFrontendOrderedValidation - Case 1: Setup",
+      "SequenceNumber": 1,
+      "description": "Database setup and seeding"
+    },
+    {
+      "key": "102",
+      "name": "EP_ValidFrontendOrderedValidation - Case 2: Playwright Execution",
+      "SequenceNumber": 2,
+      "description": "Form inputs and validation checks"
+    },
+    {
+      "key": "103",
+      "name": "EP_ValidFrontendOrderedValidation - Case 3: Teardown",
+      "SequenceNumber": 3,
+      "description": "Database cleanup"
+    }
+  ],
+  "testSteps": [
+    { "key": "1", "name": "CreateObject", "description": "[Pattern: Setup PAT-17] - Instantiate Customer with email" },
+    { "key": "2", "name": "Locate_MxWidget_TextBox", "description": "[Pattern: Locate PAT-64] - Locate email textbox" },
+    { "key": "3", "name": "ACT_Fill_TextBox_Input", "description": "[Pattern: Input PAT-64] - Fill email value" },
+    { "key": "4", "name": "ACT_Click_MxButton", "description": "[Pattern: Submit PAT-64 PAT-119] - Click submit button" },
+    { "key": "5", "name": "Locate_MxWidget_TextBox_ValidationMessage", "description": "[Pattern: Validation Locator PAT-119] - Locates validation message post-submit" },
+    { "key": "6", "name": "ASR_Is_Hidden_MxLocator", "description": "[Pattern: Validation Assertion PAT-119] - Asserts validation message is hidden post-submit" },
+    { "key": "7", "name": "DeleteObjects", "description": "[Pattern: Teardown PAT-18] - Cleanup customer data" }
+  ],
+  "dataVariationItems": [
+    { "key": "201", "name": "Step 1: Customer.Email" },
+    { "key": "202", "name": "Step 3: Value" },
+    { "key": "203", "name": "Step 4: WidgetName" }
+  ],
+  "dataVariations": [
+    { "key": "301", "name": "Valid Submission", "description": "Submits form nominal" },
+    { "key": "302", "name": "Alternate Submission", "description": "Submits form alternate" }
+  ],
+  "TCER_TestConstructionErrors": 0
+}
