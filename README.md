@@ -50,7 +50,7 @@ Before starting, ensure you have:
 - **[Git](https://git-scm.com/)** installed (used to sync upstream testing skills).
 - Access to MTA with an identification token for a service account (with Call MCP primitive tools: Enabled)
 - A local Mendix application under test
-- For exploratory testing **[MTA Plugin](https://documentation.menditect.com/Tools/mta-plugin)** must be installed and connected with MTA.
+- For exploratory testing **[MTA Plugin](https://documentation.menditect.com/installation/import-plugin)** must be installed and connected with MTA.
 
 ## Setup of workspace
 
