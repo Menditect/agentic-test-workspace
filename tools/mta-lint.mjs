@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-export const LINTER_VERSION = "1.4.0";
+export const LINTER_VERSION = "1.4.1";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -435,9 +435,21 @@ export function lintExecutionPlan(filePath) {
     addCheck("Master Step Specification Ledger Table Found", true);
 
     // Check required columns (PAT-111, Unified Promotable Blueprint)
-    const requiredHeaderKeywords = ['case', 'input', 'output', 'parameters', 'settings'];
-    const hStr = stepLedgerTable.headers.join(' ').toLowerCase();
-    const missingCols = requiredHeaderKeywords.filter(k => !hStr.includes(k));
+    const isBackendUnit = metadata && metadata.category === 'Backend';
+    const hHeaders = stepLedgerTable.headers.map(h => h.toLowerCase());
+
+    const hasInput = hHeaders.some(h => /input|\bin\b/i.test(h));
+    const hasOutput = hHeaders.some(h => /output|\bout\b/i.test(h));
+    const hasParams = hHeaders.some(h => /parameter|binding|value|initial/i.test(h));
+    const hasSettings = hHeaders.some(h => /setting|exec/i.test(h));
+    const hasCase = hHeaders.some(h => /\bcase\b/i.test(h));
+
+    const missingCols = [];
+    if (!hasInput) missingCols.push('input');
+    if (!hasOutput) missingCols.push('output');
+    if (!hasParams) missingCols.push('parameters');
+    if (!hasSettings) missingCols.push('settings');
+    if (!isBackendUnit && !hasCase) missingCols.push('case');
 
     if (missingCols.length > 0) {
       addCheck("Step Ledger Required Columns", false, `Missing required columns matching: ${missingCols.join(', ')}`, "INCOMPLETE_LEDGER_COLUMNS");
@@ -713,7 +725,7 @@ function validateDateTimeAndDatePickerFormats(content, stepLedgerTable, variatio
       addCheck(
         "PAT-94 & ANTI-45: Mandatory DatePicker Format Model Extraction",
         false,
-        "Frontend test interacts with DatePicker widget, but no verified CustomDateFormat pattern (e.g. 'dd-MM-yyyy', 'yyyy-MM-dd') is documented in Section 4 Input Widget Inventory (PAT-94 / ANTI-45). Date formats must be extracted via 'mxcli bson dump' and never guessed or defaulted.",
+        "Frontend test interacts with DatePicker widget, but no verified CustomDateFormat pattern (e.g. 'dd-MM-yyyy', 'yyyy-MM-dd') is documented in Section 2 Component Under Test (Input Widget Inventory table) (PAT-94 / ANTI-45). Date formats must be extracted via 'mxcli bson dump' and never guessed or defaulted.",
         "ANTI-45_VIOLATION"
       );
     } else {
@@ -1294,7 +1306,7 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
       const rowLabel = targetColKey ? row[targetColKey] : Object.values(row)[0] || '';
       const cleanLabel = rowLabel.replace(/[`*_]/g, '').trim();
 
-      if (/Scenario\s*(?:Name|Desc)/i.test(cleanLabel)) continue;
+      if (/Scenario\s*(?:Name|Desc)/i.test(cleanLabel) || /Assert\s*(?:Return|Count|Feedback|Value|Attribute)/i.test(cleanLabel)) continue;
 
       const cellVal = (row[sCol] || '').replace(/[`*_\s]/g, '').toLowerCase();
 
@@ -1326,8 +1338,23 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
     if (!cellEmptyFound && isHeaderEmpty) {
       // Header or description mentions empty/unassigned (e.g. "CarSize is unassigned")
       const textToScan = `${scenName} ${scenDesc} ${sCol}`;
-      const entMatch = textToScan.match(/\b([A-Z][a-zA-Z0-9_]*)\b/);
-      const targetEntity = entMatch ? entMatch[1] : "Object Parameter";
+      let targetEntity = "Object Parameter";
+
+      // Match against registered sentinel entities first
+      for (const knownEntity of sentinelEntities.keys()) {
+        if (new RegExp(`\\b${knownEntity}\\b`, 'i').test(textToScan)) {
+          targetEntity = sentinelEntities.get(knownEntity).entity;
+          break;
+        }
+      }
+
+      // If no registered sentinel matched, search for entity candidate excluding common stop words
+      if (targetEntity === "Object Parameter") {
+        const stopWords = /^(?:Unassigned|Empty|Null|Missing|Scenario|Case|No|Without|None|Step|Object|Parameter|Filter|Boundary|Expected|Default)$/i;
+        const words = textToScan.match(/\b([A-Z][a-zA-Z0-9_]*)\b/g) || [];
+        const candidate = words.find(w => !stopWords.test(w));
+        if (candidate) targetEntity = candidate;
+      }
 
       detectedEmptyScenarios.push({ col: sCol, name: scenName, entity: targetEntity, rowLabel: sCol });
 
@@ -2048,6 +2075,12 @@ category: "Backend"
     if (fs.existsSync(validMultiParamPlan)) {
       const res = lintExecutionPlan(validMultiParamPlan);
       addCheck("Fixture: valid_multi_param_pat07.md passes multi-parameter PAT-07 check", res.valid, `Expected valid with multi-parameter PAT-07, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
+    const validNullAssertPlan = path.join(fixturesDir, 'valid_plan_null_assert_compact_ledger.md');
+    if (fs.existsSync(validNullAssertPlan)) {
+      const res = lintExecutionPlan(validNullAssertPlan);
+      addCheck("Fixture: valid_plan_null_assert_compact_ledger.md passes null assertion & compact ledger check", res.valid, `Expected valid with null assert and compact ledger, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
     }
 
     const validSentinelPlan = path.join(fixturesDir, 'valid_plan_with_sentinel.md');
