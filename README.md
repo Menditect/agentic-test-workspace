@@ -50,7 +50,7 @@ Before starting, ensure you have:
 - **[Git](https://git-scm.com/)** installed (used to sync upstream testing skills).
 - Access to MTA with an identification token for a service account (with Call MCP primitive tools: Enabled)
 - A local Mendix application under test
-- For exploratory testing **[MTA Plugin](https://documentation.menditect.com/Tools/mta-plugin)** must be installed and connected with MTA.
+- For exploratory testing **[MTA Plugin](https://documentation.menditect.com/installation/import-plugin)** must be installed and connected with MTA.
 
 ## Setup of workspace
 
@@ -161,6 +161,7 @@ If you are using **Mendix Studio Pro / MAIA**, ensure the `Menditect_AgenticTest
 - **MTA Url: [MtaUrl]**
 - **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json`.
 - **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use the MTA Plugin MCP tool (`MTA_plugin.execute-testcase`) for all in-memory exploratory test executions.
+- **ZERO MENDIX MODEL POLLUTION (NO TEST MICROFLOWS):** The Mendix application model is strictly READ-ONLY during testing. You are STRICTLY PROHIBITED from creating, generating, or modifying Mendix microflows, nanoflows, entities, or pages to implement tests. Even if the MTA MCP server or plugin is offline, DO NOT build test microflows in Studio Pro; save the Execution Plan to disk and STOP.
 - **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).
 - **EXPLORATORY EXECUTION STRATEGY:** Default to `auto_execute` (draft Execution Plan and execute immediately in a single turn without pausing). If you prefer explicit sign-off before running, set to `prompt_approval`.
 - **MTA LICENSE TIER & CAPABILITIES:**
