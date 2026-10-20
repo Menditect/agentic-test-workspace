@@ -19,6 +19,8 @@ risks_covered:
     mitigating_scenario: "Scenario #1"
   - risk: "Exceeds maximum discount threshold prevents negative total"
     mitigating_scenario: "Scenario #2"
+  - risk: "Empty order parameter must safely return 0 without exception"
+    mitigating_scenario: "Scenario #3"
 ```
 
 </details>
@@ -37,20 +39,22 @@ risks_covered:
 
 | # | Case | Step Action & Target | Input Handle | Output Handle | Parameters, Bindings & Initial Values | Embedded Assertions | Exec Settings | Pattern Tag |
 | :-: | :--: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | Case 1 | `CreateObject` (`Sales.Order`) | - | `orderHandle` | `Total = 100` | - | `None` / `Stop` | `PAT-06` |
-| **2** | Case 1 | `CallMicroflow` (`Sales.CALC_Discount`) | `orderHandle` | `resultHandle` | `Order = orderHandle` | `Assert Return Value == expectedVal` | `None` / `Stop` | `PAT-14` |
+| **1** | Case 1 | `CreateObject` (`Sales.Order`) | - | `step1_Order` | `Sentinel = 'VALID', Total = 100` | - | `None` / `Stop` | `PAT-06` |
+| **2** | Case 1 | `RetrieveObject` (`Sales.Order`) | `step1_Order` | `orderHandle` | `RetrieveOption = "Teststep", Filter: Sentinel == 'VALID'` | `Assert Object Count == 1` | `None` / `Stop` | `PAT-07` |
+| **3** | Case 1 | `CallMicroflow` (`Sales.CALC_Discount`) | `orderHandle` | `resultHandle` | `Order = orderHandle` | `Assert Return Value == expectedVal` | `None` / `Stop` | `PAT-14` |
 
 </details>
 
 ## 4. Test Scenarios & Test Data
 *The business situations to verify, with inputs and expected outcomes for each scenario.*
 
-| # | Step Target | Scenario #1 (Zero Boundary) | Scenario #2 (VIP Threshold) |
-| :---: | :--- | :--- | :--- |
-| **0** | **Scenario Name** | Zero Boundary | VIP Threshold |
-| **0** | **Scenario Description** | Zero total input | High value VIP order |
-| 1 | Step 1: `Order.Total` | `0` | `200` |
-| 2 | Step 2: Assert Return Value | `0` | `170` |
+| # | Step Target | Scenario #1 (Zero Boundary) | Scenario #2 (VIP Threshold) | Scenario #3 (Empty Order Boundary) |
+| :---: | :--- | :--- | :--- | :--- |
+| **0** | **Scenario Name** | Zero Boundary | VIP Threshold | Empty Order Boundary |
+| **0** | **Scenario Description** | Zero total input | High value VIP order | Null order parameter boundary |
+| 1 | Step 1: `Order.Total` | `0` | `200` | `0` |
+| 2 | Step 1: `Order.Sentinel` | `VALID` | `VALID` | `NONE` |
+| 3 | Step 3: Assert Return Value | `0` | `170` | `0` |
 
 ## 5. Quality & Compliance Checks
 *Compliance checks pass.*

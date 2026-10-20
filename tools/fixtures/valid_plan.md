@@ -24,20 +24,22 @@ category: "Backend"
 
 | # | Case | Step Action & Target | Input Handle | Output Handle | Parameters, Bindings & Initial Values | Embedded Assertions | Exec Settings | Pattern Tag |
 | :-: | :--: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | Case 1 | `CreateObject` (`Sales.Order`) | - | `orderHandle` | `Amount = 100` | - | `None` / `Stop` | `PAT-06` |
-| **2** | Case 1 | `CallMicroflow` (`Sales.ACT_Process`) | `orderHandle` | `resultHandle` | `Order = orderHandle` | `Assert result == true` | `None` / `Stop` | `PAT-14` |
+| **1** | Case 1 | `CreateObject` (`Sales.Order`) | - | `step1_Order` | `Sentinel = 'VALID', Amount = 100` | - | `None` / `Stop` | `PAT-06` |
+| **2** | Case 1 | `RetrieveObject` (`Sales.Order`) | `step1_Order` | `orderHandle` | `RetrieveOption = "Teststep", Filter: Sentinel == 'VALID'` | `Assert Object Count == 1` | `None` / `Stop` | `PAT-07` |
+| **3** | Case 1 | `CallMicroflow` (`Sales.ACT_Process`) | `orderHandle` | `resultHandle` | `Order = orderHandle` | `Assert result == true` | `None` / `Stop` | `PAT-14` |
 
 </details>
 
 ## 4. Test Scenarios & Test Data
 *The business situations to verify, with inputs and expected outcomes for each scenario.*
 
-| # | Step Target | Scenario #1 (Regular) | Scenario #2 (VIP) |
-| :---: | :--- | :--- | :--- |
-| **0** | **Scenario Name** | Regular Customer | VIP Customer |
-| **0** | **Scenario Description** | Standard verification | VIP discount verification |
-| 1 | Step 1: `Order.Amount` | `100` | `200` |
-| 2 | Step 2: Assert Return Value | `true` | `true` |
+| # | Step Target | Scenario #1 (Regular) | Scenario #2 (VIP) | Scenario #3 (Empty Order Boundary) |
+| :---: | :--- | :--- | :--- | :--- |
+| **0** | **Scenario Name** | Regular Customer | VIP Customer | Empty Order Boundary |
+| **0** | **Scenario Description** | Standard verification | VIP discount verification | Null order parameter boundary |
+| 1 | Step 1: `Order.Amount` | `100` | `200` | `100` |
+| 2 | Step 1: `Order.Sentinel` | `VALID` | `VALID` | `NONE` |
+| 3 | Step 3: Assert Return Value | `true` | `true` | `false` |
 
 ## 5. Quality & Compliance Checks
 *Automated rules and best-practice checks validated before running or building.*

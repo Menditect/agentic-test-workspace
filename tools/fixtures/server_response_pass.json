@@ -4,15 +4,18 @@
   "description": "Validates sales order processing logic and discount rules.",
   "testSteps": [
     { "key": "101", "name": "CreateObject", "actionType": "CreateObject", "description": "[Pattern: Direct Initialization on Create Object PAT-06] - Instantiate Sales.Order with Amount" },
-    { "key": "102", "name": "CallMicroflow", "actionType": "MicroflowCall", "description": "[Pattern: Microflow Execution & Embedded Assertion PAT-14] - Execute Sales.ACT_Process and assert result" }
+    { "key": "102", "name": "RetrieveObject", "actionType": "RetrieveObject", "description": "[Pattern: Empty-Guard & Sentinel Filter PAT-07] - Retrieve Sales.Order with Sentinel filter" },
+    { "key": "103", "name": "CallMicroflow", "actionType": "MicroflowCall", "description": "[Pattern: Microflow Execution & Embedded Assertion PAT-14] - Execute Sales.ACT_Process and assert result" }
   ],
   "dataVariationItems": [
     { "key": "201", "name": "Step 1: Order.Amount" },
-    { "key": "202", "name": "Step 2: Assert Return Value" }
+    { "key": "202", "name": "Step 1: Order.Sentinel" },
+    { "key": "203", "name": "Step 3: Assert Return Value" }
   ],
   "dataVariations": [
     { "key": "301", "name": "Regular Customer", "description": "Standard verification" },
-    { "key": "302", "name": "VIP Customer", "description": "VIP discount verification" }
+    { "key": "302", "name": "VIP Customer", "description": "VIP discount verification" },
+    { "key": "303", "name": "Empty Order Boundary", "description": "Null order parameter boundary" }
   ],
   "TCER_TestConstructionErrors": 0
 }

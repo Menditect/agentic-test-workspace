@@ -22,7 +22,7 @@ CarRentalModule.SUB_CalculateRentalFee
 | :-: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1** | `CreateObject` (`CarRental.CarSize`) | - | `step1_CarSize` | `Sentinel = 'VALID'` | - | `None` / `Stop` | `PAT-06` |
 | **2** | `RetrieveObject` (`CarRental.CarSize`) | `step1_CarSize` | `step2_CarSize` | `RetrieveOption = "Teststep", Filter: Sentinel == 'VALID'` | `Assert Object Count == 1` | `None` / `Stop` | `PAT-07` |
-| **3** | `CreateObject` (`CarRental.Car`) | `step2_CarSize` | `step3_Car` | `Sentinel = 'VALID', Car_CarSize = step2_CarSize` | - | `None` / `Stop` | `PAT-06` |
+| **3** | `CreateObject` (`CarRental.Car`) | - | `step3_Car` | `Sentinel = 'VALID', Car_CarSize = step2_CarSize` | - | `None` / `Stop` | `PAT-06` |
 | **4** | `RetrieveObject` (`CarRental.Car`) | `step3_Car` | `step4_Car` | `RetrieveOption = "Teststep", Filter: Sentinel == 'VALID'` | `Assert Object Count == 1` | `None` / `Stop` | `PAT-07` |
 | **5** | `CallMicroflow` (`CarRental.SUB_CalculateRentalFee`) | `step4_Car` | `resultHandle` | `Car = step4_Car` | `Assert Return Value == 120` | `None` / `Stop` | `PAT-14` |
 

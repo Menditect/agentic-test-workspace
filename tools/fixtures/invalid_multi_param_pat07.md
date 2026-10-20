@@ -22,7 +22,7 @@ CarRentalModule.SUB_CalculateRentalFee
 | :-: | :--: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1** | Case 1 | `CreateObject` (`CarRental.CarSize`) | - | `step1_CarSize` | `Sentinel = 'VALID'` | - | `None` / `Stop` | `PAT-06` |
 | **2** | Case 1 | `RetrieveObject` (`CarRental.CarSize`) | `step1_CarSize` | `step2_CarSize` | `RetrieveOption = "Teststep", Filter: Sentinel == 'VALID'` | `Assert Object Count == 1` | `None` / `Stop` | `PAT-07` |
-| **3** | Case 1 | `CreateObject` (`CarRental.Car`) | `step2_CarSize` | `step3_Car` | `Fuel = Diesel, Car_CarSize = step2_CarSize` | - | `None` / `Stop` | `PAT-06` |
+| **3** | Case 1 | `CreateObject` (`CarRental.Car`) | - | `step3_Car` | `Fuel = Diesel, Car_CarSize = step2_CarSize` | - | `None` / `Stop` | `PAT-06` |
 | **4** | Case 1 | `CallMicroflow` (`CarRental.SUB_CalculateRentalFee`) | `step3_Car` | `resultHandle` | `Car = step3_Car, CarSize = step2_CarSize` | `Assert result == 120` | `None` / `Stop` | `PAT-14` |
 
 ## 4. Test Scenarios & Test Data

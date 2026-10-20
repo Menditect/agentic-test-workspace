@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-export const LINTER_VERSION = "1.4.1";
+export const LINTER_VERSION = "1.4.2";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -507,6 +507,8 @@ function validateStepLedgerRules(table, metadata, addCheck) {
   let previousAction = null;
   let previousOutputHandle = null;
   let hasPat06Violation = false;
+  let hasCreateObject = false;
+  let hasInvalidCreateInputHandle = false;
 
   for (let idx = 0; idx < table.rows.length; idx++) {
     const row = table.rows[idx];
@@ -518,10 +520,24 @@ function validateStepLedgerRules(table, metadata, addCheck) {
     const isChange = /ChangeObject/i.test(rowText);
 
     if (isCreate) {
+      hasCreateObject = true;
       previousAction = 'CreateObject';
       // attempt to identify handle
       const outHandleCol = Object.keys(row).find(k => k.toLowerCase().includes('output'));
       previousOutputHandle = outHandleCol ? row[outHandleCol].replace(/[`\s]/g, '') : null;
+
+      // Rule: CreateObject has no Input Handle (Input Handle must be '-')
+      const inHandleCol = Object.keys(row).find(k => (k.toLowerCase().includes('input') || k.toLowerCase() === 'in') && !k.toLowerCase().includes('binding') && !k.toLowerCase().includes('initial'));
+      const inHandle = inHandleCol ? (row[inHandleCol] || '').replace(/[`\s]/g, '') : '';
+      if (inHandle && inHandle !== '-' && inHandle.toLowerCase() !== 'none' && inHandle.toLowerCase() !== 'n/a') {
+        addCheck(
+          "PAT-06: CreateObject Input Handle Restriction",
+          false,
+          `Step ${idx + 1} (CreateObject) specifies invalid Input Handle '${inHandle}'. CreateObject instantiates a new entity in memory and does not accept an input handle (Input Handle must be '-'). Associations to other objects must be specified in the 'Parameters, Bindings & Initial Values' column (e.g. 'Car_CarSize = ${inHandle}').`,
+          "INVALID_CREATE_OBJECT_INPUT_HANDLE"
+        );
+        hasInvalidCreateInputHandle = true;
+      }
     } else if (isChange) {
       const inHandleCol = Object.keys(row).find(k => k.toLowerCase().includes('input'));
       const inHandle = inHandleCol ? row[inHandleCol].replace(/[`\s]/g, '') : null;
@@ -549,6 +565,9 @@ function validateStepLedgerRules(table, metadata, addCheck) {
   // Record PAT-06 check if no violation was recorded
   if (!hasPat06Violation) {
     addCheck("PAT-06: Direct Attribute Init on CreateObject", true);
+  }
+  if (hasCreateObject && !hasInvalidCreateInputHandle) {
+    addCheck("PAT-06: CreateObject Input Handle Restriction", true);
   }
 }
 
@@ -1224,23 +1243,57 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
     }
   }
 
-  // 4. Inspect Section 3 (Step Ledger) for PAT-07 Sentinel Retrieves mapped by entity
+  // 4. Inspect Section 3 (Step Ledger) for PAT-07 Sentinel Retrieves, CreateObject handles, and Microflow calls
   let hasRetrieveFromTeststep = false;
   let hasValidSentinelFilter = false;
   let hasSentinelCountAssertion = false;
   let hasEnumFilterViolation = false;
   let hasLongSentinelViolation = false;
+  let hasMicroflowCall = false;
   const sentinelEntities = new Map();
+  const createdEntities = new Map();
+  const handleProducers = new Map();
+  const directCreateToMicroflowErrors = [];
 
   for (let idx = 0; idx < stepLedgerTable.rows.length; idx++) {
     const row = stepLedgerTable.rows[idx];
     const rowText = Object.values(row).join(' ');
+    const cleanRowText = rowText.replace(/[`*_]/g, '');
 
+    const isCreate = /Create(?:Object|Objects)?/i.test(rowText);
     const isRetrieve = /Retrieve(?:Object|Objects)?/i.test(rowText);
+    const isMicroflow = /CallMicroflow|MicroflowCall/i.test(rowText);
+
+    const outCol = Object.keys(row).find(k => k.toLowerCase().includes('output') || k.toLowerCase() === 'out');
+    const outHandle = outCol ? (row[outCol] || '').replace(/[`\s]/g, '') : '';
+    const inCol = Object.keys(row).find(k => (k.toLowerCase().includes('input') || k.toLowerCase() === 'in') && !k.toLowerCase().includes('binding') && !k.toLowerCase().includes('initial'));
+    const inHandle = inCol ? (row[inCol] || '').replace(/[`\s]/g, '') : '';
+    const paramCol = Object.keys(row).find(k => k.toLowerCase().includes('parameter') || k.toLowerCase().includes('binding') || k.toLowerCase().includes('initial'));
+    const paramText = paramCol ? (row[paramCol] || '') : '';
+
+    if (isCreate) {
+      const entMatch = cleanRowText.match(/Create(?:Object|Objects)?\s*\(\s*(?:([A-Z][a-zA-Z0-9_]*)\.)?([A-Z][a-zA-Z0-9_]*)\s*\)/i) ||
+                        cleanRowText.match(/Create(?:Object|Objects)?\s+([A-Z][a-zA-Z0-9_]*)/i);
+      const entName = entMatch ? (entMatch[2] || entMatch[1]).replace(/(?:Handle|Obj|Object)$/i, '') : '';
+      if (outHandle && outHandle !== '-' && outHandle.toLowerCase() !== 'none') {
+        handleProducers.set(outHandle.toLowerCase(), {
+          type: 'CreateObject',
+          entity: entName,
+          stepIdx: idx + 1,
+          rawHandle: outHandle
+        });
+      }
+      if (entName) {
+        createdEntities.set(entName.toLowerCase(), {
+          entity: entName,
+          stepIdx: idx + 1,
+          handle: outHandle
+        });
+      }
+    }
+
     const isTeststepOption = /(?:Teststep|from\s+Teststep|from\s+step|RetrieveOption\s*=\s*["']?Teststep["']?)/i.test(rowText);
-    const inputCol = Object.keys(row).find(k => k.toLowerCase().includes('input'));
-    const inputVal = inputCol ? (row[inputCol] || '').replace(/[`\s]/g, '') : '';
-    const hasPipedInput = inputVal && inputVal !== '-' && inputVal.toLowerCase() !== 'none';
+    const hasPipedInput = inHandle && inHandle !== '-' && inHandle.toLowerCase() !== 'none';
 
     if (isRetrieve && (isTeststepOption || hasPipedInput)) {
       hasRetrieveFromTeststep = true;
@@ -1258,7 +1311,8 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
 
       const hasFilterSpec = /(?:Filter|SentinelKey|Sentinel|[a-zA-Z0-9_]+)\s*(?:==|=|:)\s*(?:'[^']+'|"[^"]+"|\d+)/i.test(rowText) ||
                             /(?:filter|SentinelKey)/i.test(rowText);
-      if (hasFilterSpec && !isEnumFilter && !hasLongSentinelViolation) {
+      const isValidFilter = hasFilterSpec && !isEnumFilter && !hasLongSentinelViolation;
+      if (isValidFilter) {
         hasValidSentinelFilter = true;
       }
 
@@ -1268,15 +1322,53 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
       }
 
       // Robust entity extraction from Retrieve step
-      const cleanRowText = rowText.replace(/[`*_]/g, '');
       const entMatch = cleanRowText.match(/Retrieve(?:Object|Objects)?\s*\(\s*(?:([A-Z][a-zA-Z0-9_]*)\.)?([A-Z][a-zA-Z0-9_]*)\s*\)/i) ||
                         cleanRowText.match(/Retrieve(?:Object|Objects)?\s+([A-Z][a-zA-Z0-9_]*)/i);
       if (entMatch) {
         const entName = (entMatch[2] || entMatch[1]).replace(/(?:Handle|Sentinel|Obj|Object|_Sentinel)$/i, '');
         sentinelEntities.set(entName.toLowerCase(), {
           entity: entName,
-          isValid: hasFilterSpec && !isEnumFilter && !hasLongSentinelViolation
+          isValid: isValidFilter,
+          stepIdx: idx + 1
         });
+      }
+
+      if (outHandle && outHandle !== '-' && outHandle.toLowerCase() !== 'none') {
+        const entName = entMatch ? (entMatch[2] || entMatch[1]).replace(/(?:Handle|Sentinel|Obj|Object|_Sentinel)$/i, '') : '';
+        handleProducers.set(outHandle.toLowerCase(), {
+          type: 'RetrieveObject',
+          entity: entName,
+          stepIdx: idx + 1,
+          isValidSentinel: isValidFilter,
+          rawHandle: outHandle
+        });
+      }
+    }
+
+    if (isMicroflow) {
+      hasMicroflowCall = true;
+      const boundHandles = [];
+      if (inHandle && inHandle !== '-' && inHandle.toLowerCase() !== 'none') {
+        boundHandles.push(inHandle);
+      }
+      const eqMatches = paramText.matchAll(/(?:[a-zA-Z0-9_]+)\s*=\s*([a-zA-Z0-9_]+)/g);
+      for (const m of eqMatches) {
+        const val = m[1].trim();
+        if (val !== 'true' && val !== 'false' && val !== 'empty' && val !== 'null' && isNaN(val)) {
+          boundHandles.push(val);
+        }
+      }
+
+      for (const h of boundHandles) {
+        const producer = handleProducers.get(h.toLowerCase());
+        if (producer && producer.type === 'CreateObject') {
+          directCreateToMicroflowErrors.push({
+            stepIdx: idx + 1,
+            handle: h,
+            producerStepIdx: producer.stepIdx,
+            entity: producer.entity || 'Unknown'
+          });
+        }
       }
     }
   }
@@ -1318,7 +1410,7 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
         if (entMatch) {
           targetEntity = entMatch[1];
         }
-        const normEntity = targetEntity.replace(/^Step\s*\d+:?\s*/i, '').replace(/^Parameter\s*\$?/i, '').replace(/[\$:._].*$/, '').trim();
+        const normEntity = targetEntity.replace(/^Step\s*\d+:?\s*/i, '').replace(/^Parameter\s*\$?/, '').replace(/[\$:._].*$/, '').trim();
 
         detectedEmptyScenarios.push({ col: sCol, name: scenName, entity: normEntity, rowLabel: cleanLabel });
 
@@ -1340,10 +1432,11 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
       const textToScan = `${scenName} ${scenDesc} ${sCol}`;
       let targetEntity = "Object Parameter";
 
-      // Match against registered sentinel entities first
-      for (const knownEntity of sentinelEntities.keys()) {
+      // Match against registered sentinel entities and created entities first
+      for (const knownEntity of [...sentinelEntities.keys(), ...createdEntities.keys()]) {
         if (new RegExp(`\\b${knownEntity}\\b`, 'i').test(textToScan)) {
-          targetEntity = sentinelEntities.get(knownEntity).entity;
+          const matched = sentinelEntities.get(knownEntity) || createdEntities.get(knownEntity);
+          targetEntity = matched.entity;
           break;
         }
       }
@@ -1371,7 +1464,39 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
     }
   }
 
+  // Check created entities for missing sentinels in backend microflow tests
+  if (createdEntities.size > 0 && hasMicroflowCall) {
+    for (const [entKey, entInfo] of createdEntities.entries()) {
+      const sentinel = sentinelEntities.get(entKey);
+      const alreadyDirectFlagged = directCreateToMicroflowErrors.some(e => e.entity.toLowerCase() === entKey);
+      const alreadyMissingFlagged = missingSentinelErrors.some(e => e.entity.toLowerCase() === entKey);
+      if ((!sentinel || !sentinel.isValid) && !alreadyDirectFlagged && !alreadyMissingFlagged) {
+        missingSentinelErrors.push({
+          scenName: 'All Scenarios',
+          entity: entInfo.entity,
+          paramName: entInfo.entity
+        });
+      }
+    }
+  }
+
   // 6. Report checks
+  let pat07CheckReported = false;
+
+  // A. Direct CreateObject to Microflow parameter binding errors
+  if (directCreateToMicroflowErrors.length > 0) {
+    for (const err of directCreateToMicroflowErrors) {
+      addCheck(
+        "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
+        false,
+        `Step ${err.stepIdx} (CallMicroflow) binds parameter directly to CreateObject handle '${err.handle}' from Step ${err.producerStepIdx} (entity '${err.entity}'). Microflow object parameters cannot bind directly to CreateObject because MTA CreateObject cannot be skipped dynamically at runtime; Section 3 (Master Step Ledger) lacks a PAT-07 Retrieve-from-Teststep sentinel step specifically for entity '${err.entity}'.`,
+        "ANTI-48_VIOLATION"
+      );
+    }
+    pat07CheckReported = true;
+  }
+
+  // B. Missing sentinel errors for empty scenarios or created entities
   if (missingSentinelErrors.length > 0) {
     for (const err of missingSentinelErrors) {
       addCheck(
@@ -1381,48 +1506,61 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
         "ANTI-48_VIOLATION"
       );
     }
-  } else if (detectedEmptyScenarios.length > 0) {
-    const primaryScen = detectedEmptyScenarios[0];
-    const scenarioName = primaryScen.name;
-
-    const meetsPat07 = hasRetrieveFromTeststep && hasValidSentinelFilter && !hasEnumFilterViolation && !hasLongSentinelViolation;
-    if (!meetsPat07) {
-      addCheck(
-        "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
-        false,
-        `Scenario '${scenarioName}' tests an empty/null object or unassigned association, but Section 3 (Master Step Ledger) lacks a PAT-07 Retrieve-from-Teststep sentinel step. Persistent MTA test cases cannot dynamically omit steps; empty object boundaries must be driven via PAT-07 sentinel filtering.`,
-        "ANTI-48_VIOLATION"
-      );
-    } else {
-      addCheck(
-        "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
-        true,
-        null,
-        null,
-        `Scenario '${scenarioName}' tests empty/null boundary using PAT-07 Retrieve-from-Teststep sentinel filter`
-      );
-    }
-  } else if (/SentinelKey/i.test(ledgerRawText)) {
-    addCheck(
-      "PAT-07: Sentinel Filter for Null Parameter Boundaries",
-      hasRetrieveFromTeststep && hasValidSentinelFilter,
-      "SentinelKey referenced but no RetrieveObject step filters by SentinelKey",
-      "MISSING_SENTINEL_RETRIEVE"
-    );
-    addCheck(
-      "PAT-08: Object Count Assertion on Sentinel Retrieve",
-      hasSentinelCountAssertion,
-      "Sentinel filter step must embed an Object Count assertion",
-      "MISSING_COUNT_ASSERTION"
-    );
+    pat07CheckReported = true;
   }
 
-  if (detectedEmptyScenarios.length > 0) {
+  // C. Empty scenario mandate for backend unit tests with microflows
+  if (createdEntities.size > 0 && hasMicroflowCall && detectedEmptyScenarios.length === 0) {
+    addCheck(
+      "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
+      false,
+      `Backend unit test creates objects (${Array.from(createdEntities.values()).map(e => `'${e.entity}'`).join(', ')}) for microflow execution, but Section 4 (Test Scenarios & Test Data) lacks a PAT-07 empty/null parameter variation scenario. Testing empty parameters is mandatory for all backend unit tests: add at least one scenario testing an empty/null boundary (e.g. setting Sentinel to 'NONE' or testing unassigned/empty parameter).`,
+      "ANTI-48_VIOLATION"
+    );
+    pat07CheckReported = true;
+  }
+
+  // D. If not already reported, verify general PAT-07 compliance
+  const meetsPat07 = hasRetrieveFromTeststep && hasValidSentinelFilter && !hasEnumFilterViolation && !hasLongSentinelViolation;
+
+  if (!pat07CheckReported) {
+    if (detectedEmptyScenarios.length > 0) {
+      const primaryScen = detectedEmptyScenarios[0];
+      const scenarioName = primaryScen.name;
+
+      if (!meetsPat07) {
+        addCheck(
+          "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
+          false,
+          `Scenario '${scenarioName}' tests an empty/null object or unassigned association, but Section 3 (Master Step Ledger) lacks a PAT-07 Retrieve-from-Teststep sentinel step. Persistent MTA test cases cannot dynamically omit steps; empty object boundaries must be driven via PAT-07 sentinel filtering.`,
+          "ANTI-48_VIOLATION"
+        );
+      } else {
+        addCheck(
+          "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
+          true,
+          null,
+          null,
+          `Scenario '${scenarioName}' tests empty/null boundary using PAT-07 Retrieve-from-Teststep sentinel filter`
+        );
+      }
+    } else if (/SentinelKey/i.test(ledgerRawText)) {
+      addCheck(
+        "PAT-07: Sentinel Filter for Null Parameter Boundaries",
+        hasRetrieveFromTeststep && hasValidSentinelFilter,
+        "SentinelKey referenced but no RetrieveObject step filters by SentinelKey",
+        "MISSING_SENTINEL_RETRIEVE"
+      );
+    }
+  }
+
+  // E. PAT-08 Count assertion on sentinel retrieve
+  if (detectedEmptyScenarios.length > 0 || sentinelEntities.size > 0 || hasRetrieveFromTeststep) {
     if (!hasSentinelCountAssertion) {
       addCheck(
         "PAT-08: Object Count Assertion on Sentinel Retrieve",
         false,
-        `Scenario '${detectedEmptyScenarios[0].name}' tests empty/null boundaries with sentinel retrieve, but Section 3 lacks an embedded Assert Object Count assertion (PAT-08)`,
+        `Section 3 lacks an embedded Assert Object Count assertion (PAT-08) on the sentinel retrieve step. Sentinel retrieve steps must verify existence with Assert Object Count.`,
         "MISSING_COUNT_ASSERTION"
       );
     } else {
@@ -2062,6 +2200,20 @@ category: "Backend"
       const res = lintExecutionPlan(invalidEmptyPlan);
       const caughtPat07 = res.errors.some(e => e.code === 'ANTI-48_VIOLATION' && e.message.includes('lacks a PAT-07 Retrieve-from-Teststep sentinel step'));
       addCheck("Fixture: invalid_empty_object_no_sentinel.md caught PAT-07 & ANTI-48", !res.valid && caughtPat07, "Expected invalid with PAT-07 & ANTI-48 violation");
+    }
+
+    const invalidBackendNoSentinel = path.join(fixturesDir, 'invalid_backend_no_sentinel_empty.md');
+    if (fs.existsSync(invalidBackendNoSentinel)) {
+      const res = lintExecutionPlan(invalidBackendNoSentinel);
+      const caughtPat07 = res.errors.some(e => e.code === 'ANTI-48_VIOLATION');
+      addCheck("Fixture: invalid_backend_no_sentinel_empty.md caught mandatory PAT-07 violation", !res.valid && caughtPat07, "Expected invalid with mandatory PAT-07 ANTI-48 violation");
+    }
+
+    const invalidCreateInputHandle = path.join(fixturesDir, 'invalid_create_object_with_input_handle.md');
+    if (fs.existsSync(invalidCreateInputHandle)) {
+      const res = lintExecutionPlan(invalidCreateInputHandle);
+      const caughtInputHandle = res.errors.some(e => e.code === 'INVALID_CREATE_OBJECT_INPUT_HANDLE');
+      addCheck("Fixture: invalid_create_object_with_input_handle.md caught INVALID_CREATE_OBJECT_INPUT_HANDLE", !res.valid && caughtInputHandle, "Expected invalid with INVALID_CREATE_OBJECT_INPUT_HANDLE");
     }
 
     const invalidMultiParamPlan = path.join(fixturesDir, 'invalid_multi_param_pat07.md');
