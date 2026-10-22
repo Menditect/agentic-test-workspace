@@ -19,7 +19,7 @@ import path from 'node:path';
 import process from 'node:process';
 import crypto from 'node:crypto';
 
-export const LINTER_VERSION = "1.5.0";
+export const LINTER_VERSION = "1.6.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -682,9 +682,12 @@ export function lintExecutionPlan(filePath) {
   // 3d. Frontend Validation Feedback Assertions (PAT-119, ANTI-20, PAT-12)
   validateFrontendValidationFeedback(content, stepLedgerTable, metadata, addCheck);
 
-  // 3e. Intent Classification & Ground Truth Traceability (PAT-121, ANTI-68..ANTI-72)
+  // 3e. Frontend High-Level Locator Generator Mandate (PAT-64, ANTI-79)
+  validateFrontendLocatorTools(content, stepLedgerTable, metadata, addCheck);
+
+  // 3f. Intent Classification & Ground Truth Traceability (PAT-121, ANTI-68..ANTI-72)
   validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variationMatrixTable, addCheck);
-  // 3f. Cryptographic Lock Verification (PAT-124, ANTI-78)
+  // 3g. Cryptographic Lock Verification (PAT-124, ANTI-78)
   if (metadata && metadata.locked_sha256) {
     const lockRes = verifyLockedExecutionPlan(filePath);
     addCheck(
@@ -803,7 +806,7 @@ function validatePipedRetrieveObjectCount(table, addCheck) {
 
     const actionCol = Object.keys(row).find(k => k.toLowerCase().includes('action') || k.toLowerCase().includes('target'));
     const actionVal = actionCol ? row[actionCol] : rowText;
-    const isRetrieve = /Retrieve(?:Object|Objects)?/i.test(actionVal) || /Retrieve(?:Object|Objects)?/i.test(rowText);
+    const isRetrieve = /Retrieve(?:Object|Objects)?/i.test(actionVal);
 
     if (!isRetrieve) continue;
 
@@ -1272,6 +1275,93 @@ function validateFrontendValidationFeedback(content, stepLedgerTable, metadata, 
  * Validates test intent classification, specification source traceability, risk coverage,
  * and exact return value assertion presence (PAT-121, ANTI-68..ANTI-72).
  */
+/**
+ * Rule: PAT-64 & ANTI-79: Mandatory Frontend High-Level Locator Generator Tools
+ *
+ * In Frontend execution plans:
+ * 1. Locating a page (Locate_MxPage) MUST NEVER use generic CreateMicroflowCallTestStep or CallMicroflow/CreateMicroflowCall.
+ *    It MUST use GenerateMicroflowCallTestStepLocatePage.
+ * 2. Standard widget locators (Locate_TextBox, Locate_Button, Locate_DropDown, Locate_DatePicker, Locate_MxWidget_*, etc.)
+ *    MUST NEVER specify generic CreateMicroflowCallTestStep. They MUST specify GenerateMicroflowCallTestStepLocateWidget.
+ */
+function validateFrontendLocatorTools(content, stepLedgerTable, metadata, addCheck) {
+  const isFrontend = metadata && metadata.category === 'Frontend';
+  if (!stepLedgerTable || !isFrontend) return;
+
+  const rows = stepLedgerTable.rows;
+  let hasGenericPageLocator = false;
+  let hasGenericWidgetLocator = false;
+  let genericPageLocatorStep = null;
+  let genericWidgetLocatorStep = null;
+
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    const rowText = Object.values(row).join(' ');
+
+    // Check for page locator anti-pattern
+    const isPageLocator = /Locate_MxPage\b/i.test(rowText);
+    if (isPageLocator) {
+      const isGeneratorTool = /GenerateMicroflowCallTestStepLocatePage|GenerateLocatePage/i.test(rowText);
+      const isGenericMicroflowCall = /CreateMicroflowCallTestStep|CallMicroflow|CreateMicroflowCall/i.test(rowText);
+      if (!isGeneratorTool || (isGenericMicroflowCall && /CreateMicroflowCallTestStep/i.test(rowText))) {
+        hasGenericPageLocator = true;
+        genericPageLocatorStep = idx + 1;
+      }
+    }
+
+    // Check for widget locator anti-pattern specifying generic CreateMicroflowCallTestStep
+    const isWidgetLocator = /Locate_MxWidget_|Locate_TextBox|Locate_Button|Locate_DropDown|Locate_DatePicker|Locate_CheckBox|Locate_RadioButtons|Locate_ReferenceSelector/i.test(rowText);
+    if (isWidgetLocator) {
+      if (/CreateMicroflowCallTestStep/i.test(rowText)) {
+        hasGenericWidgetLocator = true;
+        genericWidgetLocatorStep = idx + 1;
+      }
+    }
+  }
+
+  // Also check if content explicitly mentions calling CreateMicroflowCallTestStep for Locate_MxPage
+  const explicitCreateCallForPage = /CreateMicroflowCallTestStep[\s\S]*?Locate_MxPage/i.test(content) ||
+    /Locate_MxPage[\s\S]*?CreateMicroflowCallTestStep/i.test(content);
+  if (explicitCreateCallForPage && !hasGenericPageLocator) {
+    hasGenericPageLocator = true;
+    genericPageLocatorStep = "plan text";
+  }
+
+  if (hasGenericPageLocator) {
+    addCheck(
+      "PAT-64 & ANTI-79: High-Level Page Locator Generator Mandate",
+      false,
+      `Step ${genericPageLocatorStep} specifies locating a page via generic CreateMicroflowCall / CallMicroflow (Locate_MxPage) instead of GenerateMicroflowCallTestStepLocatePage (ANTI-79). Calling generic microflow creation bypasses MTA locator wiring and leaves 'Page' / 'BrowserContext' parameters empty, causing fatal runtime exceptions.`,
+      "ANTI-79_VIOLATION"
+    );
+  } else {
+    addCheck(
+      "PAT-64 & ANTI-79: High-Level Page Locator Generator Mandate",
+      true,
+      null,
+      null,
+      "Compliant with GenerateMicroflowCallTestStepLocatePage mandate"
+    );
+  }
+
+  if (hasGenericWidgetLocator) {
+    addCheck(
+      "PAT-64 & ANTI-79: High-Level Widget Locator Generator Mandate",
+      false,
+      `Step ${genericWidgetLocatorStep} specifies widget locator via generic CreateMicroflowCallTestStep instead of GenerateMicroflowCallTestStepLocateWidget (ANTI-79). High-level generator tools must be used for widget locators.`,
+      "ANTI-79_VIOLATION"
+    );
+  } else {
+    addCheck(
+      "PAT-64 & ANTI-79: High-Level Widget Locator Generator Mandate",
+      true,
+      null,
+      null,
+      "Compliant with GenerateMicroflowCallTestStepLocateWidget mandate"
+    );
+  }
+}
+
 function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variationMatrixTable, addCheck) {
   if (!metadata) return;
 
@@ -1486,9 +1576,13 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
     const rowText = Object.values(row).join(' ');
     const cleanRowText = rowText.replace(/[`*_]/g, '');
 
-    const isCreate = /Create(?:Object|Objects)?/i.test(rowText);
-    const isRetrieve = /Retrieve(?:Object|Objects)?/i.test(rowText);
-    const isMicroflow = /CallMicroflow|MicroflowCall/i.test(rowText);
+    const actionCol = Object.keys(row).find(k => k.toLowerCase().includes('action') || k.toLowerCase().includes('target'));
+    const actionVal = actionCol ? row[actionCol] : cleanRowText;
+    const cleanActionVal = String(actionVal).replace(/[`*_]/g, '');
+
+    const isCreate = /Create(?:Object|Objects)?/i.test(actionVal);
+    const isRetrieve = /Retrieve(?:Object|Objects)?/i.test(actionVal);
+    const isMicroflow = /CallMicroflow|MicroflowCall/i.test(actionVal);
 
     const outCol = Object.keys(row).find(k => k.toLowerCase().includes('output') || k.toLowerCase() === 'out');
     const outHandle = outCol ? (row[outCol] || '').replace(/[`\s]/g, '') : '';
@@ -1498,7 +1592,9 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
     const paramText = paramCol ? (row[paramCol] || '') : '';
 
     if (isCreate) {
-      const entMatch = cleanRowText.match(/Create(?:Object|Objects)?\s*\(\s*(?:([A-Z][a-zA-Z0-9_]*)\.)?([A-Z][a-zA-Z0-9_]*)\s*\)/i) ||
+      const entMatch = cleanActionVal.match(/Create(?:Object|Objects)?\s*\(\s*(?:([A-Z][a-zA-Z0-9_]*)\.)?([A-Z][a-zA-Z0-9_]*)\s*\)/i) ||
+                        cleanActionVal.match(/Create(?:Object|Objects)?\s+([A-Z][a-zA-Z0-9_]*)/i) ||
+                        cleanRowText.match(/Create(?:Object|Objects)?\s*\(\s*(?:([A-Z][a-zA-Z0-9_]*)\.)?([A-Z][a-zA-Z0-9_]*)\s*\)/i) ||
                         cleanRowText.match(/Create(?:Object|Objects)?\s+([A-Z][a-zA-Z0-9_]*)/i);
       const entName = entMatch ? (entMatch[2] || entMatch[1]).replace(/(?:Handle|Obj|Object)$/i, '') : '';
       if (outHandle && outHandle !== '-' && outHandle.toLowerCase() !== 'none') {
@@ -1565,7 +1661,9 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
       }
 
       // Robust entity extraction from Retrieve step
-      const entMatch = cleanRowText.match(/Retrieve(?:Object|Objects)?\s*\(\s*(?:([A-Z][a-zA-Z0-9_]*)\.)?([A-Z][a-zA-Z0-9_]*)\s*\)/i) ||
+      const entMatch = cleanActionVal.match(/Retrieve(?:Object|Objects)?\s*\(\s*(?:([A-Z][a-zA-Z0-9_]*)\.)?([A-Z][a-zA-Z0-9_]*)\s*\)/i) ||
+                        cleanActionVal.match(/Retrieve(?:Object|Objects)?\s+([A-Z][a-zA-Z0-9_]*)/i) ||
+                        cleanRowText.match(/Retrieve(?:Object|Objects)?\s*\(\s*(?:([A-Z][a-zA-Z0-9_]*)\.)?([A-Z][a-zA-Z0-9_]*)\s*\)/i) ||
                         cleanRowText.match(/Retrieve(?:Object|Objects)?\s+([A-Z][a-zA-Z0-9_]*)/i);
       if (entMatch) {
         const entName = (entMatch[2] || entMatch[1]).replace(/(?:Handle|Sentinel|Obj|Object|_Sentinel)$/i, '');
@@ -2065,6 +2163,33 @@ export function runSmokeAudit(planPath, serverJsonPath) {
   const phase1Pass = pCount === sCount;
   addCheck("Phase 1: Step Count Parity", phase1Pass, phase1Pass ? null : `Planned steps: ${pCount}, Server steps: ${sCount}`, "STEP_COUNT_MISMATCH", `Planned: ${pCount} | Server: ${sCount}`);
 
+  // Phase 1b: Frontend High-Level Locator Generator Verification (PAT-64, ANTI-79)
+  const isFrontendAudit = metadata && metadata.category === 'Frontend';
+  if (isFrontendAudit && serverSteps.length > 0) {
+    let unparameterizedLocators = [];
+    for (let i = 0; i < serverSteps.length; i++) {
+      const step = serverSteps[i];
+      const stepName = step.name || step.actionType || '';
+      const stepDesc = step.description || '';
+      const isPageLoc = /Locate_MxPage/i.test(stepName) || /Locate_MxPage/i.test(stepDesc);
+      if (isPageLoc) {
+        const params = step.parameters || step.parameterValues || [];
+        const pageParam = Array.isArray(params) ? params.find(p => p.name === 'Page' || p.parameterName === 'Page') : null;
+        if (pageParam && (pageParam.value === null || pageParam.value === '' || pageParam.value === 'Empty')) {
+          unparameterizedLocators.push(`Step ${i + 1} (${stepName}) has unbound 'Page' parameter (ANTI-79)`);
+        }
+      }
+    }
+    const locatorsPass = unparameterizedLocators.length === 0;
+    addCheck(
+      "Phase 1: High-Level Locator Generator Verification (PAT-64, ANTI-79)",
+      locatorsPass,
+      locatorsPass ? null : unparameterizedLocators.join('; '),
+      "ANTI-79_VIOLATION",
+      locatorsPass ? "All frontend page and widget locators verified" : unparameterizedLocators.join('; ')
+    );
+  }
+
   // Phase 2: Variation Item Registration
   const plannedVarRows = variationMatrixTable ? variationMatrixTable.rows.filter(r => {
     const rowText = Object.values(r).join(' ');
@@ -2464,6 +2589,12 @@ category: "Backend"
       addCheck("Fixture: invalid_piped_retrieve_no_count.md caught ANTI-03", !res.valid && caughtAnti03, "Expected invalid with ANTI-03");
     }
 
+    const validPipedRetrieveAssoc = path.join(fixturesDir, 'valid_pat07_piped_retrieve_to_assoc.md');
+    if (fs.existsSync(validPipedRetrieveAssoc)) {
+      const res = lintExecutionPlan(validPipedRetrieveAssoc);
+      addCheck("Fixture: valid_pat07_piped_retrieve_to_assoc.md passes without ANTI-03 false positive", res.valid, `Expected valid, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
     const validFrontendPlan = path.join(fixturesDir, 'valid_frontend_plan.md');
     if (fs.existsSync(validFrontendPlan)) {
       const res = lintExecutionPlan(validFrontendPlan);
@@ -2569,6 +2700,19 @@ category: "Backend"
       const res = lintExecutionPlan(invalidPrematureVal);
       const caughtAnti74 = res.errors.some(e => e.code === 'ANTI-74_VIOLATION');
       addCheck("Fixture: invalid_frontend_premature_validation.md caught ANTI-74", !res.valid && caughtAnti74, "Expected invalid with ANTI-74");
+    }
+
+    const invalidAnti79 = path.join(fixturesDir, 'invalid_frontend_anti79_generic_page_locator.md');
+    if (fs.existsSync(invalidAnti79)) {
+      const res = lintExecutionPlan(invalidAnti79);
+      const caughtAnti79 = res.errors.some(e => e.code === 'ANTI-79_VIOLATION');
+      addCheck("Fixture: invalid_frontend_anti79_generic_page_locator.md caught ANTI-79", !res.valid && caughtAnti79, "Expected invalid with ANTI-79");
+    }
+
+    const validGeneratorsPlan = path.join(fixturesDir, 'valid_frontend_locator_generators.md');
+    if (fs.existsSync(validGeneratorsPlan)) {
+      const res = lintExecutionPlan(validGeneratorsPlan);
+      addCheck("Fixture: valid_frontend_locator_generators.md passes", res.valid, `Expected valid, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
     }
 
     const validOrderedVal = path.join(fixturesDir, 'valid_frontend_ordered_validation.md');
