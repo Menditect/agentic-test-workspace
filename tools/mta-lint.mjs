@@ -409,8 +409,8 @@ export function computePlanHash(content) {
   }
 
   // Extract anchor if present
-  const anchorMatch = content.match(/(?:###\s*🔒?\s*IMMUTABLE_ASSERTION_ANCHOR[^\r\n]*\r?\n([^\r\n#]+)|IMMUTABLE_ASSERTION_ANCHOR:\s*([^\r\n]+))/i);
-  const anchor = anchorMatch ? (anchorMatch[1] || anchorMatch[2] || '').trim() : null;
+  const anchorMatch = content.match(/(?:###\s*🔒?\s*IMMUTABLE_ASSERTION_ANCHOR:\s*([^\r\n]+)|###\s*🔒?\s*IMMUTABLE_ASSERTION_ANCHOR[^\r\n]*\r?\n([^\r\n#]+)|IMMUTABLE_ASSERTION_ANCHOR:\s*([^\r\n]+))/i);
+  const anchor = anchorMatch ? (anchorMatch[1] || anchorMatch[2] || anchorMatch[3] || '').trim() : null;
 
   // Extract Section 3 and Section 4 text fallbacks if present
   const sec3Match = content.match(/##\s*3\.\s*(?:Test\s*Steps|Master\s*Step)[\s\S]*?(?=##\s*[4-9]\.|$)/i);
@@ -1310,7 +1310,7 @@ function validateFrontendLocatorTools(content, stepLedgerTable, metadata, addChe
     }
 
     // Check for widget locator anti-pattern specifying generic CreateMicroflowCallTestStep
-    const isWidgetLocator = /Locate_MxWidget_|Locate_TextBox|Locate_Button|Locate_DropDown|Locate_DatePicker|Locate_CheckBox|Locate_RadioButtons|Locate_ReferenceSelector/i.test(rowText);
+    const isWidgetLocator = /Locate_MxWidget_(?![A-Za-z0-9_]*ValidationMessage\b)|Locate_TextBox|Locate_Button|Locate_DropDown|Locate_DatePicker|Locate_CheckBox|Locate_RadioButtons|Locate_ReferenceSelector/i.test(rowText);
     if (isWidgetLocator) {
       if (/CreateMicroflowCallTestStep/i.test(rowText)) {
         hasGenericWidgetLocator = true;
@@ -1387,7 +1387,15 @@ function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variat
   }
 
   // 2. Specification Substance & Anti-Circular Specs (CHECK_SPEC_SUBSTANCE, ANTI-69, ANTI-71)
-  if (intent === 'exploratory_feature' || intent === 'tdd' || intent === 'bug_reproduction') {
+  const isPromptSpec = metadata.spec_source && typeof metadata.spec_source.type === 'string' && metadata.spec_source.type.startsWith('prompt');
+  const requiresSubstance = (
+    intent === 'exploratory_feature' ||
+    intent === 'tdd' ||
+    intent === 'bug_reproduction' ||
+    (intent === 'regression' && isPromptSpec)
+  );
+
+  if (requiresSubstance) {
     const specSource = metadata.spec_source;
     if (!specSource) {
       addCheck("ANTI-69: Specification Source Substance", false, `Intent '${intent}' requires 'spec_source' to prevent tautological testing against unverified code (PAT-121)`, "MISSING_SPEC_SOURCE");
@@ -1395,7 +1403,7 @@ function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variat
       const specType = specSource.type;
       const specSummary = specSource.summary;
 
-      if (specType === 'model_baseline') {
+      if (specType === 'model_baseline' && intent !== 'regression') {
         addCheck("ANTI-69: Non-Circular Ground Truth Source", false, `Intent '${intent}' cannot use 'model_baseline' as ground truth. An external specification or prompt criteria is required (ANTI-69)`, "ANTI-69_CIRCULAR_SPEC");
       } else {
         addCheck("ANTI-69: Non-Circular Ground Truth Source", true);
@@ -1488,7 +1496,7 @@ function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variat
     }
   }
 
-  // 5. Bug Reproduction Pre-Fix Failure Specification (PAT-124)
+  // 5. Bug Reproduction Pre-Fix Failure Specification & Anchor (PAT-124)
   if (intent === 'bug_reproduction') {
     const hasExpectedOutcome = metadata.expected_pre_fix_outcome === 'FAIL' || /expected.*pre.*fix.*fail/i.test(content);
     addCheck(
@@ -1496,6 +1504,14 @@ function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variat
       hasExpectedOutcome,
       hasExpectedOutcome ? null : "Plans with intent 'bug_reproduction' must specify 'expected_pre_fix_outcome: FAIL' in metadata or Section 1 (PAT-124)",
       "MISSING_PRE_FIX_OUTCOME"
+    );
+
+    const hasAnchor = /(?:###\s*🔒?\s*IMMUTABLE_ASSERTION_ANCHOR|IMMUTABLE_ASSERTION_ANCHOR:)/i.test(content);
+    addCheck(
+      "PAT-124: Bug Reproduction Immutable Assertion Anchor",
+      hasAnchor,
+      hasAnchor ? null : "Plans with intent 'bug_reproduction' must provision an IMMUTABLE_ASSERTION_ANCHOR (TARGET=... | ASSERT_EQUAL=...) in Section 1 (PAT-124)",
+      "MISSING_ASSERTION_ANCHOR"
     );
   }
 
@@ -2842,6 +2858,15 @@ category: "Backend"
       const verifyRes2 = verifyLockedExecutionPlan(tempLockPlan);
       const caughtTamper = !verifyRes2.valid && verifyRes2.errors.some(e => e.code === 'LOCKED_TEST_TAMPERED');
       addCheck("ANTI-78: Tampered assertion caught by verify-lock", caughtTamper, "Expected LOCKED_TEST_TAMPERED violation");
+
+      // Test anchor heading tamper detection
+      let anchorTamperedContent = samplePlanContent.replace('ASSERT_EQUAL=25.00', 'ASSERT_EQUAL=30.00');
+      anchorTamperedContent = anchorTamperedContent.replace('status: "DRAFT"', `status: "APPROVED"\nlocked_sha256: "${lockRes1.hash}"\nprotection_level: "locked"`);
+      fs.writeFileSync(tempLockPlan, anchorTamperedContent, 'utf8');
+
+      const verifyResAnchorTamper = verifyLockedExecutionPlan(tempLockPlan);
+      const caughtAnchorTamper = !verifyResAnchorTamper.valid && verifyResAnchorTamper.errors.some(e => e.code === 'LOCKED_TEST_TAMPERED');
+      addCheck("ANTI-78: Tampered anchor heading caught by verify-lock", caughtAnchorTamper, "Expected LOCKED_TEST_TAMPERED violation when changing anchor heading");
     } finally {
       if (fs.existsSync(tempLockPlan)) {
         try { fs.unlinkSync(tempLockPlan); } catch (e) {}
