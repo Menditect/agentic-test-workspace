@@ -4,6 +4,7 @@ This page lists all the releases of the Menditect Agent Workspace Template, with
 
 | Release Version | Date | Key Highlights / Release Message |
 | :--- | :--- | :--- |
+| [v1.10.9](releases/v1.10.9.md) | 2026-10-22 | updated linter for state model changes |
 | [v1.10.8](releases/v1.10.8.md) | 2026-10-20 | improved linters for datavariation |
 | [v1.10.7](releases/v1.10.7.md) | 2026-10-12 | improved linting for datariation |
 | [v1.10.6](releases/v1.10.6.md) | 2026-10-08 | updated linters with multi-parameter PAT-07, ANTI-74, and suite smoke audit |

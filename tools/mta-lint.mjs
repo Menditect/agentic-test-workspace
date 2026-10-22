@@ -17,8 +17,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import crypto from 'node:crypto';
 
-export const LINTER_VERSION = "1.4.2";
+export const LINTER_VERSION = "1.5.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -41,6 +42,29 @@ async function main() {
 
   try {
     switch (command) {
+      case 'lock': {
+        const filePath = args[1];
+        const force = args.includes('--force');
+        if (!filePath || filePath.startsWith('--')) {
+          console.error("Error: Missing execution plan path. Usage: mta-lint lock <path/to/EP_*.md> [--force]");
+          process.exit(1);
+        }
+        const result = lockExecutionPlan(filePath, { force });
+        outputResult(result, isJson, "Execution Plan Cryptographic Lock Seal");
+        process.exit(result.valid ? 0 : 1);
+        break;
+      }
+      case 'verify-lock': {
+        const filePath = args[1];
+        if (!filePath || filePath.startsWith('--')) {
+          console.error("Error: Missing execution plan path. Usage: mta-lint verify-lock <path/to/EP_*.md>");
+          process.exit(1);
+        }
+        const result = verifyLockedExecutionPlan(filePath);
+        outputResult(result, isJson, "Execution Plan Lock Verification");
+        process.exit(result.valid ? 0 : 1);
+        break;
+      }
       case 'plan': {
         const filePath = args[1];
         if (!filePath || filePath.startsWith('--')) {
@@ -98,6 +122,8 @@ function printHelp() {
 Menditect Test Automation Linter (mta-lint v${VERSION})
 
 Commands:
+  lock <file> [--force]                Cryptographically seal an Execution Plan (one-way latch)
+  verify-lock <file>                   Verify an Execution Plan has not been modified after locking
   plan <file> [--json]                 Validate Execution Plan syntax, schema, and pattern rules
   audit <plan-file> <server-json>      Verify constructed MTA server state against plan (4-phase diff)
   config [path] [--json]               Validate mta_config.json structure and path integrity
@@ -365,6 +391,181 @@ function processTable(rawTable) {
 }
 
 // ==========================================
+// Cryptographic Lock & Tamper Engine (PAT-124, ANTI-78)
+// ==========================================
+
+export function computePlanHash(content) {
+  const tables = parseMarkdownTables(content);
+  let stepLedgerTable = null;
+  let variationMatrixTable = null;
+
+  for (const t of tables) {
+    const headerStr = t.headers.join(' ').toLowerCase();
+    if (headerStr.includes('step action') || headerStr.includes('output handle') || headerStr.includes('action & target')) {
+      stepLedgerTable = t;
+    } else if (headerStr.includes('step target') || headerStr.includes('scenario #1') || (headerStr.includes('scenario name') && headerStr.includes('scenario'))) {
+      variationMatrixTable = t;
+    }
+  }
+
+  // Extract anchor if present
+  const anchorMatch = content.match(/(?:###\s*🔒?\s*IMMUTABLE_ASSERTION_ANCHOR[^\r\n]*\r?\n([^\r\n#]+)|IMMUTABLE_ASSERTION_ANCHOR:\s*([^\r\n]+))/i);
+  const anchor = anchorMatch ? (anchorMatch[1] || anchorMatch[2] || '').trim() : null;
+
+  // Extract Section 3 and Section 4 text fallbacks if present
+  const sec3Match = content.match(/##\s*3\.\s*(?:Test\s*Steps|Master\s*Step)[\s\S]*?(?=##\s*[4-9]\.|$)/i);
+  const sec4Match = content.match(/##\s*4\.\s*(?:Test\s*Scenarios|Target-Bound\s*Data|Data\s*Variation)[\s\S]*?(?=##\s*[5-9]\.|$)/i);
+
+  const canonical = {
+    anchor: anchor || null,
+    stepHeaders: stepLedgerTable ? stepLedgerTable.headers.map(h => h.trim()) : [],
+    stepRows: stepLedgerTable ? stepLedgerTable.rows.map(r => (r._cells || Object.values(r)).map(c => String(c).trim())) : [],
+    varHeaders: variationMatrixTable ? variationMatrixTable.headers.map(h => h.trim()) : [],
+    varRows: variationMatrixTable ? variationMatrixTable.rows.map(r => (r._cells || Object.values(r)).map(c => String(c).trim())) : [],
+    rawSec3: !stepLedgerTable && sec3Match ? sec3Match[0].replace(/\r?\n\s*/g, ' ').trim() : null,
+    rawSec4: !variationMatrixTable && sec4Match ? sec4Match[0].replace(/\r?\n\s*/g, ' ').trim() : null
+  };
+
+  return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+export function lockExecutionPlan(filePath, options = {}) {
+  const force = options.force || false;
+  if (!fs.existsSync(filePath)) {
+    return {
+      valid: false,
+      target: filePath,
+      passedCount: 0,
+      totalCount: 1,
+      checks: [{ name: "File Existence", pass: false, reason: `File not found: ${filePath}` }],
+      errors: [{ code: "FILE_NOT_FOUND", message: `Execution plan does not exist at ${filePath}` }]
+    };
+  }
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const metadata = extractMetadata(content);
+
+  if (metadata && metadata.locked_sha256 && !force) {
+    return {
+      valid: false,
+      target: filePath,
+      passedCount: 0,
+      totalCount: 1,
+      checks: [{ name: "One-Way Cryptographic Latch (PAT-124)", pass: false, reason: `Plan already locked with hash '${metadata.locked_sha256}'. Use --force to overwrite (human only).` }],
+      errors: [{ code: "ALREADY_LOCKED", message: `Execution plan is already locked with hash '${metadata.locked_sha256}'. One-way latch engaged (PAT-124).` }]
+    };
+  }
+
+  const hash = computePlanHash(content);
+  const updatedContent = injectLockedHash(content, hash);
+  fs.writeFileSync(filePath, updatedContent, 'utf-8');
+
+  return {
+    valid: true,
+    target: filePath,
+    passedCount: 2,
+    totalCount: 2,
+    hash,
+    checks: [
+      { name: "One-Way Cryptographic Latch (PAT-124)", pass: true },
+      { name: "Test Hash Computed & Sealed (SHA-256)", pass: true, details: { hash } }
+    ],
+    errors: []
+  };
+}
+
+export function verifyLockedExecutionPlan(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return {
+      valid: false,
+      target: filePath,
+      passedCount: 0,
+      totalCount: 1,
+      checks: [{ name: "File Existence", pass: false, reason: `File not found: ${filePath}` }],
+      errors: [{ code: "FILE_NOT_FOUND", message: `Execution plan does not exist at ${filePath}` }]
+    };
+  }
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const metadata = extractMetadata(content);
+
+  if (!metadata || !metadata.locked_sha256) {
+    return {
+      valid: false,
+      target: filePath,
+      passedCount: 0,
+      totalCount: 1,
+      checks: [{ name: "Lock Presence", pass: false, reason: "Missing 'locked_sha256' in plan metadata" }],
+      errors: [{ code: "NOT_LOCKED", message: `Execution plan is not locked (missing locked_sha256 in metadata)` }]
+    };
+  }
+
+  const currentHash = computePlanHash(content);
+  const expectedHash = metadata.locked_sha256;
+  const isMatch = currentHash === expectedHash;
+
+  return {
+    valid: isMatch,
+    target: filePath,
+    passedCount: isMatch ? 1 : 0,
+    totalCount: 1,
+    hash: currentHash,
+    expectedHash,
+    checks: [
+      {
+        name: "Cryptographic Lock Verification (PAT-124, ANTI-78)",
+        pass: isMatch,
+        reason: isMatch ? null : `Test plan tampered! Sealed hash: ${expectedHash}, Current hash: ${currentHash}`,
+        details: { sealedHash: expectedHash, currentHash }
+      }
+    ],
+    errors: isMatch ? [] : [
+      {
+        code: "LOCKED_TEST_TAMPERED",
+        message: `Locked test plan was modified after sealing! Modifying a locked test is strictly prohibited (ANTI-78). Expected: ${expectedHash}, Got: ${currentHash}`
+      }
+    ]
+  };
+}
+
+function injectLockedHash(content, hash) {
+  // 1. Standard YAML frontmatter --- ... ---
+  if (/^---\r?\n[\s\S]*?\r?\n---/.test(content)) {
+    return content.replace(/^---\r?\n([\s\S]*?)\r?\n---/, (match, yamlBody) => {
+      let updatedYaml = yamlBody;
+      if (/locked_sha256:/i.test(updatedYaml)) {
+        updatedYaml = updatedYaml.replace(/locked_sha256:.*$/m, `locked_sha256: "${hash}"`);
+      } else {
+        updatedYaml = updatedYaml.trimEnd() + `\nprotection_level: "locked"\nlocked_sha256: "${hash}"`;
+      }
+      if (/protection_level:/i.test(updatedYaml)) {
+        updatedYaml = updatedYaml.replace(/protection_level:.*$/m, `protection_level: "locked"`);
+      }
+      return `---\n${updatedYaml}\n---`;
+    });
+  }
+
+  // 2. <details> with ```yaml
+  if (/<details[\s\S]*?```ya?ml\r?\n([\s\S]*?)\r?\n```[\s\S]*?<\/details>/i.test(content)) {
+    return content.replace(/(<details[\s\S]*?```ya?ml\r?\n)([\s\S]*?)(\r?\n```[\s\S]*?<\/details>)/i, (match, prefix, yamlBody, suffix) => {
+      let updatedYaml = yamlBody;
+      if (/locked_sha256:/i.test(updatedYaml)) {
+        updatedYaml = updatedYaml.replace(/locked_sha256:.*$/m, `locked_sha256: "${hash}"`);
+      } else {
+        updatedYaml = updatedYaml.trimEnd() + `\nprotection_level: "locked"\nlocked_sha256: "${hash}"`;
+      }
+      if (/protection_level:/i.test(updatedYaml)) {
+        updatedYaml = updatedYaml.replace(/protection_level:.*$/m, `protection_level: "locked"`);
+      }
+      return `${prefix}${updatedYaml}${suffix}`;
+    });
+  }
+
+  // 3. Fallback: prepend YAML frontmatter
+  return `---\nprotection_level: "locked"\nlocked_sha256: "${hash}"\n---\n\n${content}`;
+}
+
+// ==========================================
 // Execution Plan Linter Engine (mta-lint plan)
 // ==========================================
 export function lintExecutionPlan(filePath) {
@@ -483,6 +684,18 @@ export function lintExecutionPlan(filePath) {
 
   // 3e. Intent Classification & Ground Truth Traceability (PAT-121, ANTI-68..ANTI-72)
   validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variationMatrixTable, addCheck);
+  // 3f. Cryptographic Lock Verification (PAT-124, ANTI-78)
+  if (metadata && metadata.locked_sha256) {
+    const lockRes = verifyLockedExecutionPlan(filePath);
+    addCheck(
+      "PAT-124: Cryptographic Lock Verification",
+      lockRes.valid,
+      lockRes.valid ? null : (lockRes.errors[0]?.message || "Locked test plan tampered"),
+      "LOCKED_TEST_TAMPERED",
+      lockRes.valid ? `Hash verified: ${lockRes.hash}` : "Tamper detected"
+    );
+  }
+
 
   // 4. Negative Anti-Pattern Scans
   scanAntiPatterns(content, stepLedgerTable, variationMatrixTable, addCheck);
@@ -1062,7 +1275,7 @@ function validateFrontendValidationFeedback(content, stepLedgerTable, metadata, 
 function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variationMatrixTable, addCheck) {
   if (!metadata) return;
 
-  const validIntents = ['regression', 'exploratory_robustness', 'exploratory_feature', 'tdd', 'data_seeding'];
+  const validIntents = ['regression', 'exploratory_robustness', 'exploratory_feature', 'tdd', 'data_seeding', 'bug_reproduction'];
   const intent = metadata.test_intent;
   const schemaVersion = metadata.schema_version || '2.0.0';
   const isSchema21Plus = typeof schemaVersion === 'string' && (schemaVersion.startsWith('2.1') || schemaVersion.localeCompare('2.1.0', undefined, { numeric: true }) >= 0);
@@ -1084,7 +1297,7 @@ function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variat
   }
 
   // 2. Specification Substance & Anti-Circular Specs (CHECK_SPEC_SUBSTANCE, ANTI-69, ANTI-71)
-  if (intent === 'exploratory_feature' || intent === 'tdd') {
+  if (intent === 'exploratory_feature' || intent === 'tdd' || intent === 'bug_reproduction') {
     const specSource = metadata.spec_source;
     if (!specSource) {
       addCheck("ANTI-69: Specification Source Substance", false, `Intent '${intent}' requires 'spec_source' to prevent tautological testing against unverified code (PAT-121)`, "MISSING_SPEC_SOURCE");
@@ -1160,7 +1373,7 @@ function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variat
         addCheck("PAT-121: Mitigating Scenario Resolution", true);
       }
     }
-  } else if ((intent === 'exploratory_feature' || intent === 'tdd' || intent === 'exploratory_robustness') && isSchema21Plus) {
+  } else if ((intent === 'exploratory_feature' || intent === 'tdd' || intent === 'exploratory_robustness' || intent === 'bug_reproduction') && isSchema21Plus) {
     addCheck("ANTI-70: Risk Coverage Presence", false, `Schema 2.1.0+ plans with intent '${intent}' must specify 'risks_covered' array (ANTI-70)`, "ANTI-70_EMPTY_RISK_MATRIX");
   }
 
@@ -1184,6 +1397,18 @@ function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variat
       }
     }
   }
+
+  // 5. Bug Reproduction Pre-Fix Failure Specification (PAT-124)
+  if (intent === 'bug_reproduction') {
+    const hasExpectedOutcome = metadata.expected_pre_fix_outcome === 'FAIL' || /expected.*pre.*fix.*fail/i.test(content);
+    addCheck(
+      "PAT-124: Bug Reproduction Pre-Fix Failure Specification",
+      hasExpectedOutcome,
+      hasExpectedOutcome ? null : "Plans with intent 'bug_reproduction' must specify 'expected_pre_fix_outcome: FAIL' in metadata or Section 1 (PAT-124)",
+      "MISSING_PRE_FIX_OUTCOME"
+    );
+  }
+
 }
 
 /**
@@ -1254,6 +1479,7 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
   const createdEntities = new Map();
   const handleProducers = new Map();
   const directCreateToMicroflowErrors = [];
+  const directCreateToCreateAssocErrors = [];
 
   for (let idx = 0; idx < stepLedgerTable.rows.length; idx++) {
     const row = stepLedgerTable.rows[idx];
@@ -1289,6 +1515,23 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
           stepIdx: idx + 1,
           handle: outHandle
         });
+      }
+
+      // Check direct CreateObject association bindings without PAT-07 sentinel retrieve
+      const createEqMatches = paramText.matchAll(/(?:[a-zA-Z0-9_]+)\s*=\s*([a-zA-Z0-9_]+)/g);
+      for (const m of createEqMatches) {
+        const val = m[1].trim();
+        if (val !== 'true' && val !== 'false' && val !== 'empty' && val !== 'null' && isNaN(val)) {
+          const producer = handleProducers.get(val.toLowerCase());
+          if (producer && producer.type === 'CreateObject') {
+            directCreateToCreateAssocErrors.push({
+              stepIdx: idx + 1,
+              handle: val,
+              producerStepIdx: producer.stepIdx,
+              entity: producer.entity || 'Unknown'
+            });
+          }
+        }
       }
     }
 
@@ -1496,6 +1739,19 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
     pat07CheckReported = true;
   }
 
+  // A2. Direct CreateObject to CreateObject association binding errors
+  if (directCreateToCreateAssocErrors.length > 0) {
+    for (const err of directCreateToCreateAssocErrors) {
+      addCheck(
+        "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
+        false,
+        `Step ${err.stepIdx} (CreateObject) binds association directly to CreateObject handle '${err.handle}' from Step ${err.producerStepIdx} (entity '${err.entity}'). Associations to created objects must pass through a PAT-07 Retrieve-from-Teststep sentinel step to allow testing unassigned/empty associations dynamically.`,
+        "ANTI-48_VIOLATION"
+      );
+    }
+    pat07CheckReported = true;
+  }
+
   // B. Missing sentinel errors for empty scenarios or created entities
   if (missingSentinelErrors.length > 0) {
     for (const err of missingSentinelErrors) {
@@ -1518,6 +1774,33 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
       "ANTI-48_VIOLATION"
     );
     pat07CheckReported = true;
+  }
+
+  // C2. Verify that sentinel filter rows in Section 4 contain at least one 'NONE', 'NULL', or 'EMPTY' cell
+  if (variationMatrixTable && sentinelEntities.size > 0) {
+    for (const row of variationMatrixTable.rows) {
+      const rowLabel = targetColKey ? row[targetColKey] : Object.values(row)[0] || '';
+      const cleanLabel = rowLabel.replace(/[`*_]/g, '').trim();
+      if (/SentinelKey/i.test(cleanLabel) || (/Filter/i.test(cleanLabel) && /Sentinel/i.test(cleanLabel))) {
+        let hasEmptyCell = false;
+        for (const sCol of scenarioCols) {
+          const val = (row[sCol] || '').replace(/[`*_\s]/g, '').toLowerCase();
+          if (val === 'none' || val === 'null' || val === 'empty' || val === "''" || val === '""' || val === '-') {
+            hasEmptyCell = true;
+            break;
+          }
+        }
+        if (!hasEmptyCell) {
+          addCheck(
+            "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
+            false,
+            `Section 4 row '${cleanLabel}' does not contain any 'NONE', 'NULL', or 'EMPTY' boundary cells across scenarios. All sentinel filter rows in Section 4 MUST unconditionally include at least one scenario column testing the empty/null boundary.`,
+            "ANTI-48_VIOLATION"
+          );
+          pat07CheckReported = true;
+        }
+      }
+    }
   }
 
   // D. If not already reported, verify general PAT-07 compliance
@@ -1713,6 +1996,19 @@ export function runSmokeAudit(planPath, serverJsonPath) {
     checks.push({ name, pass, reason, details });
     if (!pass) errors.push({ code: code || 'AUDIT_FAILED', message: reason });
   };
+
+    // Phase Pre-0: Cryptographic Test Plan Immutability (PAT-124, ANTI-78)
+  const metadata = extractMetadata(planContent);
+  if (metadata && (metadata.protection_level === 'locked' || metadata.locked_sha256)) {
+    const lockRes = verifyLockedExecutionPlan(planPath);
+    addCheck(
+      "Phase Pre-0: Cryptographic Test Plan Immutability (PAT-124, ANTI-78)",
+      lockRes.valid,
+      lockRes.valid ? null : (lockRes.errors[0]?.message || "Locked test plan tampered"),
+      "LOCKED_TEST_TAMPERED",
+      lockRes.valid ? `Hash verified: ${lockRes.hash}` : "Tamper detected"
+    );
+  }
 
   // Phase 0: Test Case Count & Sequence Parity (for Suite Audit)
   const plannedCases = new Set();
@@ -2327,6 +2623,87 @@ category: "Backend"
 
     const suitePassServer = path.join(fixturesDir, 'suite_response_pass.json');
     const suiteFailServer = path.join(fixturesDir, 'suite_response_fail.json');
+
+    // Test PAT-124 & ANTI-78 Lock / Tamper Engine
+    const tempLockPlan = path.join(fixturesDir, 'temp_tdbf_test_plan.md');
+    try {
+      const samplePlanContent = [
+        '# Execution Plan: TC_SampleLock',
+        '<details>',
+        '<summary>Metadata</summary>',
+        '\x60\x60\x60yaml',
+        'plan_id: "TC_SampleLock-v1"',
+        'schema_version: "2.1.0"',
+        'target: "Sales.SampleMicroflow"',
+        'category: "Backend"',
+        'test_type: "Unit"',
+        'execution_target: "MTA_plugin"',
+        'rollback: "Yes"',
+        'status: "DRAFT"',
+        'test_intent: "bug_reproduction"',
+        'expected_pre_fix_outcome: "FAIL"',
+        'spec_source:',
+        '  type: "bug_report"',
+        '  reference: "ISSUE-999"',
+        '  summary: "Expected discount 25.00 instead of 20.00"',
+        'risks_covered:',
+        '  - risk: "Calculation boundary under gold tier"',
+        '    mitigating_scenario: "#1"',
+        '\x60\x60\x60',
+        '</details>',
+        '',
+        '## 1. Purpose & Scope',
+        '### 🔒 IMMUTABLE_ASSERTION_ANCHOR: TARGET=Sales.SampleMicroflow | ASSERT_EQUAL=25.00',
+        '',
+        '## 2. Component Under Test',
+        'Microflow Sales.SampleMicroflow',
+        '',
+        '## 3. Test Steps & Action Sequence',
+        '| # | Case | Step Action & Target | Input Handle | Output Handle | Parameters, Bindings & Initial Values | Embedded Assertions | Exec Settings | Pattern Tag |',
+        '| :-: | :--: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |',
+        '| **1** | Case 1 | \x60CreateObject\x60 (\x60Sales.Order\x60) | - | \x60orderHandle\x60 | \x60Amount = 100.00\x60 | - | \x60None\x60 / \x60Stop\x60 | \x60PAT-06\x60 |',
+        '| **2** | Case 1 | \x60CallMicroflow\x60 (\x60SampleMicroflow\x60) | \x60orderHandle\x60 | \x60res\x60 | \x60Order = orderHandle\x60 | \x60Assert res == 25.00\x60 | \x60None\x60 / \x60Stop\x60 | \x60PAT-14\x60 |',
+        '',
+        '## 4. Test Scenarios & Test Data',
+        '| # | Step Target | Scenario #1 (Baseline) |',
+        '| :-: | :--- | :--- |',
+        '| **0** | **Scenario Name** | Baseline Failure |',
+        '| **0** | **Scenario Description** | Reproduces issue #999 |',
+        '| 1 | Step 1: \x60Order.Amount\x60 | \x60100.00\x60 |',
+        '| 2 | Step 2: Assert Return Value | \x6025.00\x60 |',
+        '',
+        '## 5. Quality & Compliance Checks',
+        'Quality verified.',
+        ''
+      ].join('\n');
+      fs.writeFileSync(tempLockPlan, samplePlanContent, 'utf8');
+
+      // Test locking
+      const lockRes1 = lockExecutionPlan(tempLockPlan);
+      addCheck("PAT-124: Plan locking produces valid hash and seals", lockRes1.valid && typeof lockRes1.hash === 'string' && lockRes1.hash.length === 64, "Expected valid 64-char hash");
+
+      // Test verify-lock on untouched plan
+      const verifyRes1 = verifyLockedExecutionPlan(tempLockPlan);
+      addCheck("PAT-124: verify-lock passes on untouched locked plan", verifyRes1.valid, "Expected valid lock verification");
+
+      // Test one-way latch (refuses overwrite without force)
+      const lockRes2 = lockExecutionPlan(tempLockPlan, { force: false });
+      addCheck("PAT-124: One-way latch refuses overwrite without --force", !lockRes2.valid && lockRes2.errors.some(e => e.code === 'ALREADY_LOCKED'), "Expected ALREADY_LOCKED error");
+
+      // Test tamper detection (tamper with assertion value)
+      let tamperedContent = fs.readFileSync(tempLockPlan, 'utf8');
+      tamperedContent = tamperedContent.replace('Assert res == 25.00', 'Assert res == 20.00');
+      fs.writeFileSync(tempLockPlan, tamperedContent, 'utf8');
+
+      const verifyRes2 = verifyLockedExecutionPlan(tempLockPlan);
+      const caughtTamper = !verifyRes2.valid && verifyRes2.errors.some(e => e.code === 'LOCKED_TEST_TAMPERED');
+      addCheck("ANTI-78: Tampered assertion caught by verify-lock", caughtTamper, "Expected LOCKED_TEST_TAMPERED violation");
+    } finally {
+      if (fs.existsSync(tempLockPlan)) {
+        try { fs.unlinkSync(tempLockPlan); } catch (e) {}
+      }
+    }
+
 
     if (fs.existsSync(validOrderedVal) && fs.existsSync(suitePassServer)) {
       const res = runSmokeAudit(validOrderedVal, suitePassServer);
