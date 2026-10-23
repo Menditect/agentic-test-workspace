@@ -19,7 +19,7 @@ import path from 'node:path';
 import process from 'node:process';
 import crypto from 'node:crypto';
 
-export const LINTER_VERSION = "1.6.0";
+export const LINTER_VERSION = "1.7.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -65,6 +65,17 @@ async function main() {
         process.exit(result.valid ? 0 : 1);
         break;
       }
+      case 'pre-build': {
+        const filePath = args[1];
+        if (!filePath || filePath.startsWith('--')) {
+          console.error("Error: Missing execution plan path. Usage: mta-lint pre-build <path/to/EP_*.md>");
+          process.exit(1);
+        }
+        const result = verifyPreBuildGate(filePath);
+        outputResult(result, isJson, "MTA Pre-Build Human Approval & Placement Gate");
+        process.exit(result.valid ? 0 : 1);
+        break;
+      }
       case 'plan': {
         const filePath = args[1];
         if (!filePath || filePath.startsWith('--')) {
@@ -85,6 +96,14 @@ async function main() {
         }
         const result = runSmokeAudit(planPath, serverJsonPath);
         outputResult(result, isJson, "MTA Post-Construction 4-Phase Smoke Audit");
+        process.exit(result.valid ? 0 : 1);
+        break;
+      }
+      case 'artifacts':
+      case 'artifact': {
+        const outputDir = args[1] && !args[1].startsWith('--') ? args[1] : 'menditect-output';
+        const result = lintArtifacts(outputDir);
+        outputResult(result, isJson, "MTA Artifact Traceability Audit (MTA-LINT-E010)");
         process.exit(result.valid ? 0 : 1);
         break;
       }
@@ -124,8 +143,10 @@ Menditect Test Automation Linter (mta-lint v${VERSION})
 Commands:
   lock <file> [--force]                Cryptographically seal an Execution Plan (one-way latch)
   verify-lock <file>                   Verify an Execution Plan has not been modified after locking
+  pre-build <file> [--json]            Verify Gate 1 human approval & Gate 2 placement before construction
   plan <file> [--json]                 Validate Execution Plan syntax, schema, and pattern rules
   audit <plan-file> <server-json>      Verify constructed MTA server state against plan (4-phase diff)
+  artifacts [dir] [--json]             Audit execution outputs against Execution Plan artifacts (MTA-LINT-E010)
   config [path] [--json]               Validate mta_config.json structure and path integrity
   self-test                            Run internal unit tests and rule compliance checks
 
@@ -566,6 +587,96 @@ function injectLockedHash(content, hash) {
 }
 
 // ==========================================
+// Pre-Build Verification Engine (mta-lint pre-build)
+// ==========================================
+export function verifyPreBuildGate(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return {
+      valid: false,
+      target: filePath,
+      passedCount: 0,
+      totalCount: 1,
+      checks: [{ name: "File Existence", pass: false, reason: `File not found: ${filePath}` }],
+      errors: [{ code: "FILE_NOT_FOUND", message: `Execution plan does not exist at ${filePath}` }]
+    };
+  }
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const metadata = extractMetadata(content);
+
+  const checks = [];
+  const errors = [];
+
+  const addCheck = (name, pass, reason = null, code = null, details = null) => {
+    checks.push({ name, pass, reason, details });
+    if (!pass) {
+      errors.push({ code: code || 'CHECK_FAILED', message: reason });
+    }
+  };
+
+  if (!metadata) {
+    addCheck("Metadata Block Present", false, "Missing metadata block", "MISSING_METADATA");
+    return {
+      valid: false,
+      target: filePath,
+      passedCount: 0,
+      totalCount: 1,
+      checks,
+      errors
+    };
+  }
+
+  // 1. Status is APPROVED
+  const isApproved = metadata.status === 'APPROVED';
+  addCheck(
+    "Plan Approval Status (Gate 1)",
+    isApproved,
+    isApproved ? null : `Execution plan status is '${metadata.status || 'UNDEFINED'}'. Persistent MTA platform construction requires explicit user approval (status: 'APPROVED'). Halting per PAT-43 / ANTI-56.`,
+    "PLAN_NOT_APPROVED"
+  );
+
+  // 2. Approved By and Approved At
+  const hasApprovedBy = !!metadata.approved_by && String(metadata.approved_by).trim().length > 0;
+  const hasApprovedAt = !!metadata.approved_at && String(metadata.approved_at).trim().length > 0;
+  addCheck(
+    "Approval Provenance (approved_by & approved_at)",
+    hasApprovedBy && hasApprovedAt,
+    (hasApprovedBy && hasApprovedAt) ? null : "Missing approval provenance (approved_by and approved_at must be populated when status is 'APPROVED')",
+    "MISSING_APPROVAL_PROVENANCE"
+  );
+
+  // 3. Target Configuration Key (numeric > 0)
+  const configKey = Number(metadata.target_configuration_key);
+  const validConfig = !isNaN(configKey) && configKey > 0;
+  addCheck(
+    "Target Configuration Placement (Gate 2)",
+    validConfig,
+    validConfig ? null : `Invalid or missing target_configuration_key: '${metadata.target_configuration_key}'. Gate 2 placement discovery required.`,
+    "INVALID_CONFIGURATION_KEY"
+  );
+
+  // 4. Target Suite Key (numeric >= 0 or "NEW_SUITE")
+  const suiteKey = metadata.target_suite_key;
+  const validSuite = suiteKey === "NEW_SUITE" || (typeof suiteKey === 'number' && suiteKey >= 0) || (!isNaN(Number(suiteKey)) && Number(suiteKey) >= 0);
+  addCheck(
+    "Target Test Suite Placement (Gate 2)",
+    validSuite,
+    validSuite ? null : `Invalid or missing target_suite_key: '${metadata.target_suite_key}'. Gate 2 placement discovery required.`,
+    "INVALID_SUITE_KEY"
+  );
+
+  const valid = checks.every(c => c.pass);
+  return {
+    valid,
+    target: filePath,
+    passedCount: checks.filter(c => c.pass).length,
+    totalCount: checks.length,
+    checks,
+    errors
+  };
+}
+
+// ==========================================
 // Execution Plan Linter Engine (mta-lint plan)
 // ==========================================
 export function lintExecutionPlan(filePath) {
@@ -601,6 +712,25 @@ export function lintExecutionPlan(filePath) {
     addCheck("Metadata Block Present", true);
     addCheck("Plan ID Specified", !!metadata.plan_id, "Missing 'plan_id' in metadata", "MISSING_PLAN_ID");
     addCheck("Category Specified", ['Backend', 'Frontend'].includes(metadata.category), `Category must be 'Backend' or 'Frontend', found: '${metadata.category}'`, "INVALID_CATEGORY");
+
+    // Approval Status & Provenance (PLAN-STATUS-DRAFT-ON-CREATION)
+    if (metadata.status === 'APPROVED') {
+      const hasApprovedBy = !!metadata.approved_by && String(metadata.approved_by).trim().length > 0;
+      const hasApprovedAt = !!metadata.approved_at && String(metadata.approved_at).trim().length > 0;
+      addCheck(
+        "Plan Status Approval Provenance (PAT-43, ANTI-56)",
+        hasApprovedBy && hasApprovedAt,
+        (hasApprovedBy && hasApprovedAt) ? null : "Plan marked as APPROVED without valid approval provenance (approved_by and approved_at must be non-empty)",
+        "PLAN-STATUS-DRAFT-ON-CREATION"
+      );
+    } else if (metadata.status && !['DRAFT', 'REJECTED', 'AUTO_APPROVED'].includes(metadata.status)) {
+      addCheck(
+        "Plan Status Valid Value",
+        false,
+        `Invalid status '${metadata.status}'. Must be DRAFT, APPROVED, REJECTED, or AUTO_APPROVED.`,
+        "INVALID_PLAN_STATUS"
+      );
+    }
   }
 
   // 2. Sections Discovery
@@ -684,6 +814,9 @@ export function lintExecutionPlan(filePath) {
 
   // 3e. Frontend High-Level Locator Generator Mandate (PAT-64, ANTI-79)
   validateFrontendLocatorTools(content, stepLedgerTable, metadata, addCheck);
+
+  // 3e-2. Frontend Session Startup & Authentication Mandate (PAT-125, ANTI-81)
+  validateFrontendAuthenticationStartup(content, stepLedgerTable, metadata, addCheck);
 
   // 3f. Intent Classification & Ground Truth Traceability (PAT-121, ANTI-68..ANTI-72)
   validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variationMatrixTable, addCheck);
@@ -1281,7 +1414,9 @@ function validateFrontendValidationFeedback(content, stepLedgerTable, metadata, 
  * In Frontend execution plans:
  * 1. Locating a page (Locate_MxPage) MUST NEVER use generic CreateMicroflowCallTestStep or CallMicroflow/CreateMicroflowCall.
  *    It MUST use GenerateMicroflowCallTestStepLocatePage.
- * 2. Standard widget locators (Locate_TextBox, Locate_Button, Locate_DropDown, Locate_DatePicker, Locate_MxWidget_*, etc.)
+ * 2. GenerateMicroflowCallTestStepLocatePage MUST specify a valid PageQualifiedName ('<Module>.<Page>')
+ *    and clean PageClassName (clean Mendix identifier, NEVER raw browser DOM/CSS classes like page-content or mx-name-).
+ * 3. Standard widget locators (Locate_TextBox, Locate_Button, Locate_DropDown, Locate_DatePicker, Locate_MxWidget_*, etc.)
  *    MUST NEVER specify generic CreateMicroflowCallTestStep. They MUST specify GenerateMicroflowCallTestStepLocateWidget.
  */
 function validateFrontendLocatorTools(content, stepLedgerTable, metadata, addCheck) {
@@ -1291,21 +1426,47 @@ function validateFrontendLocatorTools(content, stepLedgerTable, metadata, addChe
   const rows = stepLedgerTable.rows;
   let hasGenericPageLocator = false;
   let hasGenericWidgetLocator = false;
+  let hasInvalidPageLocatorParams = false;
   let genericPageLocatorStep = null;
   let genericWidgetLocatorStep = null;
+  const invalidPageLocatorReasons = [];
 
   for (let idx = 0; idx < rows.length; idx++) {
     const row = rows[idx];
     const rowText = Object.values(row).join(' ');
 
-    // Check for page locator anti-pattern
-    const isPageLocator = /Locate_MxPage\b/i.test(rowText);
+    // Check for page locator steps
+    const isPageLocator = /Locate_MxPage\b/i.test(rowText) || /GenerateMicroflowCallTestStepLocatePage\b/i.test(rowText);
     if (isPageLocator) {
       const isGeneratorTool = /GenerateMicroflowCallTestStepLocatePage|GenerateLocatePage/i.test(rowText);
       const isGenericMicroflowCall = /CreateMicroflowCallTestStep|CallMicroflow|CreateMicroflowCall/i.test(rowText);
       if (!isGeneratorTool || (isGenericMicroflowCall && /CreateMicroflowCallTestStep/i.test(rowText))) {
         hasGenericPageLocator = true;
         genericPageLocatorStep = idx + 1;
+      }
+
+      // Check parameter constraints for page locator steps (ANTI-79)
+      if (isGeneratorTool && !hasGenericPageLocator) {
+        let stepHasParamError = false;
+        // Raw CSS selector check on PageClassName
+        const pageClassMatch = rowText.match(/PageClassName\s*=\s*['"]([^'"]+)['"]/i);
+        if (pageClassMatch) {
+          const pageClassName = pageClassMatch[1].trim();
+          if (/page-content|mx-name-|\.|\#|\s/i.test(pageClassName)) {
+            hasInvalidPageLocatorParams = true;
+            stepHasParamError = true;
+            invalidPageLocatorReasons.push(`Step ${idx + 1} specifies raw CSS/DOM selector ('${pageClassName}') for PageClassName (ANTI-79). GenerateMicroflowCallTestStepLocatePage requires clean Mendix page class name (e.g. 'Home_Renter'), not browser DOM classes.`);
+          }
+        }
+
+        // Mandatory PageQualifiedName check
+        const hasPageQualifiedName = /PageQualifiedName\s*=\s*['"][A-Za-z0-9_]+\.[A-Za-z0-9_]+['"]/i.test(rowText) ||
+                                     /\b[A-Za-z0-9_]+\.[A-Za-z0-9_]+\b/.test(row['Step Action & Target'] || '') ||
+                                     /\b[A-Za-z0-9_]+\.[A-Za-z0-9_]+\b/.test(row['Action & Target'] || '');
+        if (!hasPageQualifiedName && !stepHasParamError) {
+          hasInvalidPageLocatorParams = true;
+          invalidPageLocatorReasons.push(`Step ${idx + 1} uses GenerateMicroflowCallTestStepLocatePage without specifying PageQualifiedName ('<ModuleName>.<PageName>') (ANTI-79). A qualified page name is mandatory for MTA page registration.`);
+        }
       }
     }
 
@@ -1334,6 +1495,13 @@ function validateFrontendLocatorTools(content, stepLedgerTable, metadata, addChe
       `Step ${genericPageLocatorStep} specifies locating a page via generic CreateMicroflowCall / CallMicroflow (Locate_MxPage) instead of GenerateMicroflowCallTestStepLocatePage (ANTI-79). Calling generic microflow creation bypasses MTA locator wiring and leaves 'Page' / 'BrowserContext' parameters empty, causing fatal runtime exceptions.`,
       "ANTI-79_VIOLATION"
     );
+  } else if (hasInvalidPageLocatorParams) {
+    addCheck(
+      "PAT-64 & ANTI-79: High-Level Page Locator Generator Mandate",
+      false,
+      invalidPageLocatorReasons.join('; '),
+      "ANTI-79_VIOLATION"
+    );
   } else {
     addCheck(
       "PAT-64 & ANTI-79: High-Level Page Locator Generator Mandate",
@@ -1358,6 +1526,64 @@ function validateFrontendLocatorTools(content, stepLedgerTable, metadata, addChe
       null,
       null,
       "Compliant with GenerateMicroflowCallTestStepLocateWidget mandate"
+    );
+  }
+}
+
+/**
+ * Rule: PAT-125 & ANTI-81: Frontend Session Startup & Authentication Mandate
+ *
+ * In Frontend execution plans:
+ * 1. Startup step in Case 2 should use Start_MxFrontend_Test_Without_Login or Start_MxFrontend_Test_With_Login.
+ * 2. If Start_MxFrontend_Test_With_Login is used, it MUST NOT specify dummy/hallucinated credentials
+ *    (e.g. Password = '1', '123', 'password') without verification against project demo users or explicit request.
+ */
+function validateFrontendAuthenticationStartup(content, stepLedgerTable, metadata, addCheck) {
+  const isFrontend = metadata && metadata.category === 'Frontend';
+  if (!stepLedgerTable || !isFrontend) return;
+
+  const rows = stepLedgerTable.rows;
+  let hasStartupStep = false;
+  let startupStepType = null;
+  let suspiciousAuthReason = null;
+
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    const rowText = Object.values(row).join(' ');
+
+    if (/Start_MxFrontend_Test_Without_Login\b/i.test(rowText)) {
+      hasStartupStep = true;
+      startupStepType = 'Without_Login';
+    } else if (/Start_MxFrontend_Test_With_Login\b/i.test(rowText)) {
+      hasStartupStep = true;
+      startupStepType = 'With_Login';
+
+      // Check for trivial/hallucinated password anti-pattern
+      const passMatch = rowText.match(/Password\s*=\s*['"]([^'"]+)['"]/i);
+      if (passMatch) {
+        const pass = passMatch[1].trim();
+        if (/^(?:1|123|1234|12345|password|test|admin)$/i.test(pass)) {
+          suspiciousAuthReason = `Step ${idx + 1} specifies dummy password ('${pass}') in Start_MxFrontend_Test_With_Login (ANTI-81). Ensure credentials correspond to a verified demo user or execution user, or use Start_MxFrontend_Test_Without_Login if the entry page allows guest access.`;
+        }
+      }
+    }
+  }
+
+  // Only validate if a startup step was detected or if suspicious credentials were found
+  if (suspiciousAuthReason) {
+    addCheck(
+      "PAT-125 & ANTI-81: Frontend Session Startup Mandate",
+      false,
+      suspiciousAuthReason,
+      "ANTI-81_VIOLATION"
+    );
+  } else if (hasStartupStep) {
+    addCheck(
+      "PAT-125 & ANTI-81: Frontend Session Startup Mandate",
+      true,
+      null,
+      null,
+      `Session startup verified (${startupStepType})`
     );
   }
 }
@@ -1629,19 +1855,22 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
         });
       }
 
-      // Check direct CreateObject association bindings without PAT-07 sentinel retrieve
-      const createEqMatches = paramText.matchAll(/(?:[a-zA-Z0-9_]+)\s*=\s*([a-zA-Z0-9_]+)/g);
-      for (const m of createEqMatches) {
-        const val = m[1].trim();
-        if (val !== 'true' && val !== 'false' && val !== 'empty' && val !== 'null' && isNaN(val)) {
-          const producer = handleProducers.get(val.toLowerCase());
-          if (producer && producer.type === 'CreateObject') {
-            directCreateToCreateAssocErrors.push({
-              stepIdx: idx + 1,
-              handle: val,
-              producerStepIdx: producer.stepIdx,
-              entity: producer.entity || 'Unknown'
-            });
+      // Check direct CreateObject association bindings without PAT-07 sentinel retrieve (for non-data-seeding tests)
+      const isDataSeeding = metadata && metadata.test_intent === 'data_seeding';
+      if (!isDataSeeding) {
+        const createEqMatches = paramText.matchAll(/(?:[a-zA-Z0-9_]+)\s*=\s*([a-zA-Z0-9_]+)/g);
+        for (const m of createEqMatches) {
+          const val = m[1].trim();
+          if (val !== 'true' && val !== 'false' && val !== 'empty' && val !== 'null' && isNaN(val)) {
+            const producer = handleProducers.get(val.toLowerCase());
+            if (producer && producer.type === 'CreateObject') {
+              directCreateToCreateAssocErrors.push({
+                stepIdx: idx + 1,
+                handle: val,
+                producerStepIdx: producer.stepIdx,
+                entity: producer.entity || 'Unknown'
+              });
+            }
           }
         }
       }
@@ -1821,8 +2050,9 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
     }
   }
 
-  // Check created entities for missing sentinels in backend microflow tests
-  if (createdEntities.size > 0 && hasMicroflowCall) {
+  // Check created entities for missing sentinels in backend microflow tests (non-data-seeding)
+  const isDataSeeding = metadata && metadata.test_intent === 'data_seeding';
+  if (!isDataSeeding && createdEntities.size > 0 && hasMicroflowCall) {
     for (const [entKey, entInfo] of createdEntities.entries()) {
       const sentinel = sentinelEntities.get(entKey);
       const alreadyDirectFlagged = directCreateToMicroflowErrors.some(e => e.entity.toLowerCase() === entKey);
@@ -1879,8 +2109,8 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
     pat07CheckReported = true;
   }
 
-  // C. Empty scenario mandate for backend unit tests with microflows
-  if (createdEntities.size > 0 && hasMicroflowCall && detectedEmptyScenarios.length === 0) {
+  // C. Empty scenario mandate for backend unit tests with microflows (non-data-seeding)
+  if (!isDataSeeding && createdEntities.size > 0 && hasMicroflowCall && detectedEmptyScenarios.length === 0) {
     addCheck(
       "PAT-07 & ANTI-48: Master Step Sentinel Retrieve for Empty Boundaries",
       false,
@@ -1941,6 +2171,14 @@ function validatePat07EmptyBoundaries(stepLedgerTable, variationMatrixTable, met
           `Scenario '${scenarioName}' tests empty/null boundary using PAT-07 Retrieve-from-Teststep sentinel filter`
         );
       }
+    } else if (isDataSeeding) {
+      addCheck(
+        "PAT-07: Sentinel Filter for Null Parameter Boundaries",
+        true,
+        null,
+        null,
+        "Data seeding plan with pure valid records is exempt from mandatory PAT-07 sentinel retrieve"
+      );
     } else if (/SentinelKey/i.test(ledgerRawText)) {
       addCheck(
         "PAT-07: Sentinel Filter for Null Parameter Boundaries",
@@ -2519,8 +2757,232 @@ export function lintConfig(configPath) {
 }
 
 // ==========================================
+// Artifact Traceability Linter (MTA-LINT-E010, PAT-43, ANTI-46)
+// ==========================================
+export function lintArtifacts(outputDir = 'menditect-output', options = {}) {
+  const checks = [];
+  const errors = [];
+
+  const addCheck = (name, pass, reason = null, code = null, details = null) => {
+    checks.push({ name, pass, reason, code, details });
+    if (!pass) {
+      errors.push({ code: code || 'MTA-LINT-E010', message: reason });
+    }
+  };
+
+  const resolvedDir = path.resolve(process.cwd(), outputDir);
+
+  if (!fs.existsSync(resolvedDir)) {
+    addCheck(
+      "Output Directory Check",
+      true,
+      null,
+      null,
+      `Directory '${outputDir}' does not exist (no execution outputs to audit)`
+    );
+    return {
+      valid: true,
+      target: outputDir,
+      passedCount: 1,
+      totalCount: 1,
+      checks,
+      errors
+    };
+  }
+
+  // 1. Resolve execution plans directory
+  let plansDir = path.join(resolvedDir, 'execution-plans');
+  if (!fs.existsSync(plansDir)) {
+    plansDir = resolvedDir;
+  }
+
+  // 2. Discover and index all Execution Plan markdown files
+  const discoveredPlans = new Map();
+  const planFiles = [];
+
+  function scanPlans(dir) {
+    if (!fs.existsSync(dir)) return;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory() && ent.name !== 'archive' && ent.name !== 'node_modules') {
+        scanPlans(full);
+      } else if (ent.isFile() && (ent.name.startsWith('EP_') || ent.name.endsWith('.md'))) {
+        planFiles.push({ name: ent.name, path: full });
+      }
+    }
+  }
+
+  scanPlans(plansDir);
+
+  for (const pf of planFiles) {
+    const content = fs.readFileSync(pf.path, 'utf8');
+    const metadata = extractMetadata(content);
+
+    let tcName = pf.name.replace(/^EP_/i, '').replace(/\.md$/i, '');
+    if (metadata && metadata.plan_id) {
+      const planIdName = String(metadata.plan_id).replace(/-v\d+.*$/i, '');
+      if (planIdName) tcName = planIdName;
+    }
+
+    const hasStatus = metadata && (metadata.status || metadata.execution_status);
+    const hasTarget = metadata && (metadata.target || metadata.application || metadata.component_under_test || metadata.plan_id || metadata.category);
+    const isValidHeader = hasStatus && hasTarget;
+
+    if (!isValidHeader) {
+      addCheck(
+        `Execution Plan Header: ${pf.name}`,
+        false,
+        `[MTA-LINT-E010] [missing-execution-plan-artifact] Execution Plan '${pf.name}' has malformed or missing metadata header (missing status or target specification).`,
+        "MTA-LINT-E010",
+        `Header inspection failed in ${pf.path}`
+      );
+    } else {
+      addCheck(
+        `Execution Plan Header: ${pf.name}`,
+        true,
+        null,
+        null,
+        `Valid frontmatter header (status: ${metadata.status || 'PRESENT'})`
+      );
+    }
+
+    const planEntry = {
+      file: pf.name,
+      path: pf.path,
+      metadata,
+      testName: tcName
+    };
+
+    discoveredPlans.set(tcName.toLowerCase(), planEntry);
+    discoveredPlans.set(pf.name.toLowerCase(), planEntry);
+    discoveredPlans.set(pf.name.replace(/\.md$/i, '').toLowerCase(), planEntry);
+    discoveredPlans.set(pf.name.replace(/^EP_/i, '').replace(/\.md$/i, '').toLowerCase(), planEntry);
+    if (metadata && metadata.plan_id) {
+      discoveredPlans.set(String(metadata.plan_id).toLowerCase(), planEntry);
+    }
+  }
+
+  // 3. Discover test execution outputs / JSON payloads
+  const executionFiles = [];
+
+  function scanExecutions(dir) {
+    if (!fs.existsSync(dir)) return;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (ent.name !== 'execution-plans' && ent.name !== 'archive' && ent.name !== 'node_modules' && ent.name !== '.git') {
+          scanExecutions(full);
+        }
+      } else if (ent.isFile() && ent.name.endsWith('.json')) {
+        const lower = ent.name.toLowerCase();
+        if (lower === 'mta_config.json' || lower === 'mta_state.json' || lower === 'package.json' || lower === 'tsconfig.json') {
+          continue;
+        }
+        executionFiles.push({ name: ent.name, path: full });
+      }
+    }
+  }
+
+  scanExecutions(resolvedDir);
+
+  if (executionFiles.length === 0 && planFiles.length === 0) {
+    addCheck(
+      "MTA Artifact Traceability",
+      true,
+      null,
+      null,
+      `No execution records or plans found in '${outputDir}'`
+    );
+  }
+
+  // 4. Verify each execution file has a corresponding Execution Plan
+  for (const ef of executionFiles) {
+    let isTestExecution = false;
+    let explicitTcName = null;
+
+    try {
+      const jsonContent = JSON.parse(fs.readFileSync(ef.path, 'utf8'));
+      if (jsonContent && typeof jsonContent === 'object') {
+        if (
+          jsonContent.RollbackTcseAfterExecution !== undefined ||
+          jsonContent.TCEX_RQ_TestStepRun !== undefined ||
+          jsonContent.TestStepRun !== undefined ||
+          jsonContent.test_cases !== undefined ||
+          jsonContent.testCase !== undefined ||
+          jsonContent.test_case_name !== undefined ||
+          jsonContent.TestCaseName !== undefined ||
+          ef.name.startsWith('TC_') ||
+          ef.name.startsWith('test_') ||
+          ef.name.startsWith('TEST_')
+        ) {
+          isTestExecution = true;
+          explicitTcName = jsonContent.test_case_name || jsonContent.TestCaseName || jsonContent.name || null;
+        }
+      }
+    } catch (e) {
+      if (ef.name.startsWith('TC_') || ef.name.startsWith('test_')) {
+        isTestExecution = true;
+      }
+    }
+
+    if (!isTestExecution) continue;
+
+    const baseName = ef.name.replace(/\.json$/i, '');
+    const cleanBaseName = baseName.replace(/_(?:Persisted|Result|Payload|Output)$/i, '');
+
+    const candidates = [
+      explicitTcName,
+      baseName,
+      cleanBaseName,
+      baseName.replace(/^TC_/i, ''),
+      cleanBaseName.replace(/^TC_/i, ''),
+      `TC_${baseName}`,
+      `TC_${cleanBaseName}`
+    ].filter(Boolean).map(c => String(c).toLowerCase());
+
+    let matchedPlan = null;
+    for (const cand of candidates) {
+      if (discoveredPlans.has(cand)) {
+        matchedPlan = discoveredPlans.get(cand);
+        break;
+      }
+    }
+
+    if (matchedPlan) {
+      addCheck(
+        `Artifact Traceability: ${ef.name}`,
+        true,
+        null,
+        null,
+        `Matched Execution Plan '${matchedPlan.file}'`
+      );
+    } else {
+      addCheck(
+        `Artifact Traceability: ${ef.name}`,
+        false,
+        `[MTA-LINT-E010] [missing-execution-plan-artifact] Orphaned test execution detected: '${ef.name}'. No corresponding Execution Plan 'EP_${cleanBaseName}.md' found in '${plansDir}'. Persisting an Execution Plan prior to execution is mandatory under PAT-43 and ANTI-46.`,
+        "MTA-LINT-E010",
+        `Execution payload at ${ef.path} lacks matching EP_*.md blueprint`
+      );
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    target: outputDir,
+    passedCount: checks.filter(c => c.pass).length,
+    totalCount: checks.length,
+    checks,
+    errors
+  };
+}
+
+// ==========================================
 // Self-Test Suite (mta-lint self-test)
 // ==========================================
+
 export function runSelfTest() {
   const checks = [];
   const errors = [];
@@ -2684,6 +3146,36 @@ category: "Backend"
       addCheck("Fixture: valid_plan_with_sentinel.md passes", res.valid, `Expected valid with PAT-07 sentinel filter, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
     }
 
+    const validDataSeedingPlan = path.join(fixturesDir, 'valid_data_seeding_plan.md');
+    if (fs.existsSync(validDataSeedingPlan)) {
+      const res = lintExecutionPlan(validDataSeedingPlan);
+      addCheck("Fixture: valid_data_seeding_plan.md passes", res.valid, `Expected valid data seeding plan without mandatory PAT-07, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
+    const validApprovedPlan = path.join(fixturesDir, 'valid_approved_plan.md');
+    if (fs.existsSync(validApprovedPlan)) {
+      const resPlan = lintExecutionPlan(validApprovedPlan);
+      addCheck("Fixture: valid_approved_plan.md passes plan lint", resPlan.valid, `Expected valid, got errors: ${resPlan.errors.map(e => e.message).join('; ')}`);
+      const resGate = verifyPreBuildGate(validApprovedPlan);
+      addCheck("Fixture: valid_approved_plan.md passes pre-build gate", resGate.valid, `Expected valid pre-build, got errors: ${resGate.errors.map(e => e.message).join('; ')}`);
+    }
+
+    const invalidApprovedNoProv = path.join(fixturesDir, 'invalid_approved_no_provenance.md');
+    if (fs.existsSync(invalidApprovedNoProv)) {
+      const res = lintExecutionPlan(invalidApprovedNoProv);
+      const caughtProv = res.errors.some(e => e.code === 'PLAN-STATUS-DRAFT-ON-CREATION');
+      addCheck("Fixture: invalid_approved_no_provenance.md caught PLAN-STATUS-DRAFT-ON-CREATION", !res.valid && caughtProv, "Expected invalid with PLAN-STATUS-DRAFT-ON-CREATION");
+    }
+
+    const validDraftPlan = path.join(fixturesDir, 'valid_draft_plan.md');
+    if (fs.existsSync(validDraftPlan)) {
+      const resPlan = lintExecutionPlan(validDraftPlan);
+      addCheck("Fixture: valid_draft_plan.md passes plan lint in draft status", resPlan.valid, `Expected valid in draft, got errors: ${resPlan.errors.map(e => e.message).join('; ')}`);
+      const resGate = verifyPreBuildGate(validDraftPlan);
+      const caughtDraft = resGate.errors.some(e => e.code === 'PLAN_NOT_APPROVED');
+      addCheck("Fixture: valid_draft_plan.md halts pre-build gate on DRAFT status", !resGate.valid && caughtDraft, "Expected pre-build gate refusal on DRAFT");
+    }
+
     const validValPlan = path.join(fixturesDir, 'valid_frontend_validation_feedback_plan.md');
     if (fs.existsSync(validValPlan)) {
       const res = lintExecutionPlan(validValPlan);
@@ -2723,6 +3215,27 @@ category: "Backend"
       const res = lintExecutionPlan(invalidAnti79);
       const caughtAnti79 = res.errors.some(e => e.code === 'ANTI-79_VIOLATION');
       addCheck("Fixture: invalid_frontend_anti79_generic_page_locator.md caught ANTI-79", !res.valid && caughtAnti79, "Expected invalid with ANTI-79");
+    }
+
+    const invalidAnti79RawCss = path.join(fixturesDir, 'invalid_frontend_anti79_raw_css_class.md');
+    if (fs.existsSync(invalidAnti79RawCss)) {
+      const res = lintExecutionPlan(invalidAnti79RawCss);
+      const caughtAnti79 = res.errors.some(e => e.code === 'ANTI-79_VIOLATION');
+      addCheck("Fixture: invalid_frontend_anti79_raw_css_class.md caught ANTI-79", !res.valid && caughtAnti79, "Expected invalid with ANTI-79");
+    }
+
+    const invalidAnti79MissingPage = path.join(fixturesDir, 'invalid_frontend_anti79_missing_page_qualified_name.md');
+    if (fs.existsSync(invalidAnti79MissingPage)) {
+      const res = lintExecutionPlan(invalidAnti79MissingPage);
+      const caughtAnti79 = res.errors.some(e => e.code === 'ANTI-79_VIOLATION');
+      addCheck("Fixture: invalid_frontend_anti79_missing_page_qualified_name.md caught ANTI-79", !res.valid && caughtAnti79, "Expected invalid with ANTI-79");
+    }
+
+    const invalidAnti81DummyAuth = path.join(fixturesDir, 'invalid_frontend_anti81_dummy_password.md');
+    if (fs.existsSync(invalidAnti81DummyAuth)) {
+      const res = lintExecutionPlan(invalidAnti81DummyAuth);
+      const caughtAnti81 = res.errors.some(e => e.code === 'ANTI-81_VIOLATION');
+      addCheck("Fixture: invalid_frontend_anti81_dummy_password.md caught ANTI-81", !res.valid && caughtAnti81, "Expected invalid with ANTI-81");
     }
 
     const validGeneratorsPlan = path.join(fixturesDir, 'valid_frontend_locator_generators.md');
@@ -2877,6 +3390,55 @@ category: "Backend"
     if (fs.existsSync(validOrderedVal) && fs.existsSync(suitePassServer)) {
       const res = runSmokeAudit(validOrderedVal, suitePassServer);
       addCheck("Fixture: Suite smoke audit passes on matching 3-case suite", res.valid, `Expected valid suite audit, got errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
+    // Test MTA-LINT-E010 Artifact Traceability
+    const tempArtifactsDir = path.join(fixturesDir, 'temp_artifacts_audit');
+    try {
+      if (!fs.existsSync(tempArtifactsDir)) fs.mkdirSync(tempArtifactsDir, { recursive: true });
+      const tempPlansDir = path.join(tempArtifactsDir, 'execution-plans');
+      if (!fs.existsSync(tempPlansDir)) fs.mkdirSync(tempPlansDir, { recursive: true });
+
+      // Valid plan & execution pair
+      const validPlanMd = [
+        '# Execution Plan: TC_ValidFeature',
+        '<details><summary>Metadata</summary>',
+        '```yaml',
+        'plan_id: "TC_ValidFeature-v1"',
+        'status: "APPROVED"',
+        'target: "Module.ACT_Valid"',
+        'category: "Backend"',
+        '```',
+        '</details>',
+        '## 1. Scope',
+        '## 2. Component'
+      ].join('\n');
+      fs.writeFileSync(path.join(tempPlansDir, 'EP_TC_ValidFeature.md'), validPlanMd, 'utf8');
+      fs.writeFileSync(path.join(tempArtifactsDir, 'TC_ValidFeature.json'), JSON.stringify({ RollbackTcseAfterExecution: "Yes" }), 'utf8');
+
+      // Orphaned execution without plan
+      fs.writeFileSync(path.join(tempArtifactsDir, 'TC_OrphanedRun.json'), JSON.stringify({ RollbackTcseAfterExecution: "Yes" }), 'utf8');
+
+      const auditRes = lintArtifacts(tempArtifactsDir);
+      const caughtOrphaned = !auditRes.valid && auditRes.errors.some(e => e.code === 'MTA-LINT-E010' && e.message.includes('TC_OrphanedRun.json'));
+      addCheck("MTA-LINT-E010: Orphaned test execution detected without EP_*.md", caughtOrphaned, "Expected MTA-LINT-E010 on TC_OrphanedRun.json");
+
+      // Malformed plan header
+      fs.writeFileSync(path.join(tempPlansDir, 'EP_TC_MalformedHeader.md'), '# No frontmatter\nJust text', 'utf8');
+      const malformedRes = lintArtifacts(tempArtifactsDir);
+      const caughtMalformed = !malformedRes.valid && malformedRes.errors.some(e => e.code === 'MTA-LINT-E010' && e.message.includes('EP_TC_MalformedHeader.md'));
+      addCheck("MTA-LINT-E010: Malformed execution plan header detected", caughtMalformed, "Expected MTA-LINT-E010 on EP_TC_MalformedHeader.md");
+
+      // Clean up orphaned and malformed files, leaving only valid pair
+      fs.unlinkSync(path.join(tempArtifactsDir, 'TC_OrphanedRun.json'));
+      fs.unlinkSync(path.join(tempPlansDir, 'EP_TC_MalformedHeader.md'));
+
+      const cleanRes = lintArtifacts(tempArtifactsDir);
+      addCheck("MTA-LINT-E010: Valid plan and execution pair passes traceability audit", cleanRes.valid, `Expected valid, got errors: ${cleanRes.errors.map(e => e.message).join('; ')}`);
+    } finally {
+      if (fs.existsSync(tempArtifactsDir)) {
+        try { fs.rmSync(tempArtifactsDir, { recursive: true, force: true }); } catch (e) {}
+      }
     }
 
     if (fs.existsSync(validOrderedVal) && fs.existsSync(suiteFailServer)) {

@@ -11,7 +11,10 @@
     "update:mxcli": "node scripts/sync-mxcli.js",
     "verify": "node scripts/verify-setup.js",
     "release": "node scripts/create-release.js",
+    "lint": "node tools/run-linter.mjs artifacts",
+    "lint:artifacts": "node tools/run-linter.mjs artifacts",
     "lint:plan": "node tools/run-linter.mjs plan",
+    "lint:pre-build": "node tools/run-linter.mjs pre-build",
     "lint:audit": "node tools/run-linter.mjs audit",
     "lint:config": "node tools/run-linter.mjs config",
     "lint:test": "node tools/run-linter.mjs self-test"

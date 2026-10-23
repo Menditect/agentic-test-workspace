@@ -34,8 +34,6 @@ risks_covered:
 ## 3. Test Steps & Action Sequence
 *The step-by-step sequence of object creation, actions, and assertions.*
 
-<details>
-<summary><b>View detailed step specifications (Click to expand)</b></summary>
 
 | # | Case | Step Action & Target | Input Handle | Output Handle | Parameters, Bindings & Initial Values | Embedded Assertions | Exec Settings | Pattern Tag |
 | :-: | :--: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -43,7 +41,6 @@ risks_covered:
 | **2** | Case 1 | `RetrieveObject` (`Sales.Order`) | `step1_Order` | `orderHandle` | `RetrieveOption = "Teststep", Filter: Sentinel == 'VALID'` | `Assert Object Count == 1` | `None` / `Stop` | `PAT-07` |
 | **3** | Case 1 | `CallMicroflow` (`Sales.CALC_Discount`) | `orderHandle` | `resultHandle` | `Order = orderHandle` | `Assert Return Value == expectedVal` | `None` / `Stop` | `PAT-14` |
 
-</details>
 
 ## 4. Test Scenarios & Test Data
 *The business situations to verify, with inputs and expected outcomes for each scenario.*
