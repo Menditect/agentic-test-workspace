@@ -19,7 +19,7 @@ import path from 'node:path';
 import process from 'node:process';
 import crypto from 'node:crypto';
 
-export const LINTER_VERSION = "1.7.0";
+export const LINTER_VERSION = "1.8.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -73,6 +73,17 @@ async function main() {
         }
         const result = verifyPreBuildGate(filePath);
         outputResult(result, isJson, "MTA Pre-Build Human Approval & Placement Gate");
+        process.exit(result.valid ? 0 : 1);
+        break;
+      }
+      case 'pre-exec': {
+        const filePath = args[1];
+        if (!filePath || filePath.startsWith('--')) {
+          console.error("Error: Missing execution plan path. Usage: mta-lint pre-exec <path/to/EP_*.md>");
+          process.exit(1);
+        }
+        const result = verifyPreExecGate(filePath);
+        outputResult(result, isJson, "MTA Pre-Execution Plan Persistence & Approval Gate (PAT-43, ANTI-46)");
         process.exit(result.valid ? 0 : 1);
         break;
       }
@@ -144,6 +155,7 @@ Commands:
   lock <file> [--force]                Cryptographically seal an Execution Plan (one-way latch)
   verify-lock <file>                   Verify an Execution Plan has not been modified after locking
   pre-build <file> [--json]            Verify Gate 1 human approval & Gate 2 placement before construction
+  pre-exec <file> [--json]             Verify persisted plan & approval status before Option A execution
   plan <file> [--json]                 Validate Execution Plan syntax, schema, and pattern rules
   audit <plan-file> <server-json>      Verify constructed MTA server state against plan (4-phase diff)
   artifacts [dir] [--json]             Audit execution outputs against Execution Plan artifacts (MTA-LINT-E010)
@@ -416,15 +428,17 @@ function processTable(rawTable) {
 // ==========================================
 
 export function computePlanHash(content) {
-  const tables = parseMarkdownTables(content);
+  // Slice before Section 5 / Section 6 so post-construction receipts in Section 6 never overwrite Section 3/4 tables
+  const coreSectionsContent = content.split(/##\s*[56]\.\s*(?:Quality|Pre-Approval|Verification|Build\s*Receipt|Smoke\s*Audit)/i)[0] || content;
+  const tables = parseMarkdownTables(coreSectionsContent);
   let stepLedgerTable = null;
   let variationMatrixTable = null;
 
   for (const t of tables) {
     const headerStr = t.headers.join(' ').toLowerCase();
-    if (headerStr.includes('step action') || headerStr.includes('output handle') || headerStr.includes('action & target')) {
+    if (!stepLedgerTable && (headerStr.includes('step action') || headerStr.includes('output handle') || headerStr.includes('action & target'))) {
       stepLedgerTable = t;
-    } else if (headerStr.includes('step target') || headerStr.includes('scenario #1') || (headerStr.includes('scenario name') && headerStr.includes('scenario'))) {
+    } else if (!variationMatrixTable && (headerStr.includes('step target') || headerStr.includes('scenario #1') || (headerStr.includes('scenario name') && headerStr.includes('scenario')))) {
       variationMatrixTable = t;
     }
   }
@@ -433,9 +447,9 @@ export function computePlanHash(content) {
   const anchorMatch = content.match(/(?:###\s*🔒?\s*IMMUTABLE_ASSERTION_ANCHOR:\s*([^\r\n]+)|###\s*🔒?\s*IMMUTABLE_ASSERTION_ANCHOR[^\r\n]*\r?\n([^\r\n#]+)|IMMUTABLE_ASSERTION_ANCHOR:\s*([^\r\n]+))/i);
   const anchor = anchorMatch ? (anchorMatch[1] || anchorMatch[2] || anchorMatch[3] || '').trim() : null;
 
-  // Extract Section 3 and Section 4 text fallbacks if present
-  const sec3Match = content.match(/##\s*3\.\s*(?:Test\s*Steps|Master\s*Step)[\s\S]*?(?=##\s*[4-9]\.|$)/i);
-  const sec4Match = content.match(/##\s*4\.\s*(?:Test\s*Scenarios|Target-Bound\s*Data|Data\s*Variation)[\s\S]*?(?=##\s*[5-9]\.|$)/i);
+  // Extract Section 3 and Section 4 text fallbacks from coreSectionsContent if present
+  const sec3Match = coreSectionsContent.match(/##\s*3\.\s*(?:Test\s*Steps|Master\s*Step)[\s\S]*?(?=##\s*[4-9]\.|$)/i);
+  const sec4Match = coreSectionsContent.match(/##\s*4\.\s*(?:Test\s*Scenarios|Target-Bound\s*Data|Data\s*Variation)[\s\S]*?(?=##\s*[5-9]\.|$)/i);
 
   const canonical = {
     anchor: anchor || null,
@@ -676,6 +690,106 @@ export function verifyPreBuildGate(filePath) {
   };
 }
 
+export function verifyPreExecGate(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return {
+      valid: false,
+      target: filePath,
+      passedCount: 0,
+      totalCount: 1,
+      checks: [{ name: "File Existence (PAT-43, ANTI-46)", pass: false, reason: `File not found: ${filePath}` }],
+      errors: [{ code: "FILE_NOT_FOUND", message: `Execution plan does not exist at ${filePath}. Calling execute-testcase without a persisted EP_*.md file is strictly prohibited (ANTI-46).` }]
+    };
+  }
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const metadata = extractMetadata(content);
+
+  const checks = [];
+  const errors = [];
+
+  const addCheck = (name, pass, reason = null, code = null, details = null) => {
+    checks.push({ name, pass, reason, details });
+    if (!pass) {
+      errors.push({ code: code || 'CHECK_FAILED', message: reason });
+    }
+  };
+
+  const baseName = path.basename(filePath);
+  const validFileName = /^EP_[A-Za-z0-9_.-]+\.md$/i.test(baseName);
+  addCheck(
+    "Canonical EP_*.md Filename (PAT-43)",
+    validFileName,
+    validFileName ? null : `Execution plan filename '${baseName}' must match 'EP_<TestCaseName>.md'`,
+    "INVALID_EP_FILENAME"
+  );
+
+  if (!metadata) {
+    addCheck("Metadata Block Present", false, "Missing metadata block", "MISSING_METADATA");
+    return {
+      valid: false,
+      target: filePath,
+      passedCount: checks.filter(c => c.pass).length,
+      totalCount: checks.length,
+      checks,
+      errors
+    };
+  }
+
+  const allowedStatuses = ['AUTO_APPROVED', 'APPROVED', 'BUILT_AND_VERIFIED'];
+  const statusOk = allowedStatuses.includes(metadata.status);
+  addCheck(
+    "Execution Approval Status (PAT-43, ANTI-46)",
+    statusOk,
+    statusOk ? null : `Execution plan status is '${metadata.status || 'UNDEFINED'}'. In-memory Option A execution requires status in [${allowedStatuses.join(', ')}] (ANTI-46).`,
+    "PLAN_NOT_EXECUTABLE"
+  );
+
+  // Validate provenance for APPROVED / BUILT_AND_VERIFIED, and enforce strict scope guards on AUTO_APPROVED
+  if (metadata.status === 'APPROVED' || metadata.status === 'BUILT_AND_VERIFIED') {
+    const hasApprovedBy = !!metadata.approved_by && String(metadata.approved_by).trim().length > 0;
+    const hasApprovedAt = !!metadata.approved_at && String(metadata.approved_at).trim().length > 0;
+    addCheck(
+      "Approval Provenance (approved_by & approved_at)",
+      hasApprovedBy && hasApprovedAt,
+      (hasApprovedBy && hasApprovedAt) ? null : `Missing approval provenance (approved_by and approved_at must be populated when status is '${metadata.status}')`,
+      "MISSING_APPROVAL_PROVENANCE"
+    );
+  } else if (metadata.status === 'AUTO_APPROVED') {
+    const isRollbackNo = metadata.rollback !== undefined && String(metadata.rollback).trim().toLowerCase() === 'no';
+    const isFrontend = metadata.category === 'Frontend';
+    const isPlatformTarget = metadata.execution_target !== undefined && String(metadata.execution_target).trim() !== 'MTA_plugin';
+    const isBugFix = metadata.test_intent === 'bug_reproduction';
+    const autoAllowed = !isRollbackNo && !isFrontend && !isPlatformTarget && !isBugFix;
+    addCheck(
+      "AUTO_APPROVED Execution Guard (PAT-43, ANTI-46, ANTI-56)",
+      autoAllowed,
+      autoAllowed ? null : "status 'AUTO_APPROVED' is prohibited when rollback='No' (live database mutation), category='Frontend', execution_target!='MTA_plugin', or test_intent='bug_reproduction'. Explicit human approval (status: 'APPROVED') is required.",
+      "AUTO_APPROVE_FORBIDDEN"
+    );
+  }
+
+  // Run structural plan lint checks
+  const planRes = lintExecutionPlan(filePath);
+  addCheck(
+    "Execution Plan Structural & Pattern Compliance",
+    planRes.valid,
+    planRes.valid ? null : `Plan failed ${planRes.errors.length} lint check(s): ${planRes.errors.map(e => e.message).join('; ')}`,
+    "PLAN_LINT_FAILED",
+    `${planRes.passedCount}/${planRes.totalCount} plan checks passed`
+  );
+
+  const valid = checks.every(c => c.pass);
+  return {
+    valid,
+    target: filePath,
+    passedCount: checks.filter(c => c.pass).length,
+    totalCount: checks.length,
+    checks,
+    errors
+  };
+}
+
 // ==========================================
 // Execution Plan Linter Engine (mta-lint plan)
 // ==========================================
@@ -714,20 +828,40 @@ export function lintExecutionPlan(filePath) {
     addCheck("Category Specified", ['Backend', 'Frontend'].includes(metadata.category), `Category must be 'Backend' or 'Frontend', found: '${metadata.category}'`, "INVALID_CATEGORY");
 
     // Approval Status & Provenance (PLAN-STATUS-DRAFT-ON-CREATION)
-    if (metadata.status === 'APPROVED') {
+    if (metadata.status === 'APPROVED' || metadata.status === 'BUILT_AND_VERIFIED') {
       const hasApprovedBy = !!metadata.approved_by && String(metadata.approved_by).trim().length > 0;
       const hasApprovedAt = !!metadata.approved_at && String(metadata.approved_at).trim().length > 0;
       addCheck(
         "Plan Status Approval Provenance (PAT-43, ANTI-56)",
         hasApprovedBy && hasApprovedAt,
-        (hasApprovedBy && hasApprovedAt) ? null : "Plan marked as APPROVED without valid approval provenance (approved_by and approved_at must be non-empty)",
+        (hasApprovedBy && hasApprovedAt) ? null : `Plan marked as ${metadata.status} without valid approval provenance (approved_by and approved_at must be non-empty)`,
         "PLAN-STATUS-DRAFT-ON-CREATION"
       );
-    } else if (metadata.status && !['DRAFT', 'REJECTED', 'AUTO_APPROVED'].includes(metadata.status)) {
+    } else if (metadata.status === 'AUTO_APPROVED') {
+      const isRollbackNo = metadata.rollback !== undefined && String(metadata.rollback).trim().toLowerCase() === 'no';
+      const isFrontend = metadata.category === 'Frontend';
+      const isPlatformTarget = metadata.execution_target !== undefined && String(metadata.execution_target).trim() !== 'MTA_plugin';
+      const isBugFix = metadata.test_intent === 'bug_reproduction';
+      if (isRollbackNo || isFrontend || isPlatformTarget || isBugFix) {
+        const reasons = [];
+        if (isRollbackNo) reasons.push("rollback is 'No' (live database mutation requires explicit user approval)");
+        if (isFrontend) reasons.push("category is 'Frontend' (requires MTA Platform Gate 1 & Gate 2 approval per PAT-62)");
+        if (isPlatformTarget) reasons.push(`execution_target is '${metadata.execution_target}' (persistent MTA Platform mutations cannot auto-execute per ANTI-56)`);
+        if (isBugFix) reasons.push("test_intent is 'bug_reproduction' (requires Checkpoint 1 Case 6 approval per PAT-124)");
+        addCheck(
+          "AUTO_APPROVED Scope Guard (PAT-43, ANTI-46, ANTI-56)",
+          false,
+          `Plan cannot use status 'AUTO_APPROVED' when: ${reasons.join('; ')}.`,
+          "AUTO_APPROVE_FORBIDDEN"
+        );
+      } else {
+        addCheck("AUTO_APPROVED Scope Guard (PAT-43, ANTI-46, ANTI-56)", true);
+      }
+    } else if (metadata.status && !['DRAFT', 'REJECTED'].includes(metadata.status)) {
       addCheck(
         "Plan Status Valid Value",
         false,
-        `Invalid status '${metadata.status}'. Must be DRAFT, APPROVED, REJECTED, or AUTO_APPROVED.`,
+        `Invalid status '${metadata.status}'. Must be DRAFT, APPROVED, REJECTED, AUTO_APPROVED, or BUILT_AND_VERIFIED.`,
         "INVALID_PLAN_STATUS"
       );
     }
@@ -752,9 +886,9 @@ export function lintExecutionPlan(filePath) {
 
   for (const t of tables) {
     const headerStr = t.headers.join(' ').toLowerCase();
-    if (headerStr.includes('step action') || headerStr.includes('output handle') || headerStr.includes('action & target')) {
+    if (!stepLedgerTable && (headerStr.includes('step action') || headerStr.includes('output handle') || headerStr.includes('action & target'))) {
       stepLedgerTable = t;
-    } else if (headerStr.includes('step target') || headerStr.includes('scenario #1') || (headerStr.includes('scenario name') && headerStr.includes('scenario'))) {
+    } else if (!variationMatrixTable && (headerStr.includes('step target') || headerStr.includes('scenario #1') || (headerStr.includes('scenario name') && headerStr.includes('scenario')))) {
       variationMatrixTable = t;
     }
   }
@@ -899,12 +1033,17 @@ function validateStepLedgerRules(table, metadata, addCheck) {
       previousAction = 'Other';
     }
 
-    // Settings rule for backend unit tests (None / Stop)
+    // Settings rule for backend unit tests (None / Stop), allowing Always / _Continue on Backend Integration teardown steps
+    const isBackendIntegration = isBackend && metadata && (
+      String(metadata.test_type || '').toLowerCase() === 'integration' ||
+      String(metadata.rollback || '').toLowerCase() === 'no'
+    );
     if (isBackend) {
       const settingsCol = Object.keys(row).find(k => k.toLowerCase().includes('settings') || k.toLowerCase().includes('exec'));
       if (settingsCol && row[settingsCol]) {
         const val = row[settingsCol];
-        if (/Always/i.test(val) && !/None/i.test(val)) {
+        const isTeardownStep = /(?:DeleteObject|Persist|Teardown)/i.test(rowText) || /Case\s*3/i.test(rowText);
+        if (/Always/i.test(val) && !/None/i.test(val) && !(isBackendIntegration && isTeardownStep)) {
           addCheck(`Step ${idx + 1} Backend Execution Settings`, false, `Backend unit tests must use 'None / Stop', found: '${val}'`, "INVALID_EXEC_SETTINGS");
         }
       }
@@ -2335,9 +2474,9 @@ export function runSmokeAudit(planPath, serverJsonPath) {
 
   for (const t of tables) {
     const headerStr = t.headers.join(' ').toLowerCase();
-    if (headerStr.includes('step action') || headerStr.includes('output handle')) {
+    if (!stepLedgerTable && (headerStr.includes('step action') || headerStr.includes('output handle') || headerStr.includes('action & target'))) {
       stepLedgerTable = t;
-    } else if (headerStr.includes('scenario #1') || (headerStr.includes('scenario name') && headerStr.includes('scenario'))) {
+    } else if (!variationMatrixTable && (headerStr.includes('step target') || headerStr.includes('scenario #1') || (headerStr.includes('scenario name') && headerStr.includes('scenario')))) {
       variationMatrixTable = t;
     }
   }
@@ -2405,17 +2544,68 @@ export function runSmokeAudit(planPath, serverJsonPath) {
     );
   }
 
-  // Phase 1: Step Count & Action Type Parity
+  // Phase 1: Step Count & Action Type Parity (excluding PAT-115 decommissioned [TO DELETE] steps)
   const plannedSteps = stepLedgerTable ? stepLedgerTable.rows : [];
-  let serverSteps = serverData.testSteps || serverData.steps || [];
-  if (serverSteps.length === 0 && serverCases.length > 0) {
-    serverSteps = serverCases.flatMap(tc => tc.testSteps || tc.steps || []);
+  let rawServerSteps = serverData.testSteps || serverData.steps || [];
+  if (rawServerSteps.length === 0 && serverCases.length > 0) {
+    rawServerSteps = serverCases.flatMap(tc => tc.testSteps || tc.steps || []);
   }
+
+  const decommissionedServerSteps = [];
+  const invalidDecommissionedSteps = [];
+  const serverSteps = [];
+
+  for (const s of rawServerSteps) {
+    const stepName = (s.TestStepName || s.name || s.Name || '').trim();
+    const execCond = (s.ExecutionCondition || s.executionCondition || '').trim();
+    if (/^\[TO DELETE\]/i.test(stepName)) {
+      if (!execCond || /^skip$/i.test(execCond)) {
+        decommissionedServerSteps.push(s);
+      } else {
+        invalidDecommissionedSteps.push(`Decommissioned step '${stepName}' has ExecutionCondition '${execCond}', expected 'Skip' (PAT-115)`);
+        decommissionedServerSteps.push(s);
+      }
+    } else {
+      serverSteps.push(s);
+    }
+  }
+
+  if (invalidDecommissionedSteps.length > 0) {
+    addCheck(
+      "Phase 1: PAT-115 Decommissioned Step Skip Condition",
+      false,
+      invalidDecommissionedSteps.join('; '),
+      "PAT-115_VIOLATION"
+    );
+  }
+
   const pCount = plannedSteps.length;
   const sCount = serverSteps.length;
+  const decommissionedNote = decommissionedServerSteps.length > 0 ? ` (${decommissionedServerSteps.length} decommissioned [TO DELETE] step(s) excluded per PAT-115)` : '';
 
   const phase1Pass = pCount === sCount;
-  addCheck("Phase 1: Step Count Parity", phase1Pass, phase1Pass ? null : `Planned steps: ${pCount}, Server steps: ${sCount}`, "STEP_COUNT_MISMATCH", `Planned: ${pCount} | Server: ${sCount}`);
+  addCheck("Phase 1: Step Count Parity", phase1Pass, phase1Pass ? null : `Planned steps: ${pCount}, Active server steps: ${sCount}${decommissionedNote}`, "STEP_COUNT_MISMATCH", `Planned: ${pCount} | Active Server: ${sCount}${decommissionedNote}`);
+
+  // PAT-07 Server OactRetrieveOption Check (when field is present on server step)
+  let pat07ServerErrors = [];
+  for (let idx = 0; idx < serverSteps.length; idx++) {
+    const sStep = serverSteps[idx];
+    const pRow = plannedSteps[idx];
+    const pText = pRow ? Object.values(pRow).join(' ') : '';
+    const isPat07Step = /PAT-07/i.test(pText) && /Retrieve/i.test(pText);
+    const retrieveOpt = sStep.OactRetrieveOption !== undefined ? sStep.OactRetrieveOption : sStep.retrieveOption;
+    if (isPat07Step && retrieveOpt !== undefined && String(retrieveOpt).toLowerCase() !== 'teststep') {
+      pat07ServerErrors.push(`Step ${idx + 1} (${sStep.name || sStep.TestStepName || 'RetrieveObject'}) is tagged PAT-07 in plan but server OactRetrieveOption is '${retrieveOpt}' (expected 'Teststep')`);
+    }
+  }
+  if (pat07ServerErrors.length > 0) {
+    addCheck(
+      "Phase 1: PAT-07 Sentinel Retrieve Option Verification",
+      false,
+      pat07ServerErrors.join('; '),
+      "PAT-07_SERVER_MISMATCH"
+    );
+  }
 
   // Phase 1b: Frontend High-Level Locator Generator Verification (PAT-64, ANTI-79)
   const isFrontendAudit = metadata && metadata.category === 'Frontend';
@@ -2450,7 +2640,7 @@ export function runSmokeAudit(planPath, serverJsonPath) {
     return !/Scenario\s*(?:Name|Desc)/i.test(rowText);
   }) : [];
   const serverVarItems = serverData.dataVariationItems || serverData.variationItems || [];
-  const phase2Pass = plannedVarRows.length === serverVarItems.length || serverVarItems.length >= plannedVarRows.length;
+  const phase2Pass = plannedVarRows.length === serverVarItems.length;
   addCheck("Phase 2: Variation Item Registration Parity", phase2Pass, phase2Pass ? null : `Planned variation rows: ${plannedVarRows.length}, Server registered items: ${serverVarItems.length}`, "VARIATION_ITEM_MISMATCH", `Planned: ${plannedVarRows.length} | Registered: ${serverVarItems.length}`);
 
   // Helper to normalize cell strings for comparison
@@ -2465,7 +2655,7 @@ export function runSmokeAudit(planPath, serverJsonPath) {
   // Phase 3: Scenario Metadata (Columns, Names, Descriptions Value Parity)
   const scenarioCols = variationMatrixTable ? variationMatrixTable.headers.filter(h => /scenario\s*#?\d+/i.test(h)) : [];
   const serverScenarios = serverData.scenarios || serverData.dataVariations || [];
-  const phase3CountPass = scenarioCols.length <= serverScenarios.length || serverScenarios.length > 0;
+  const phase3CountPass = scenarioCols.length === serverScenarios.length;
   addCheck("Phase 3: Scenario Count Registration", phase3CountPass, phase3CountPass ? null : `Planned scenarios: ${scenarioCols.length}, Server scenarios: ${serverScenarios.length}`, "SCENARIO_COUNT_MISMATCH", `Planned: ${scenarioCols.length} | Server: ${serverScenarios.length}`);
 
   // Find Scenario Name row and Scenario Description row in variationMatrixTable
@@ -2489,7 +2679,16 @@ export function runSmokeAudit(planPath, serverJsonPath) {
     for (let idx = 0; idx < scenarioCols.length; idx++) {
       const colHeader = scenarioCols[idx];
       const serverVar = serverScenarios[idx];
-      if (!serverVar) continue;
+      if (!serverVar) {
+        addCheck(
+          `Phase 3: Scenario #${idx + 1} Presence on Server`,
+          false,
+          `Planned Scenario #${idx + 1} (${colHeader}) is missing on the MTA server`,
+          "MISSING_SERVER_SCENARIO",
+          `Missing: ${colHeader}`
+        );
+        continue;
+      }
 
       const serverName = cleanCell(serverVar.name || serverVar.Name || '');
       const serverDesc = cleanCell(serverVar.description || serverVar.Description || '');
@@ -2522,6 +2721,33 @@ export function runSmokeAudit(planPath, serverJsonPath) {
           );
           if (match) scenarioDescsMatched++;
         }
+      }
+
+      // Phase 4a: M x N Cell-by-Cell Variation Matrix Value Parity (when cell values are provided in server JSON)
+      const rawCellValues = serverVar.TCVA_TestCaseVariationValues || serverVar.variationValues || serverVar.values;
+      if (Array.isArray(rawCellValues) && plannedVarRows.length > 0) {
+        let cellErrors = [];
+        for (let rIdx = 0; rIdx < plannedVarRows.length; rIdx++) {
+          const pRow = plannedVarRows[rIdx];
+          const plannedCellVal = cleanCell(pRow[colHeader]);
+          const serverCellObj = rawCellValues[rIdx];
+          if (serverCellObj === undefined) continue;
+          const serverCellRaw = (typeof serverCellObj === 'object' && serverCellObj !== null)
+            ? (serverCellObj.value !== undefined ? serverCellObj.value : (serverCellObj.Value !== undefined ? serverCellObj.Value : ''))
+            : serverCellObj;
+          const serverCellVal = cleanCell(serverCellRaw);
+          if (plannedCellVal !== serverCellVal) {
+            cellErrors.push(`Row ${rIdx + 1} in Scenario #${idx + 1}: expected '${plannedCellVal}', found '${serverCellVal}'`);
+          }
+        }
+        const cellsPass = cellErrors.length === 0;
+        addCheck(
+          `Phase 4: Scenario #${idx + 1} Cell Value Parity`,
+          cellsPass,
+          cellsPass ? null : cellErrors.join('; '),
+          "CELL_VALUE_MISMATCH",
+          cellsPass ? `All ${plannedVarRows.length} cell(s) reconciled` : cellErrors.join('; ')
+        );
       }
     }
   }
@@ -3380,9 +3606,97 @@ category: "Backend"
       const verifyResAnchorTamper = verifyLockedExecutionPlan(tempLockPlan);
       const caughtAnchorTamper = !verifyResAnchorTamper.valid && verifyResAnchorTamper.errors.some(e => e.code === 'LOCKED_TEST_TAMPERED');
       addCheck("ANTI-78: Tampered anchor heading caught by verify-lock", caughtAnchorTamper, "Expected LOCKED_TEST_TAMPERED violation when changing anchor heading");
+
+      // Test Section 6 Step Reconciliation table isolation (must NOT trigger false LOCKED_TEST_TAMPERED)
+      let planWithSec6 = samplePlanContent.replace('status: "DRAFT"', `status: "BUILT_AND_VERIFIED"\nlocked_sha256: "${lockRes1.hash}"\nprotection_level: "locked"`);
+      planWithSec6 += [
+        '',
+        '## 6. Verification & Build Receipt',
+        '| Case # | Step Action & Target | Output Handle | Status |',
+        '| :--- | :--- | :--- | :--- |',
+        '| Case 1 | CreateObject | Step 6501 | MATCH |',
+        ''
+      ].join('\n');
+      fs.writeFileSync(tempLockPlan, planWithSec6, 'utf8');
+      const verifySec6Res = verifyLockedExecutionPlan(tempLockPlan);
+      addCheck("PAT-124: Appending Section 6 receipt table preserves lock hash integrity", verifySec6Res.valid, "Expected verify-lock to ignore Section 6 tables");
+
+      // Test verifyPreExecGate (PAT-43, ANTI-46)
+      const validDraftPlan = path.join(fixturesDir, 'valid_draft_plan.md');
+      if (fs.existsSync(validDraftPlan)) {
+        const draftPlanPath = path.join(fixturesDir, 'EP_TempDraftCheck.md');
+        try {
+          const baseDraftMd = fs.readFileSync(validDraftPlan, 'utf8');
+          fs.writeFileSync(draftPlanPath, baseDraftMd, 'utf8');
+          const preExecDraft = verifyPreExecGate(draftPlanPath);
+          addCheck("ANTI-46: pre-exec blocks DRAFT execution plan", !preExecDraft.valid && preExecDraft.errors.some(e => e.code === 'PLAN_NOT_EXECUTABLE'), "Expected PLAN_NOT_EXECUTABLE on DRAFT plan");
+
+          const autoApprovedMd = baseDraftMd.replace(/status:\s*"?[A-Z_]+"?/i, 'status: "AUTO_APPROVED"');
+          fs.writeFileSync(draftPlanPath, autoApprovedMd, 'utf8');
+          const preExecAuto = verifyPreExecGate(draftPlanPath);
+          addCheck("PAT-43: pre-exec passes valid AUTO_APPROVED execution plan", preExecAuto.valid, `Expected valid pre-exec on AUTO_APPROVED plan, got: ${preExecAuto.errors.map(e => e.message).join('; ')}`);
+
+          const autoApprovedRollbackNoMd = autoApprovedMd.replace('status: "AUTO_APPROVED"', 'status: "AUTO_APPROVED"\nrollback: "No"');
+          fs.writeFileSync(draftPlanPath, autoApprovedRollbackNoMd, 'utf8');
+          const preExecRollbackNo = verifyPreExecGate(draftPlanPath);
+          addCheck("ANTI-56: pre-exec blocks AUTO_APPROVED when rollback is No", !preExecRollbackNo.valid && preExecRollbackNo.errors.some(e => e.code === 'AUTO_APPROVE_FORBIDDEN'), "Expected AUTO_APPROVE_FORBIDDEN when rollback is No");
+
+          const builtVerifiedMd = baseDraftMd
+            .replace(/status:\s*"?[A-Z_]+"?/i, 'status: "BUILT_AND_VERIFIED"')
+            .replace('approved_by: null', 'approved_by: "user"')
+            .replace('approved_at: null', 'approved_at: "2026-10-23T15:00:00Z"');
+          fs.writeFileSync(draftPlanPath, builtVerifiedMd, 'utf8');
+          const preExecBuilt = verifyPreExecGate(draftPlanPath);
+          addCheck("PAT-43: pre-exec and plan lint pass valid BUILT_AND_VERIFIED execution plan", preExecBuilt.valid, `Expected valid pre-exec on BUILT_AND_VERIFIED plan, got: ${preExecBuilt.errors.map(e => e.message).join('; ')}`);
+        } finally {
+          if (fs.existsSync(draftPlanPath)) {
+            try { fs.unlinkSync(draftPlanPath); } catch (e) {}
+          }
+        }
+      }
     } finally {
       if (fs.existsSync(tempLockPlan)) {
         try { fs.unlinkSync(tempLockPlan); } catch (e) {}
+      }
+    }
+
+    // Test PAT-115 Decommissioned Step Filtering & Phase 4 Cell Parity in runSmokeAudit
+    if (fs.existsSync(validPlan) && fs.existsSync(passServer)) {
+      const tempServerDecomm = path.join(fixturesDir, 'temp_server_decomm.json');
+      try {
+        const baseServerObj = JSON.parse(fs.readFileSync(passServer, 'utf8'));
+        baseServerObj.testSteps.push({
+          key: "999",
+          name: "[TO DELETE] Step 2 - Old RetrieveObject",
+          ExecutionCondition: "Skip",
+          description: "Decommissioned step per PAT-115"
+        });
+        fs.writeFileSync(tempServerDecomm, JSON.stringify(baseServerObj), 'utf8');
+        const decommRes = runSmokeAudit(validPlan, tempServerDecomm);
+        addCheck("PAT-115: Smoke audit excludes [TO DELETE] Skip steps from active step count", decommRes.valid, `Expected valid audit with decommissioned step, got: ${decommRes.errors.map(e => e.message).join('; ')}`);
+
+        // Test Phase 4 Cell Value Mismatch detection
+        baseServerObj.dataVariations[0].TCVA_TestCaseVariationValues = [
+          { value: "WRONG_CELL_VALUE_99999" },
+          { value: "VALID" },
+          { value: "true" }
+        ];
+        fs.writeFileSync(tempServerDecomm, JSON.stringify(baseServerObj), 'utf8');
+        const cellMismatchRes = runSmokeAudit(validPlan, tempServerDecomm);
+        const caughtCellMismatch = !cellMismatchRes.valid && cellMismatchRes.errors.some(e => e.code === 'CELL_VALUE_MISMATCH');
+        addCheck("Phase 4: Smoke audit catches M x N cell value mismatch", caughtCellMismatch, "Expected CELL_VALUE_MISMATCH error");
+
+        // Test Phase 3 Partial Scenario Count Detection (1 of 3 scenarios built)
+        const truncatedServerObj = JSON.parse(fs.readFileSync(passServer, 'utf8'));
+        truncatedServerObj.dataVariations = [truncatedServerObj.dataVariations[0]];
+        fs.writeFileSync(tempServerDecomm, JSON.stringify(truncatedServerObj), 'utf8');
+        const truncatedScenRes = runSmokeAudit(validPlan, tempServerDecomm);
+        const caughtScenarioCount = !truncatedScenRes.valid && truncatedScenRes.errors.some(e => e.code === 'SCENARIO_COUNT_MISMATCH');
+        addCheck("Phase 3: Smoke audit catches missing scenarios when only 1 of N is built", caughtScenarioCount, "Expected SCENARIO_COUNT_MISMATCH error");
+      } finally {
+        if (fs.existsSync(tempServerDecomm)) {
+          try { fs.unlinkSync(tempServerDecomm); } catch (e) {}
+        }
       }
     }
 
