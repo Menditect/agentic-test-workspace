@@ -143,7 +143,7 @@ async function main() {
         break;
       }
       default:
-        console.error(`Unknown command: '${command}'. Available commands: plan, audit, config, self-test`);
+        console.error(`Unknown command: '${command}'. Available commands: lock, verify-lock, pre-build, pre-exec, plan, audit, artifacts, config, self-test`);
         printHelp();
         process.exit(1);
     }
@@ -163,12 +163,12 @@ function printHelp() {
 Menditect Test Automation Linter (mta-lint v${VERSION})
 
 Commands:
-  lock <file> [--force]                Cryptographically seal an Execution Plan (one-way latch)
+  lock <file> [--force] [--reseal-wiring] Cryptographically seal an Execution Plan (one-way latch)
   verify-lock <file>                   Verify an Execution Plan has not been modified after locking
   pre-build <file> [--json]            Verify Gate 1 human approval & Gate 2 placement before construction
   pre-exec <file> [--json]             Verify persisted plan & approval status before Option A execution
   plan <file> [--json]                 Validate Execution Plan syntax, schema, and pattern rules
-  audit <plan-file> <server-json>      Verify constructed MTA server state against plan (4-phase diff)
+  audit <plan-file> <server-json> [server2.json ...] Verify constructed MTA server state against plan (4-phase diff)
   artifacts [dir] [--json]             Audit execution outputs against Execution Plan artifacts (MTA-LINT-E010)
   config [path] [--json]               Validate mta_config.json structure and path integrity
   self-test                            Run internal unit tests and rule compliance checks
