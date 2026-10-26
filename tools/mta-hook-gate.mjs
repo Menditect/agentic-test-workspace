@@ -5,9 +5,9 @@
  * Claude Code, and Cursor hooks by delegating to evaluateHookPayload() in mta-lint.mjs.
  */
 import fs from "node:fs";
-import { evaluateHookPayload } from "./mta-lint.mjs";
+import { evaluateHookPayload, isMxcliDiscoveryCommand, probeStudioProMcpOnline } from "./mta-lint.mjs";
 
-function main() {
+async function main() {
   let rawInput = "";
   try {
     rawInput = fs.readFileSync(0, "utf8");
@@ -24,7 +24,18 @@ function main() {
     }
   }
 
-  const decision = evaluateHookPayload(payload, { cwd: process.cwd() });
+  const workspaceDir =
+    (Array.isArray(payload.workspace_roots) && payload.workspace_roots[0]) ||
+    (Array.isArray(payload.workspacePaths) && payload.workspacePaths[0]) ||
+    payload.cwd ||
+    process.cwd();
+
+  let studioProOnline = false;
+  if (isMxcliDiscoveryCommand(payload)) {
+    studioProOnline = await probeStudioProMcpOnline(workspaceDir);
+  }
+
+  const decision = evaluateHookPayload(payload, { cwd: process.cwd(), studioProOnline });
   process.stdout.write(JSON.stringify(decision) + "\n");
 }
 

@@ -18,8 +18,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import crypto from 'node:crypto';
+import net from 'node:net';
 
-export const LINTER_VERSION = "1.10.0";
+export const LINTER_VERSION = "1.11.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -1340,8 +1341,69 @@ export function verifyPreExecGate(filePath) {
 }
 
 // ==========================================
-// IDE PreToolUse & SessionStart Hook Gatekeeper Engine (Workstream 1A)
+// IDE PreToolUse & SessionStart Hook Gatekeeper Engine (Workstream 1A & ANTI-75)
 // ==========================================
+export function isMxcliDiscoveryCommand(payload = {}) {
+  if (!payload || typeof payload !== 'object') return false;
+  const rawToolName = String(payload.tool_name || payload.toolName || payload.toolCall?.name || '').trim();
+  if (!/^(run_command|execute_command|Bash|bash|cmd|powershell)$/i.test(rawToolName)) {
+    return false;
+  }
+  const rawToolInput = payload.tool_input || payload.toolInput || payload.toolCall?.arguments || payload.toolCall?.input || {};
+  const cmdStr = String(rawToolInput.CommandLine || rawToolInput.command || rawToolInput.cmd || '').trim();
+  if (!cmdStr) return false;
+  const invokesMxcli = /(?:^|[\\/\s"'])mxcli(?:\.bat|\.exe)?\b/i.test(cmdStr);
+  if (!invokesMxcli) return false;
+  // PAT-94 carve-out: 'mxcli bson dump' for DatePicker custom format extraction is permitted in Mode A
+  if (/\bbson\s+dump\b/i.test(cmdStr)) return false;
+  return true;
+}
+
+export function probeStudioProMcpOnline(workspaceDir = process.cwd(), timeoutMs = 150) {
+  let targetUrl = process.env.STUDIOPRO_MCP_URL || 'http://localhost:7782/mcp';
+  try {
+    const absRoot = path.resolve(workspaceDir);
+    const cfgPath = path.join(absRoot, 'mta_config.json');
+    if (fs.existsSync(cfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      if (cfg && String(cfg.model_source || '').trim().toLowerCase() === 'mxcli') {
+        return Promise.resolve(false);
+      }
+      if (cfg && cfg.studiopro_mcp_url) {
+        targetUrl = String(cfg.studiopro_mcp_url).trim();
+      }
+    }
+  } catch (e) {}
+
+  let host = '127.0.0.1';
+  let port = 7782;
+  try {
+    const parsed = new URL(targetUrl);
+    host = parsed.hostname || '127.0.0.1';
+    port = parsed.port ? Number(parsed.port) : (parsed.protocol === 'https:' ? 443 : 80);
+  } catch (e) {}
+
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let settled = false;
+    const finish = (online) => {
+      if (settled) return;
+      settled = true;
+      try { socket.destroy(); } catch (e) {}
+      resolve(online);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+    try {
+      socket.connect(port, host);
+    } catch (e) {
+      finish(false);
+    }
+  });
+}
+
 export function findActiveExecutionPlan(workspaceDir = process.cwd()) {
   const absRoot = path.resolve(workspaceDir);
   const statePath = path.join(absRoot, 'mta_state.json');
@@ -1500,6 +1562,18 @@ export function evaluateHookPayload(payload = {}, options = {}) {
           }
         }
       }
+    }
+    return { decision: 'allow' };
+  }
+
+  // Handler 2b: PreToolUse on Shell Commands (run_command / Bash) -> Enforce ANTI-75 when Studio Pro is online
+  if (isMxcliDiscoveryCommand(payload)) {
+    if (options.studioProOnline === true) {
+      return {
+        decision: 'deny',
+        code: 'REDUNDANT_CLI_FALLBACK_BLOCKED',
+        reason: 'STATE VIOLATION (PAT-109 / ANTI-75): Studio Pro MCP is running and reachable in Mode A. Using mxcli for model or domain entity discovery is strictly prohibited (only \'mxcli bson dump\' for PAT-94 DatePicker formats is permitted). Use StudioPro MCP tools (list_modules, ped_read_document, pg_read_page) instead.'
+      };
     }
     return { decision: 'allow' };
   }
@@ -1775,6 +1849,12 @@ export function lintExecutionPlan(filePath) {
 
   // 3e-2. Frontend Session Startup & Authentication Mandate (PAT-125, ANTI-81)
   validateFrontendAuthenticationStartup(content, stepLedgerTable, metadata, addCheck);
+
+  // 3e-3. Frontend Dynamic Scalar Value Piping Mandate (PAT-32)
+  validateFrontendPiping(content, stepLedgerTable, metadata, addCheck);
+
+  // 3e-4. Frontend Runtime Transactional Teardown Mandate (PAT-92, ANTI-43)
+  validateFrontendTeardown(content, stepLedgerTable, metadata, tables, addCheck);
 
   // 3f. Intent Classification & Ground Truth Traceability (PAT-121, ANTI-68..ANTI-72)
   validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variationMatrixTable, addCheck);
@@ -2592,6 +2672,236 @@ function validateFrontendAuthenticationStartup(content, stepLedgerTable, metadat
       null,
       null,
       `Session startup verified (${startupStepType})`
+    );
+  }
+}
+
+/**
+ * Validates Frontend Dynamic Scalar Value Piping (PAT-32).
+ * Rule PAT-32_FRONTEND_PIPING_CHECK:
+ * Flags any ELO_Filter_* or ACT_SelectOption_* step in Case 2 that uses
+ * static literals without referencing an output handle or SelectValueForValue.
+ */
+function validateFrontendPiping(content, stepLedgerTable, metadata, addCheck) {
+  const isFrontend = metadata && metadata.category === 'Frontend';
+  if (!stepLedgerTable || !isFrontend) return;
+
+  const rows = stepLedgerTable.rows;
+  let currentCase = 'Case 1';
+  let filterOrSelectCount = 0;
+  const violations = [];
+
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    const caseCol = Object.keys(row).find(k => /case|container/i.test(k));
+    const caseVal = caseCol ? (row[caseCol] || '').trim() : '';
+
+    if (/Case\s*1\b/i.test(caseVal)) currentCase = 'Case 1';
+    else if (/Case\s*2\b/i.test(caseVal)) currentCase = 'Case 2';
+    else if (/Case\s*3\b/i.test(caseVal)) currentCase = 'Case 3';
+
+    const isCase2 = currentCase === 'Case 2' || /Case\s*2\b/i.test(caseVal);
+    if (!isCase2) continue;
+
+    const rowText = Object.values(row).join(' ');
+    // Match ELO_Filter_* or ACT_SelectOption_*
+    const match = rowText.match(/\b(ELO_Filter_[A-Za-z0-9_]+|ACT_SelectOption_[A-Za-z0-9_]+)\b/i);
+    if (!match) continue;
+
+    filterOrSelectCount++;
+    const actionName = match[1];
+
+    // Check parameters column
+    const paramCol = Object.keys(row).find(k => /param|binding|initial|value/i.test(k));
+    const paramText = paramCol ? (row[paramCol] || '').trim() : '';
+
+    // Check input handle column
+    const inHandleCol = Object.keys(row).find(k => (k.toLowerCase().includes('input') || k.toLowerCase() === 'in') && !k.toLowerCase().includes('binding') && !k.toLowerCase().includes('initial'));
+    const inHandle = inHandleCol ? (row[inHandleCol] || '').trim().replace(/[`\s]/g, '') : '';
+    const hasValidInHandle = inHandle && inHandle !== '-' && inHandle.toLowerCase() !== 'none' && inHandle.toLowerCase() !== 'n/a';
+
+    // Must reference SelectValueForValue OR reference an output handle
+    const hasSelectValueForValue = /SelectValueForValue/i.test(paramText) || /SelectValueForValue/i.test(rowText);
+    const hasHandleRef = hasValidInHandle ||
+      /\b[a-zA-Z_][a-zA-Z0-9_]*Handle\b/i.test(paramText) ||
+      /\bstep\d+_[a-zA-Z0-9_]+\b/i.test(paramText);
+
+    if (!hasSelectValueForValue && !hasHandleRef) {
+      violations.push(`Step ${idx + 1} (${actionName}) in Case 2 uses static literal without referencing an output handle or SelectValueForValue (PAT-32). UI filtering and selection steps on seeded data must use dynamic scalar value piping (SelectValueForValue) referencing the upstream Case 1 seed step.`);
+    }
+  }
+
+  if (violations.length > 0) {
+    addCheck(
+      "PAT-32: Frontend Dynamic Scalar Value Piping Mandate",
+      false,
+      violations.join('; '),
+      "PAT-32_VIOLATION"
+    );
+  } else if (filterOrSelectCount > 0) {
+    addCheck(
+      "PAT-32: Frontend Dynamic Scalar Value Piping Mandate",
+      true,
+      null,
+      null,
+      `All ${filterOrSelectCount} Case 2 filter/select step(s) use dynamic scalar value piping or handle references (PAT-32)`
+    );
+  }
+}
+
+/**
+ * Validates Frontend Transactional Teardown (PAT-92, ANTI-43).
+ * Rule PAT-92_FRONTEND_TEARDOWN_CHECK:
+ * Scans target page/widget inventory for form submit actions that create un-seeded entities,
+ * and verifies Case 3 includes a Retrieve + DeleteObject for those entities.
+ */
+function validateFrontendTeardown(content, stepLedgerTable, metadata, tables, addCheck) {
+  const isFrontend = metadata && metadata.category === 'Frontend';
+  if (!stepLedgerTable || !isFrontend) return;
+
+  const rows = stepLedgerTable.rows;
+
+  // 1. Collect entities seeded in Case 1 via CreateObject
+  const seededEntities = new Set();
+  let currentCase = 'Case 1';
+
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    const caseCol = Object.keys(row).find(k => /case|container/i.test(k));
+    const caseVal = caseCol ? (row[caseCol] || '').trim() : '';
+
+    if (/Case\s*1\b/i.test(caseVal)) currentCase = 'Case 1';
+    else if (/Case\s*2\b/i.test(caseVal)) currentCase = 'Case 2';
+    else if (/Case\s*3\b/i.test(caseVal)) currentCase = 'Case 3';
+
+    if (currentCase === 'Case 1' || /Case\s*1\b/i.test(caseVal)) {
+      const rowText = Object.values(row).join(' ');
+      const cleanText = rowText.replace(/[`*]/g, '');
+      if (/CreateObject/i.test(cleanText)) {
+        // e.g. CreateObject (Sales.Order) or CreateObject (CarRentalModule.Car)
+        const match = cleanText.match(/CreateObject\s*\(\s*([A-Za-z0-9_]+(?:\.([A-Za-z0-9_]+))?)\s*\)/i);
+        if (match) {
+          const simpleName = match[2] || match[1];
+          seededEntities.add(simpleName.toLowerCase());
+          if (match[2]) seededEntities.add(match[1].toLowerCase());
+        }
+      }
+    }
+  }
+
+  // 2. Scan for form submit actions in Case 2 or widget inventory
+  let hasFormSubmitAction = false;
+  let candidateEntity = null;
+
+  // Check Case 2 steps for submit buttons
+  currentCase = 'Case 1';
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    const caseCol = Object.keys(row).find(k => /case|container/i.test(k));
+    const caseVal = caseCol ? (row[caseCol] || '').trim() : '';
+    if (/Case\s*1\b/i.test(caseVal)) currentCase = 'Case 1';
+    else if (/Case\s*2\b/i.test(caseVal)) currentCase = 'Case 2';
+    else if (/Case\s*3\b/i.test(caseVal)) currentCase = 'Case 3';
+
+    if (currentCase === 'Case 2' || /Case\s*2\b/i.test(caseVal)) {
+      const rowText = Object.values(row).join(' ');
+      if (/(?:ACT_Click_Button|Click_Button|ACT_Click_MxButton)/i.test(rowText) &&
+          /(?:btn_?submit|btn_?save|save_?button|submit_?button|btn_?book|book_?now|btn_?confirm)/i.test(rowText)) {
+        hasFormSubmitAction = true;
+      }
+    }
+  }
+
+  // Also check widget inventory tables or text for submit actions
+  if (!hasFormSubmitAction) {
+    if (/(?:btnSubmit|btnSave|SubmitButton|SaveButton|btn_BookNow)/i.test(content)) {
+      hasFormSubmitAction = true;
+    }
+  }
+
+  if (!hasFormSubmitAction) return;
+
+  // 3. Identify candidate runtime-created entity from target page / component under test
+  // e.g. CarRentalModule.Booking_NewEdit -> Booking
+  // Sales.Order_NewEdit -> Order
+  // Or explicitly from purpose text: commits new domain entities (e.g. Booking, Order)
+  const pageMatch = content.match(/\b([A-Za-z0-9_]+)\.(?:([A-Za-z0-9_]+)_(?:NewEdit|Create|New|Detail|Form))\b/i) ||
+                    content.match(/\b([A-Za-z0-9_]+)_(?:NewEdit|Create|New|Form)\b/i);
+  if (pageMatch) {
+    candidateEntity = pageMatch[2] || pageMatch[1];
+  } else {
+    const entityMentionMatch = content.match(/(?:commits|creates)\s+new\s+domain\s+entit(?:y|ies)(?:\s*\([^)]*?\))?\s*\(?([A-Za-z0-9_]+)\)?/i);
+    if (entityMentionMatch) {
+      candidateEntity = entityMentionMatch[1];
+    }
+  }
+
+  // If candidate entity is already seeded in Case 1, it is not an un-seeded runtime entity
+  if (!candidateEntity || seededEntities.has(candidateEntity.toLowerCase())) {
+    addCheck(
+      "PAT-92: Frontend Runtime Transactional Teardown Check",
+      true,
+      null,
+      null,
+      "Frontend teardown cleanup verified (PAT-92)"
+    );
+    return;
+  }
+
+  // 4. Verify Case 3 includes RetrieveObject and DeleteObjects for candidateEntity
+  let case3HasRetrieve = false;
+  let case3HasDelete = false;
+  let inCase3 = false;
+
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    const caseCol = Object.keys(row).find(k => /case|container/i.test(k));
+    const caseVal = caseCol ? (row[caseCol] || '').trim() : '';
+
+    if (/Case\s*3\b/i.test(caseVal)) inCase3 = true;
+    else if (/Case\s*[12]\b/i.test(caseVal)) inCase3 = false;
+
+    if (inCase3 || /Case\s*3\b/i.test(caseVal)) {
+      const rowText = Object.values(row).join(' ');
+      const entityRegex = new RegExp(`\\b${candidateEntity}\\b`, 'i');
+      if (/(?:RetrieveObject|Retrieve)\b/i.test(rowText) && entityRegex.test(rowText)) {
+        case3HasRetrieve = true;
+      }
+      if (/(?:DeleteObjects|DeleteObject)\b/i.test(rowText) && (entityRegex.test(rowText) || /bookingHandle/i.test(rowText) || /runtimeHandle/i.test(rowText))) {
+        case3HasDelete = true;
+      }
+    }
+  }
+
+  // Fallback: check if any DeleteObjects step in Case 3 exists when RetrieveObject was confirmed
+  if (case3HasRetrieve && !case3HasDelete) {
+    for (let idx = 0; idx < rows.length; idx++) {
+      const row = rows[idx];
+      const caseCol = Object.keys(row).find(k => /case|container/i.test(k));
+      const caseVal = caseCol ? (row[caseCol] || '').trim() : '';
+      if (/Case\s*3\b/i.test(caseVal)) {
+        const rowText = Object.values(row).join(' ');
+        if (/(?:DeleteObjects|DeleteObject)\b/i.test(rowText)) {
+          case3HasDelete = true;
+        }
+      }
+    }
+  }
+
+  if (case3HasRetrieve && case3HasDelete) {
+    addCheck(
+      "PAT-92: Frontend Runtime Transactional Teardown Check",
+      true,
+      null,
+      null,
+      `Case 3 Teardown properly retrieves and deletes runtime-created entity '${candidateEntity}' (PAT-92)`
+    );
+  } else {
+    addCheck(
+      "PAT-92: Frontend Runtime Transactional Teardown Check",
+      false,
+      `Frontend workflow submits a form creating un-seeded entity '${candidateEntity}', but Case 3 Teardown does not include RetrieveObject and DeleteObject for this entity prior to deleting seeded master data (PAT-92, ANTI-43). Case 3 must retrieve runtime-created entities (via association to seeded data) and delete them.`,
+      "PAT-92_VIOLATION"
     );
   }
 }
@@ -4459,6 +4769,32 @@ category: "Backend"
       addCheck("Fixture: valid_frontend_ordered_validation.md passes", res.valid, `Expected valid, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
     }
 
+    const invalidPat32 = path.join(fixturesDir, 'invalid_frontend_pat32_no_piping.md');
+    if (fs.existsSync(invalidPat32)) {
+      const res = lintExecutionPlan(invalidPat32);
+      const caughtPat32 = res.errors.some(e => e.code === 'PAT-32_VIOLATION');
+      addCheck("Fixture: invalid_frontend_pat32_no_piping.md caught PAT-32", !res.valid && caughtPat32, "Expected invalid with PAT-32");
+    }
+
+    const validPat32 = path.join(fixturesDir, 'valid_frontend_pat32_piping.md');
+    if (fs.existsSync(validPat32)) {
+      const res = lintExecutionPlan(validPat32);
+      addCheck("Fixture: valid_frontend_pat32_piping.md passes PAT-32", res.valid, `Expected valid, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
+    const invalidPat92 = path.join(fixturesDir, 'invalid_frontend_pat92_missing_teardown.md');
+    if (fs.existsSync(invalidPat92)) {
+      const res = lintExecutionPlan(invalidPat92);
+      const caughtPat92 = res.errors.some(e => e.code === 'PAT-92_VIOLATION');
+      addCheck("Fixture: invalid_frontend_pat92_missing_teardown.md caught PAT-92", !res.valid && caughtPat92, "Expected invalid with PAT-92");
+    }
+
+    const validPat92 = path.join(fixturesDir, 'valid_frontend_pat92_teardown.md');
+    if (fs.existsSync(validPat92)) {
+      const res = lintExecutionPlan(validPat92);
+      addCheck("Fixture: valid_frontend_pat92_teardown.md passes PAT-92", res.valid, `Expected valid, got invalid with ${res.errors.length} errors: ${res.errors.map(e => e.message).join('; ')}`);
+    }
+
     const validIntentPlan = path.join(fixturesDir, 'valid_intent_feature_plan.md');
     if (fs.existsSync(validIntentPlan)) {
       const res = lintExecutionPlan(validIntentPlan);
@@ -4792,6 +5128,33 @@ category: "Backend"
             "TEST_HOOK_GATE_ALLOWS_READONLY_GET: PreToolUse hook allows read-only GetAppModelData tool",
             readOnlyHookRes.decision === 'allow',
             `Expected allow for GetAppModelData, got ${JSON.stringify(readOnlyHookRes)}`
+          );
+
+          // 9. TEST_HOOK_GATE_BLOCKS_MXCLI_WHEN_STUDIOPRO_ONLINE (PAT-109 / ANTI-75)
+          const mxcliCatalogPayload = {
+            hook_event_name: 'PreToolUse',
+            tool_name: 'run_command',
+            tool_input: {
+              CommandLine: '.\\mxcli.bat -p "App.mpr" -c "SELECT Name, QualifiedName FROM CATALOG.ENTITIES"'
+            }
+          };
+          const mxcliBsonPayload = {
+            hook_event_name: 'PreToolUse',
+            tool_name: 'run_command',
+            tool_input: {
+              CommandLine: '.\\mxcli.bat bson dump "Order_NewEdit" --type page -p "App.mpr"'
+            }
+          };
+          const mxcliOnlineDenyRes = evaluateHookPayload(mxcliCatalogPayload, { studioProOnline: true });
+          const mxcliOfflineAllowRes = evaluateHookPayload(mxcliCatalogPayload, { studioProOnline: false });
+          const mxcliBsonOnlineAllowRes = evaluateHookPayload(mxcliBsonPayload, { studioProOnline: true });
+          addCheck(
+            "TEST_HOOK_GATE_BLOCKS_MXCLI_WHEN_STUDIOPRO_ONLINE: PreToolUse hook blocks mxcli discovery when Studio Pro is online, allows when offline, and allows PAT-94 bson dump",
+            mxcliOnlineDenyRes.decision === 'deny' &&
+            mxcliOnlineDenyRes.code === 'REDUNDANT_CLI_FALLBACK_BLOCKED' &&
+            mxcliOfflineAllowRes.decision === 'allow' &&
+            mxcliBsonOnlineAllowRes.decision === 'allow',
+            `Expected online=deny, offline=allow, bson=allow; got online=${mxcliOnlineDenyRes.decision}, offline=${mxcliOfflineAllowRes.decision}, bson=${mxcliBsonOnlineAllowRes.decision}`
           );
         } finally {
           if (fs.existsSync(draftPlanPath)) {

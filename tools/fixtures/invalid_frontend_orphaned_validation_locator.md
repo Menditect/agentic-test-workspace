@@ -19,7 +19,7 @@ MenditectMxFrontendTestKit driving Customer_NewEdit page.
 ## 3. Test Steps & Action Sequence
 
 | # | Case | Step Action & Target | Input Handle | Output Handle | Parameters, Bindings & Initial Values | Embedded Assertions | Exec Settings | Pattern Tag |
-| :-: | :--: | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| :-: | :--: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1** | Case 1 | `CreateObject` (`Sales.Customer`) | - | `custHandle` | `Email = 'test@example.com'` | - | `Always` / `_Continue` | `PAT-17` |
 | **2** | Case 2 | `CallMicroflow` (`MenditectMxFrontendTestKit.Locate_MxWidget_TextBox`) | - | `txtEmailHandle` | `WidgetName = 'txtEmail'` | - | `None` / `Stop` | `PAT-64` |
 | **3** | Case 2 | `CallMicroflow` (`MenditectMxFrontendTestKit.ACT_Fill_TextBox_Input`) | `txtEmailHandle` | - | `TextBoxLocator = txtEmailHandle`, `Value = 'john@example.com'` | - | `None` / `Stop` | `PAT-64` |

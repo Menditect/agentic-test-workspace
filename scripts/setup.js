@@ -745,7 +745,7 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
     ],
     "PreToolUse": [
       {
-        "matcher": "call_mcp_tool|mcp_mta.*|mcp_MTA.*|write_file|write_to_file|edit_file|replace_file_content|multi_replace_file_content",
+        "matcher": "call_mcp_tool|mcp_mta.*|mcp_MTA.*|write_file|write_to_file|edit_file|replace_file_content|multi_replace_file_content|run_command|execute_command|Bash",
         "hooks": [
           { "type": "command", "command": hookCommand }
         ]
