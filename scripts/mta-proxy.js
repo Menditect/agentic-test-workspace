@@ -3,6 +3,20 @@ const http = require('http');
 const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
+
+let mtaLintModulePromise = null;
+async function getMtaLintModule() {
+  if (!mtaLintModulePromise) {
+    const lintPath = path.join(__dirname, '..', 'tools', 'mta-lint.mjs');
+    if (fs.existsSync(lintPath)) {
+      mtaLintModulePromise = import(pathToFileURL(lintPath).href).catch(() => null);
+    } else {
+      mtaLintModulePromise = Promise.resolve(null);
+    }
+  }
+  return mtaLintModulePromise;
+}
 
 const rawArg = (process.argv[2] || 'mta').trim();
 const isUrlArg = rawArg.startsWith('http://') || rawArg.startsWith('https://');
@@ -285,6 +299,38 @@ async function makeRequest(payloadString, requestId, retryCount = 0) {
   // Update cached initialize parameters if received from client
   if (parsedReq && parsedReq.method === 'initialize' && parsedReq.params) {
     cachedInitParams = parsedReq.params;
+  }
+
+  // Wire-level state machine gatekeeper for tools/call (PAT-43, ANTI-46, ANTI-56)
+  if (parsedReq && parsedReq.method === 'tools/call' && parsedReq.params && parsedReq.params.name && process.env.MCP_VERIFY_MODE !== 'true') {
+    const calledTool = String(parsedReq.params.name);
+    const isMutatingOrExec = (mode === 'mta' && !calledTool.startsWith('Get')) || (mode === 'plugin' && calledTool === 'execute-testcase');
+    if (isMutatingOrExec) {
+      const lintMod = await getMtaLintModule();
+      if (lintMod && typeof lintMod.evaluateHookPayload === 'function') {
+        const evalCwd = config.workspace_dir || (process.env.MTA_CONFIG_PATH ? path.dirname(process.env.MTA_CONFIG_PATH) : process.cwd());
+        const decision = lintMod.evaluateHookPayload({
+          hook_event_name: 'PreToolUse',
+          tool_name: 'call_mcp_tool',
+          tool_input: {
+            ServerName: mode === 'plugin' ? 'MTA_plugin' : 'MTA',
+            ToolName: calledTool,
+            Arguments: parsedReq.params.arguments || {}
+          }
+        }, { cwd: evalCwd });
+        if (decision && decision.decision === 'deny') {
+          if (requestId !== null) {
+            const gateErrResponse = JSON.stringify({
+              jsonrpc: '2.0',
+              error: { code: -32603, message: decision.reason },
+              id: requestId
+            });
+            process.stdout.write(gateErrResponse + '\n');
+          }
+          return;
+        }
+      }
+    }
   }
 
   // If receiving a downstream request without an active session (e.g. tools/list during verify or tools/call), initialize first

@@ -29,6 +29,8 @@ lint-config.yaml
 .cline/
 .cursor/tutor
 .cursor/state.json
+menditect-output/.mta-gate-ledger.json
+**/.mta-gate-ledger.json
 
 # Caches & Logs
 logs/

@@ -717,7 +717,7 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
     };
   });
 
-  // 3. Cursor .cursor/mcp.json (merge servers)
+  // 3. Cursor .cursor/mcp.json (merge servers) and .cursor/hooks.json
   mergeJsonFile(path.join(workspaceDir, '.cursor', 'mcp.json'), (existing) => {
     return {
       ...existing,
@@ -728,13 +728,52 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
     };
   });
 
-  // 4. Claude .claude/settings.json (merge mcpServers while preserving permissions and other settings)
+  const hookGateRelPath = isToolsWorkspace
+    ? 'tools/mta-hook-gate.mjs'
+    : (isParentWorkspace
+      ? `${toolsDirName}/tools/mta-hook-gate.mjs`
+      : path.join(toolsRootDir, 'tools', 'mta-hook-gate.mjs').replace(/\\/g, '/'));
+  const hookCommand = `node "${hookGateRelPath}"`;
+  const hookSpec = {
+    "SessionStart": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          { "type": "command", "command": hookCommand }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "call_mcp_tool|mcp_mta.*|mcp_MTA.*|write_file|write_to_file|edit_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          { "type": "command", "command": hookCommand }
+        ]
+      }
+    ]
+  };
+
+  mergeJsonFile(path.join(workspaceDir, '.agent', 'hooks.json'), (existing) => ({
+    ...existing,
+    hooks: { ...(existing.hooks || {}), ...hookSpec }
+  }));
+
+  mergeJsonFile(path.join(workspaceDir, '.cursor', 'hooks.json'), (existing) => ({
+    ...existing,
+    hooks: { ...(existing.hooks || {}), ...hookSpec }
+  }));
+
+  // 4. Claude .claude/settings.json (merge mcpServers and hooks while preserving permissions and other settings)
   mergeJsonFile(path.join(workspaceDir, '.claude', 'settings.json'), (existing) => {
     return {
       ...existing,
       mcpServers: {
         ...(existing.mcpServers || {}),
         ...newMcpServers
+      },
+      hooks: {
+        ...(existing.hooks || {}),
+        ...hookSpec
       }
     };
   });
@@ -958,7 +997,8 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
       '- **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use the MTA Plugin MCP tool (`MTA_plugin.execute-testcase`) for all in-memory exploratory test executions.',
       '- **ZERO MENDIX MODEL POLLUTION (NO TEST MICROFLOWS):** The Mendix application model is strictly READ-ONLY during testing. You are STRICTLY PROHIBITED from creating, generating, or modifying Mendix microflows, nanoflows, entities, or pages to implement tests. Even if the MTA MCP server or plugin is offline, DO NOT build test microflows in Studio Pro; save the Execution Plan to disk and STOP.',
       '- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).',
-      '- **EXPLORATORY EXECUTION STRATEGY:** Default to `auto_execute` (draft Execution Plan and execute immediately in a single turn without pausing). If you prefer explicit sign-off before running, set to `prompt_approval`.',
+      '- **EXPLORATORY EXECUTION STRATEGY (mta_config.json SSOT):** Read `exploratory_execution_mode` from `mta_config.json` before drafting any plan. If `"prompt_approval"`, you MUST set `status: "DRAFT"`, present Checkpoint 1, and HALT for human approval (`AUTO_APPROVED` is strictly prohibited). Only if `"auto_execute"` (and Backend in-memory `Rollback: "Yes"` with no `bug_reproduction`/`data_seeding`/`prompt_spec` override) may you set `status: "AUTO_APPROVED"` and auto-execute.',
+      '- **STRICT TWO-GATE HUMAN APPROVAL INVARIANT (ANTI-56, PAT-106, PAT-118):** Persistent MTA Platform construction (`Create*`, `Edit*`, `Set*`) and all Frontend tests NEVER auto-execute and NEVER self-approve in a single turn. Always write `EP_*.md` as `status: "DRAFT"`, present Checkpoint 1 & Gate 2 placement (and elicit Playwright Browser/Mode/SlowMo via `ask_question` for Frontend), and HALT your turn. Only after the user replies in a subsequent turn may you run `node tools/mta-lint.mjs stage-placement`, seal `status: "APPROVED"`, and run `node tools/mta-lint.mjs pre-build`.',
       '- **MTA LICENSE TIER & CAPABILITIES:**',
       '  * If `MTA` MCP server is not configured and `MtaPluginModule.MTAConnectionUrl` is `wss://services.menditect.com`, the user is operating under the **Free MTA Exploratory License**.',
       '  * **Free Capabilities:** Unlimited local in-memory microflow testing (`execute-testcase`) and local Execution Plan generation (`EP_*.md`).',
@@ -976,7 +1016,8 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
     '- **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use the MTA Plugin MCP tool (`MTA_plugin.execute-testcase`) for all in-memory exploratory test executions.',
     '- **ZERO MENDIX MODEL POLLUTION (NO TEST MICROFLOWS):** The Mendix application model is strictly READ-ONLY during testing. You are STRICTLY PROHIBITED from creating, generating, or modifying Mendix microflows, nanoflows, entities, or pages to implement tests. Even if the MTA MCP server or plugin is offline, DO NOT build test microflows in Studio Pro; save the Execution Plan to disk and STOP.',
     '- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).',
-    '- **EXPLORATORY EXECUTION STRATEGY:** Default to `auto_execute` (draft Execution Plan and execute immediately in a single turn without pausing). If you prefer explicit sign-off before running, set to `prompt_approval`.',
+    '- **EXPLORATORY EXECUTION STRATEGY (mta_config.json SSOT):** Read `exploratory_execution_mode` from `mta_config.json` before drafting any plan. If `"prompt_approval"`, you MUST set `status: "DRAFT"`, present Checkpoint 1, and HALT for human approval (`AUTO_APPROVED` is strictly prohibited). Only if `"auto_execute"` (and Backend in-memory `Rollback: "Yes"` with no `bug_reproduction`/`data_seeding`/`prompt_spec` override) may you set `status: "AUTO_APPROVED"` and auto-execute.',
+    '- **STRICT TWO-GATE HUMAN APPROVAL INVARIANT (ANTI-56, PAT-106, PAT-118):** Persistent MTA Platform construction (`Create*`, `Edit*`, `Set*`) and all Frontend tests NEVER auto-execute and NEVER self-approve in a single turn. Always write `EP_*.md` as `status: "DRAFT"`, present Checkpoint 1 & Gate 2 placement (and elicit Playwright Browser/Mode/SlowMo via `ask_question` for Frontend), and HALT your turn. Only after the user replies in a subsequent turn may you run `node tools/mta-lint.mjs stage-placement`, seal `status: "APPROVED"`, and run `node tools/mta-lint.mjs pre-build`.',
     '- **MTA LICENSE TIER & CAPABILITIES:**',
     '  * If `MTA` MCP server is not configured and `MtaPluginModule.MTAConnectionUrl` is `wss://services.menditect.com`, the user is operating under the **Free MTA Exploratory License**.',
     '  * **Free Capabilities:** Unlimited local in-memory microflow testing (`execute-testcase`) and local Execution Plan generation (`EP_*.md`).',

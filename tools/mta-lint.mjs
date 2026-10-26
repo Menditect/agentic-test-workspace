@@ -76,6 +76,28 @@ async function main() {
         process.exit(result.valid ? 0 : 1);
         break;
       }
+      case 'stage-placement': {
+        const filePath = args[1];
+        if (!filePath || filePath.startsWith('--')) {
+          console.error("Error: Missing execution plan path. Usage: mta-lint stage-placement <path/to/EP_*.md> --config-key <N> --suite-key <N|NEW_SUITE> [--browser <Chromium|Firefox|WebKit> --mode <Headless|Headed> --slow-mo <ms> | --frontend-options-confirmed]");
+          process.exit(1);
+        }
+        const getFlagVal = (flag) => {
+          const idx = args.indexOf(flag);
+          return (idx !== -1 && idx + 1 < args.length && !args[idx + 1].startsWith('--')) ? args[idx + 1] : undefined;
+        };
+        const result = stagePlacementGate(filePath, {
+          configKey: getFlagVal('--config-key'),
+          suiteKey: getFlagVal('--suite-key'),
+          browser: getFlagVal('--browser'),
+          mode: getFlagVal('--mode'),
+          slowMo: getFlagVal('--slow-mo'),
+          frontendOptionsConfirmed: args.includes('--frontend-options-confirmed')
+        });
+        outputResult(result, isJson, "MTA Gate 2 Placement & Frontend Options Stage Receipt");
+        process.exit(result.valid ? 0 : 1);
+        break;
+      }
       case 'pre-build': {
         const filePath = args[1];
         if (!filePath || filePath.startsWith('--')) {
@@ -143,7 +165,7 @@ async function main() {
         break;
       }
       default:
-        console.error(`Unknown command: '${command}'. Available commands: lock, verify-lock, pre-build, pre-exec, plan, audit, artifacts, config, self-test`);
+        console.error(`Unknown command: '${command}'. Available commands: lock, verify-lock, stage-placement, pre-build, pre-exec, plan, audit, artifacts, config, self-test`);
         printHelp();
         process.exit(1);
     }
@@ -165,6 +187,8 @@ Menditect Test Automation Linter (mta-lint v${VERSION})
 Commands:
   lock <file> [--force] [--reseal-wiring] Cryptographically seal an Execution Plan (one-way latch)
   verify-lock <file>                   Verify an Execution Plan has not been modified after locking
+  stage-placement <file> --config-key <N> --suite-key <N|NEW_SUITE> [--browser <B> --mode <M> --slow-mo <ms> | --frontend-options-confirmed]
+                                       Record Gate 2 placement & Playwright options receipt in .mta-gate-ledger.json
   pre-build <file> [--json]            Verify Gate 1 human approval & Gate 2 placement before construction
   pre-exec <file> [--json]             Verify persisted plan & approval status before Option A execution
   plan <file> [--json]                 Validate Execution Plan syntax, schema, and pattern rules
@@ -219,6 +243,10 @@ function outputResult(result, isJson, title) {
   }
 
   console.log(`--------------------------------------------------\n`);
+
+  if (result.stateControllerBanner) {
+    console.log(result.stateControllerBanner);
+  }
 }
 
 // ==========================================
@@ -680,6 +708,340 @@ function injectLockedHash(content, hash) {
 }
 
 // ==========================================
+// Two-Phase State-Latch & Gate Ledger Engine (PAT-43, PAT-118, ANTI-56, ANTI-80)
+// ==========================================
+export function resolveGateLedgerPath(filePath) {
+  const absPath = path.resolve(filePath);
+  const parts = absPath.split(path.sep);
+  const mtaOutIdx = parts.findIndex(p => p.toLowerCase() === 'menditect-output');
+  if (mtaOutIdx !== -1) {
+    const outDir = parts.slice(0, mtaOutIdx + 1).join(path.sep);
+    return path.join(outDir, '.mta-gate-ledger.json');
+  }
+  return path.join(path.dirname(absPath), '.mta-gate-ledger.json');
+}
+
+function computeStageSeal(planId, entry) {
+  const payload = [
+    planId || '',
+    entry.initial_status || '',
+    entry.draft_linted_at || '',
+    entry.draft_content_hash || '',
+    entry.placement_staged_at || '',
+    entry.target_configuration_key ?? '',
+    entry.target_suite_key ?? ''
+  ].join('|');
+  return crypto.createHash('sha256').update(payload, 'utf-8').digest('hex');
+}
+
+function readGateLedger(filePath) {
+  const ledgerPath = resolveGateLedgerPath(filePath);
+  if (!fs.existsSync(ledgerPath)) return {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function writeGateLedger(filePath, ledger) {
+  const ledgerPath = resolveGateLedgerPath(filePath);
+  try {
+    fs.writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2), 'utf-8');
+  } catch (e) {
+    // Ignore write failure on read-only file systems
+  }
+}
+
+function resolveTranscriptUserTurnCount(filePath, explicitTranscriptPath = null) {
+  const candidates = [];
+  if (explicitTranscriptPath) candidates.push(explicitTranscriptPath);
+  if (process.env.MTA_TRANSCRIPT_PATH) candidates.push(process.env.MTA_TRANSCRIPT_PATH);
+
+  // Check if mta_state.json in workspace has conversation_id and resolve brain transcript
+  if (filePath && !filePath.replace(/\\/g, '/').toLowerCase().includes('/tools/fixtures/')) {
+    const absFile = path.resolve(filePath);
+    const stateCandidates = [
+      path.join(path.dirname(absFile), 'mta_state.json'),
+      path.join(path.dirname(path.dirname(absFile)), 'mta_state.json'),
+      path.resolve('mta_state.json')
+    ];
+    for (const sc of stateCandidates) {
+      if (fs.existsSync(sc)) {
+        try {
+          const st = JSON.parse(fs.readFileSync(sc, 'utf-8'));
+          if (st && st.conversation_id) {
+            const homeDir = process.env.USERPROFILE || process.env.HOME || '';
+            if (homeDir) {
+              candidates.push(path.join(homeDir, '.gemini', 'antigravity', 'brain', String(st.conversation_id), '.system_generated', 'logs', 'transcript.jsonl'));
+            }
+          }
+          break;
+        } catch (e) {}
+      }
+    }
+  }
+
+  for (const tp of candidates) {
+    if (tp && fs.existsSync(tp)) {
+      try {
+        const raw = fs.readFileSync(tp, 'utf-8');
+        let userTurns = 0;
+        for (const line of raw.split(/\r?\n/)) {
+          if (line.includes('"USER_INPUT"')) userTurns++;
+        }
+        return userTurns;
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
+export function recordPhase1DraftReceipt(filePath, metadata, content, options = {}) {
+  if (!metadata || !metadata.plan_id) return;
+  const planId = String(metadata.plan_id).trim();
+  const ledger = readGateLedger(filePath);
+  const existing = ledger[planId] || {};
+  const draftHash = computePlanHash(content);
+  const nowIso = new Date().toISOString();
+  const nowEpoch = Date.now();
+  const userTurns = options.userTurnCount !== undefined ? options.userTurnCount : resolveTranscriptUserTurnCount(filePath, options.transcriptPath);
+  const entry = {
+    initial_status: metadata.status || 'DRAFT',
+    draft_linted_at: existing.draft_linted_at || nowIso,
+    draft_linted_epoch_ms: existing.draft_linted_epoch_ms || nowEpoch,
+    draft_user_turn_count: existing.draft_user_turn_count !== undefined ? existing.draft_user_turn_count : userTurns,
+    draft_content_hash: draftHash,
+    placement_staged_at: existing.placement_staged_at || null,
+    placement_staged_epoch_ms: existing.placement_staged_epoch_ms || null,
+    placement_user_turn_count: existing.placement_user_turn_count !== undefined ? existing.placement_user_turn_count : null,
+    target_configuration_key: existing.target_configuration_key ?? null,
+    target_suite_key: existing.target_suite_key ?? null,
+    frontend_options_staged: existing.frontend_options_staged || null
+  };
+  entry.stage_seal_sha256 = computeStageSeal(planId, entry);
+  ledger[planId] = entry;
+  writeGateLedger(filePath, ledger);
+}
+
+export function stagePlacementGate(filePath, options = {}) {
+  if (!fs.existsSync(filePath)) {
+    return {
+      valid: false,
+      target: filePath,
+      passedCount: 0,
+      totalCount: 1,
+      checks: [{ name: "File Existence", pass: false, reason: `File not found: ${filePath}` }],
+      errors: [{ code: "FILE_NOT_FOUND", message: `Execution plan does not exist at ${filePath}` }]
+    };
+  }
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const metadata = extractMetadata(content);
+  const checks = [];
+  const errors = [];
+
+  const addCheck = (name, pass, reason = null, code = null, details = null) => {
+    checks.push({ name, pass, reason, details });
+    if (!pass) {
+      errors.push({ code: code || 'CHECK_FAILED', message: reason });
+    }
+  };
+
+  if (!metadata || !metadata.plan_id) {
+    addCheck("Metadata & Plan ID Present", false, "Missing metadata block or plan_id", "MISSING_PLAN_ID");
+    return {
+      valid: false,
+      target: filePath,
+      passedCount: 0,
+      totalCount: 1,
+      checks,
+      errors
+    };
+  }
+
+  const planId = String(metadata.plan_id).trim();
+  const ledger = readGateLedger(filePath);
+  const entry = ledger[planId];
+
+  const hasPhase1Receipt = !!entry && !!entry.draft_linted_at && ['DRAFT', 'AUTO_APPROVED'].includes(entry.initial_status) && computeStageSeal(planId, entry) === entry.stage_seal_sha256;
+  addCheck(
+    "Phase 1 Draft/Auto-Approved Lint Receipt (PAT-43, ANTI-56)",
+    hasPhase1Receipt,
+    hasPhase1Receipt ? null : `No valid Phase 1 DRAFT/AUTO_APPROVED lint receipt found for '${planId}' in .mta-gate-ledger.json. You must first lint the plan in status: 'DRAFT' (or 'AUTO_APPROVED') before staging Gate 2 placement.`,
+    "SELF_FORGED_APPROVAL_VIOLATION"
+  );
+
+  // Workstream 2: Multi-Turn Separation Check (Prevent same-turn chaining of plan -> stage-placement)
+  if (hasPhase1Receipt && !options.skipTurnGapCheck && entry.initial_status === 'DRAFT') {
+    const currentUserTurns = options.userTurnCount !== undefined ? options.userTurnCount : resolveTranscriptUserTurnCount(filePath, options.transcriptPath);
+    const hasTranscriptGapViolation = currentUserTurns !== null && entry.draft_user_turn_count !== null && entry.draft_user_turn_count !== undefined && currentUserTurns <= entry.draft_user_turn_count;
+    const elapsedMs = Date.now() - (entry.draft_linted_epoch_ms || Date.parse(entry.draft_linted_at) || 0);
+    const hasRapidChainingViolation = options.enforceRapidChainingCheck === true && elapsedMs < 2000;
+
+    if (hasTranscriptGapViolation || hasRapidChainingViolation) {
+      addCheck(
+        "Multi-Turn Gate Separation: Checkpoint 1 User Turn Required (ANTI-80)",
+        false,
+        `Cannot call 'stage-placement' in the same turn as 'plan' (DRAFT). You must present Checkpoint 1 to the user and wait for their reply in a subsequent turn before staging Gate 2 placement (ANTI-80).`,
+        "SAME_TURN_GATE_CHAINING_BLOCKED"
+      );
+    } else {
+      addCheck("Multi-Turn Gate Separation: Checkpoint 1 User Turn Required (ANTI-80)", true);
+    }
+  }
+
+  const rawConfigKey = options.configKey;
+  const isNonEmptyConfig = rawConfigKey !== null && rawConfigKey !== undefined && typeof rawConfigKey !== 'boolean' && String(rawConfigKey).trim() !== '';
+  const configKey = isNonEmptyConfig ? Number(rawConfigKey) : NaN;
+  const validConfig = !isNaN(configKey) && configKey > 0;
+  addCheck(
+    "Target Configuration Key (--config-key > 0)",
+    validConfig,
+    validConfig ? null : `Invalid --config-key '${rawConfigKey}'. Must be an integer > 0 discovered via GetApplicationDetails.`,
+    "INVALID_CONFIGURATION_KEY"
+  );
+
+  const rawSuiteKey = options.suiteKey;
+  const isNonEmptySuite = rawSuiteKey !== null && rawSuiteKey !== undefined && typeof rawSuiteKey !== 'boolean' && String(rawSuiteKey).trim() !== '';
+  const validSuite = rawSuiteKey === 'NEW_SUITE' || (isNonEmptySuite && !isNaN(Number(rawSuiteKey)) && Number(rawSuiteKey) > 0);
+  addCheck(
+    "Target Suite Key (--suite-key > 0 or NEW_SUITE)",
+    validSuite,
+    validSuite ? null : `Invalid --suite-key '${rawSuiteKey}'. Must be an integer > 0 or 'NEW_SUITE'.`,
+    "INVALID_SUITE_KEY"
+  );
+
+  if (metadata.category === 'Frontend') {
+    const hasFlags = !!options.frontendOptionsConfirmed || (
+      ['Chromium', 'Firefox', 'WebKit'].includes(options.browser) &&
+      ['Headless', 'Headed'].includes(options.mode) &&
+      options.slowMo !== undefined && !isNaN(Number(options.slowMo)) && Number(options.slowMo) >= 0
+    );
+    addCheck(
+      "Frontend Playwright Options Staged (PAT-118)",
+      hasFlags,
+      hasFlags ? null : "Frontend plan requires --frontend-options-confirmed or (--browser <Chromium|Firefox|WebKit> --mode <Headless|Headed> --slow-mo <ms>) when staging Gate 2 placement.",
+      "MISSING_FRONTEND_OPTIONS_ELICITATION"
+    );
+  }
+
+  const valid = checks.every(c => c.pass);
+  let stateControllerBanner = null;
+  let stateControllerDirective = null;
+  if (valid && entry) {
+    const draftMs = Date.parse(entry.draft_linted_at) || Date.now();
+    const nowMs = Math.max(Date.now(), draftMs + 1);
+    const currentUserTurns = options.userTurnCount !== undefined ? options.userTurnCount : resolveTranscriptUserTurnCount(filePath, options.transcriptPath);
+    entry.placement_staged_at = new Date(nowMs).toISOString();
+    entry.placement_staged_epoch_ms = nowMs;
+    entry.placement_user_turn_count = currentUserTurns;
+    entry.target_configuration_key = configKey;
+    entry.target_suite_key = rawSuiteKey === 'NEW_SUITE' ? 'NEW_SUITE' : Number(rawSuiteKey);
+    if (metadata.category === 'Frontend' || options.frontendOptionsConfirmed || options.browser) {
+      entry.frontend_options_staged = {
+        browser: options.browser || metadata.playwright_browser || null,
+        mode: options.mode || metadata.playwright_execution_mode || null,
+        slow_mo_ms: options.slowMo !== undefined ? Number(options.slowMo) : (metadata.playwright_slow_mo_ms ?? null),
+        confirmed: true
+      };
+    }
+    entry.stage_seal_sha256 = computeStageSeal(planId, entry);
+    ledger[planId] = entry;
+    writeGateLedger(filePath, ledger);
+
+    stateControllerDirective = "STATE: PLAN_STEP_3 -> AWAITING GATE 2 APPROVAL. DO NOT edit EP_*.md to status: APPROVED or call pre-build/Create* in this turn. Render Checkpoint 2 Placement Summary in chat and END YOUR TURN NOW.";
+    stateControllerBanner = [
+      "================================================================================",
+      "🛑 STATE CONTROLLER DIRECTIVE [STATE: PLAN_STEP_3 -> AWAITING GATE 2 APPROVAL]",
+      "================================================================================",
+      "1. DO NOT edit EP_*.md to status: \"APPROVED\" in this turn.",
+      "2. DO NOT call pre-build or any Create*/Edit* MTA tool in this turn.",
+      "3. Render the Checkpoint 2 Placement Summary box in chat and END YOUR TURN NOW.",
+      "================================================================================"
+    ].join("\n");
+  }
+
+  return {
+    valid,
+    target: filePath,
+    passedCount: checks.filter(c => c.pass).length,
+    totalCount: checks.length,
+    checks,
+    errors,
+    stateControllerDirective,
+    stateControllerBanner
+  };
+}
+
+function verifyFrontendExecutionOptions(metadata, addCheck) {
+  if (!metadata || metadata.category !== 'Frontend' || metadata.status !== 'APPROVED') return;
+  const validBrowsers = ['Chromium', 'Firefox', 'WebKit'];
+  const validModes = ['Headless', 'Headed'];
+  const browserOk = validBrowsers.includes(metadata.playwright_browser);
+  const modeOk = validModes.includes(metadata.playwright_execution_mode);
+  const rawSlowMo = metadata.playwright_slow_mo_ms;
+  const slowMoOk = rawSlowMo !== null && rawSlowMo !== undefined && typeof rawSlowMo !== 'boolean' && String(rawSlowMo).trim() !== '' && Number.isInteger(Number(rawSlowMo)) && Number(rawSlowMo) >= 0;
+  const confirmedOk = metadata.frontend_options_confirmed_by_user === true || String(metadata.frontend_options_confirmed_by_user).trim().toLowerCase() === 'true';
+
+  const missingOrInvalid = [];
+  if (!browserOk) missingOrInvalid.push(`playwright_browser must be one of [${validBrowsers.join(', ')}] (got '${metadata.playwright_browser}')`);
+  if (!modeOk) missingOrInvalid.push(`playwright_execution_mode must be one of [${validModes.join(', ')}] (got '${metadata.playwright_execution_mode}')`);
+  if (!slowMoOk) missingOrInvalid.push(`playwright_slow_mo_ms must be an integer >= 0 (got '${rawSlowMo}')`);
+  if (!confirmedOk) missingOrInvalid.push(`frontend_options_confirmed_by_user must be true (got '${metadata.frontend_options_confirmed_by_user}')`);
+
+  addCheck(
+    "Frontend Execution Options Elicitation (PAT-118)",
+    missingOrInvalid.length === 0,
+    missingOrInvalid.length === 0 ? null : `Frontend APPROVED plan is missing required user-confirmed Playwright execution options: ${missingOrInvalid.join('; ')}. Elicit options from the user via ask_question at Gate 2.`,
+    "MISSING_FRONTEND_OPTIONS_ELICITATION"
+  );
+}
+
+function verifyGateLedgerAndProvenance(filePath, metadata, addCheck, requireGate2Placement = false) {
+  if (!metadata || metadata.status !== 'APPROVED') return;
+
+  // Check C: Provenance Sanity (Reject generic self-forged strings)
+  const selfForgedRegex = /^(user\s*request|auto|agent|system|self|implied|promoted)$/i;
+  const approvedByStr = metadata.approved_by !== null && metadata.approved_by !== undefined ? String(metadata.approved_by).trim() : '';
+  const approvalTurnStr = metadata.approval_turn_id !== null && metadata.approval_turn_id !== undefined ? String(metadata.approval_turn_id).trim() : '';
+  const isSelfForgedProvenance = selfForgedRegex.test(approvedByStr) || (approvalTurnStr.length > 0 && selfForgedRegex.test(approvalTurnStr));
+  addCheck(
+    "Human Approval Provenance Sanity (ANTI-56, ANTI-80)",
+    !isSelfForgedProvenance,
+    !isSelfForgedProvenance ? null : `Self-forged approval provenance detected (approved_by: '${approvedByStr}', approval_turn_id: '${approvalTurnStr}'). An agent must never self-approve an execution plan from the user's initial prompt (ANTI-56, ANTI-80).`,
+    "SELF_FORGED_APPROVAL_VIOLATION"
+  );
+
+  // Check A: Anti-Self-Approval Phase 1 Receipt
+  const planId = metadata.plan_id ? String(metadata.plan_id).trim() : '';
+  const ledger = readGateLedger(filePath);
+  const entry = planId ? ledger[planId] : null;
+  const hasValidPhase1 = !!entry && !!entry.draft_linted_at && ['DRAFT', 'AUTO_APPROVED'].includes(entry.initial_status) && computeStageSeal(planId, entry) === entry.stage_seal_sha256;
+  addCheck(
+    "Two-Phase State-Latch: Phase 1 Draft Receipt (PAT-43, ANTI-56, ANTI-80)",
+    hasValidPhase1,
+    hasValidPhase1 ? null : `Plan '${planId}' is marked status: 'APPROVED' without a prior Phase 1 DRAFT/AUTO_APPROVED lint receipt in .mta-gate-ledger.json. Every plan must first be linted in status: 'DRAFT' (or 'AUTO_APPROVED') and presented to the user before sealing as 'APPROVED' in a subsequent turn.`,
+    "SELF_FORGED_APPROVAL_VIOLATION"
+  );
+
+  // Check B: Gate 2 Placement Receipt
+  if (requireGate2Placement) {
+    const hasPlacementStaged = !!entry && !!entry.placement_staged_at && Date.parse(entry.placement_staged_at) >= Date.parse(entry.draft_linted_at);
+    const configMatches = !!entry && String(entry.target_configuration_key) === String(metadata.target_configuration_key);
+    const suiteMatches = !!entry && String(entry.target_suite_key) === String(metadata.target_suite_key);
+    const validPhase2 = hasValidPhase1 && hasPlacementStaged && configMatches && suiteMatches;
+    addCheck(
+      "Two-Phase State-Latch: Gate 2 Placement Receipt (PAT-118, ANTI-56)",
+      validPhase2,
+      validPhase2 ? null : `Plan '${planId}' lacks a matching Gate 2 stage-placement receipt in .mta-gate-ledger.json (staged config='${entry?.target_configuration_key ?? 'NONE'}', suite='${entry?.target_suite_key ?? 'NONE'}' vs YAML config='${metadata.target_configuration_key}', suite='${metadata.target_suite_key}'). Run 'node tools/mta-lint.mjs stage-placement' after Gate 2 user confirmation.`,
+      "GATE_2_PLACEMENT_BYPASSED"
+    );
+  }
+}
+
+// ==========================================
 // Pre-Build Verification Engine (mta-lint pre-build)
 // ==========================================
 export function verifyPreBuildGate(filePath) {
@@ -763,7 +1125,13 @@ export function verifyPreBuildGate(filePath) {
     "INVALID_SUITE_KEY"
   );
 
-  // 5. Post-Green TDBF Lock Integrity Gate (PAT-124, ANTI-78)
+  // 5. Two-Phase State-Latch & Frontend Options Verification (PAT-118, ANTI-56, ANTI-80)
+  if (isApproved) {
+    verifyGateLedgerAndProvenance(filePath, metadata, addCheck, true);
+    verifyFrontendExecutionOptions(metadata, addCheck);
+  }
+
+  // 6. Post-Green TDBF Lock Integrity Gate (PAT-124, ANTI-78)
   if (metadata.test_intent === 'bug_reproduction' && metadata.verified_at) {
     const isLockedAttr = metadata.protection_level === 'locked' && !!metadata.locked_sha256;
     const lockRes = isLockedAttr ? verifyLockedExecutionPlan(filePath) : { valid: false, errors: [{ message: "Post-green bug_reproduction plan must have protection_level: 'locked' and valid locked_sha256" }] };
@@ -776,17 +1144,33 @@ export function verifyPreBuildGate(filePath) {
   }
 
   const valid = checks.every(c => c.pass);
+  let stateControllerDirective = null;
+  let stateControllerBanner = null;
+  if (valid) {
+    stateControllerDirective = "STATE: STATE_CONSTRUCTION -> SKELETON_PROVISIONING (Active Skill: mta-build). Gate 1 & Gate 2 verified. Proceed with chronological container & step construction.";
+    stateControllerBanner = [
+      "================================================================================",
+      "✅ STATE CONTROLLER DIRECTIVE [STATE: STATE_CONSTRUCTION -> SKELETON_PROVISIONING]",
+      "================================================================================",
+      "Gate 1 & Gate 2 verified. Transition header to:",
+      "[State: STATE_CONSTRUCTION | Temp State: SKELETON_PROVISIONING | Active Skill: mta-build]",
+      "Proceed with chronological container & step construction per Section 3 & Section 4.",
+      "================================================================================"
+    ].join("\n");
+  }
   return {
     valid,
     target: filePath,
     passedCount: checks.filter(c => c.pass).length,
     totalCount: checks.length,
     checks,
-    errors
+    errors,
+    stateControllerDirective,
+    stateControllerBanner
   };
 }
 
-function evaluateAutoApprovedGuard(metadata, content = '') {
+function evaluateAutoApprovedGuard(metadata, content = '', filePath = null) {
   const reasons = [];
   const rollbackStr = metadata.rollback !== undefined && metadata.rollback !== null ? String(metadata.rollback).trim().toLowerCase() : null;
   if (rollbackStr !== null && rollbackStr !== 'yes') {
@@ -807,6 +1191,36 @@ function evaluateAutoApprovedGuard(metadata, content = '') {
   } else if ((intent === 'exploratory_feature' || intent === 'tdd') && metadata.spec_source && metadata.spec_source.type === 'prompt_spec') {
     reasons.push(`test_intent is '${intent}' with spec_source.type='prompt_spec' (Conservative Gate requires human confirmation of inferred requirements at Checkpoint 1)`);
   }
+
+  // Workstream A.1: Enforce mta_config.json exploratory_execution_mode === 'prompt_approval'
+  const candidateConfigPaths = [];
+  if (filePath) {
+    const absFile = path.resolve(filePath);
+    candidateConfigPaths.push(
+      path.join(path.dirname(absFile), 'mta_config.json'),
+      path.join(path.dirname(path.dirname(absFile)), 'mta_config.json')
+    );
+    const normFile = absFile.replace(/\\/g, '/').toLowerCase();
+    if (!normFile.includes('/tools/fixtures/')) {
+      candidateConfigPaths.push(path.resolve('mta_config.json'));
+    }
+  } else {
+    candidateConfigPaths.push(path.resolve('mta_config.json'));
+  }
+  for (const cfgPath of candidateConfigPaths) {
+    if (fs.existsSync(cfgPath)) {
+      try {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+        if (cfg && String(cfg.exploratory_execution_mode || '').trim() === 'prompt_approval') {
+          reasons.push("mta_config.json specifies exploratory_execution_mode === 'prompt_approval' (AUTO_APPROVED is prohibited; must start as DRAFT and await human approval)");
+        }
+        break;
+      } catch (e) {
+        // Ignore malformed config during plan lint
+      }
+    }
+  }
+
   return {
     allowed: reasons.length === 0,
     reasons
@@ -879,7 +1293,7 @@ export function verifyPreExecGate(filePath) {
       "MISSING_APPROVAL_PROVENANCE"
     );
   } else if (metadata.status === 'AUTO_APPROVED') {
-    const autoGuard = evaluateAutoApprovedGuard(metadata, content);
+    const autoGuard = evaluateAutoApprovedGuard(metadata, content, filePath);
     addCheck(
       "AUTO_APPROVED Execution Guard (PAT-43, ANTI-46, ANTI-56)",
       autoGuard.allowed,
@@ -899,14 +1313,262 @@ export function verifyPreExecGate(filePath) {
   );
 
   const valid = checks.every(c => c.pass);
+  let stateControllerDirective = null;
+  let stateControllerBanner = null;
+  if (valid) {
+    stateControllerDirective = "STATE: STATE_RUN_ANALYZE -> STATE_EXPLORATORY_EXECUTION (Active Skill: mta-run-analyze). Pre-exec verified. Authorized to call MTA_plugin.execute-testcase.";
+    stateControllerBanner = [
+      "================================================================================",
+      "✅ STATE CONTROLLER DIRECTIVE [STATE: STATE_RUN_ANALYZE -> EXPLORATORY_EXECUTION]",
+      "================================================================================",
+      "Pre-exec verified. Transition header to:",
+      "[State: STATE_RUN_ANALYZE | Temp State: STATE_EXPLORATORY_EXECUTION | Active Skill: mta-run-analyze]",
+      "You are now authorized to call MTA_plugin.execute-testcase.",
+      "================================================================================"
+    ].join("\n");
+  }
   return {
     valid,
     target: filePath,
     passedCount: checks.filter(c => c.pass).length,
     totalCount: checks.length,
     checks,
-    errors
+    errors,
+    stateControllerDirective,
+    stateControllerBanner
   };
+}
+
+// ==========================================
+// IDE PreToolUse & SessionStart Hook Gatekeeper Engine (Workstream 1A)
+// ==========================================
+export function findActiveExecutionPlan(workspaceDir = process.cwd()) {
+  const absRoot = path.resolve(workspaceDir);
+  const statePath = path.join(absRoot, 'mta_state.json');
+  if (fs.existsSync(statePath)) {
+    try {
+      const st = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      if (st && st.execution_plan_file) {
+        const candidate = path.isAbsolute(st.execution_plan_file)
+          ? st.execution_plan_file
+          : path.join(absRoot, st.execution_plan_file);
+        if (fs.existsSync(candidate)) return candidate;
+      }
+    } catch (e) {}
+  }
+
+  let plansDir = path.join(absRoot, 'menditect-output', 'execution-plans');
+  const cfgPath = path.join(absRoot, 'mta_config.json');
+  if (fs.existsSync(cfgPath)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      if (cfg && cfg.execution_plans_dir) {
+        plansDir = path.isAbsolute(cfg.execution_plans_dir)
+          ? cfg.execution_plans_dir
+          : path.join(absRoot, cfg.execution_plans_dir);
+      }
+    } catch (e) {}
+  }
+
+  if (fs.existsSync(plansDir)) {
+    try {
+      const files = fs.readdirSync(plansDir)
+        .filter(f => /^EP_.*\.md$/i.test(f))
+        .map(f => {
+          const full = path.join(plansDir, f);
+          return { full, mtime: fs.statSync(full).mtimeMs };
+        })
+        .sort((a, b) => b.mtime - a.mtime);
+      if (files.length > 0) return files[0].full;
+    } catch (e) {}
+  }
+  return null;
+}
+
+export function evaluateHookPayload(payload = {}, options = {}) {
+  if (!payload || typeof payload !== 'object') {
+    return { decision: 'allow' };
+  }
+
+  const workspaceDir = options.workspaceDir ||
+    (Array.isArray(payload.workspace_roots) && payload.workspace_roots[0]) ||
+    (Array.isArray(payload.workspacePaths) && payload.workspacePaths[0]) ||
+    payload.cwd ||
+    process.cwd();
+
+  const conversationId = payload.conversation_id || payload.conversationId || payload.session_id || null;
+  const transcriptPath = options.transcriptPath || payload.transcript_path || payload.transcriptPath || null;
+
+  const rawToolName = String(payload.tool_name || payload.toolName || payload.toolCall?.name || '').trim();
+  const rawToolInput = payload.tool_input || payload.toolInput || payload.toolCall?.arguments || payload.toolCall?.input || {};
+  const eventName = String(payload.hook_event_name || payload.event || payload.hookEventName || (rawToolName ? 'PreToolUse' : 'SessionStart')).trim();
+
+  // Handler 1: SessionStart Auto-Isolation
+  if (eventName === 'SessionStart' || (!rawToolName && conversationId)) {
+    if (conversationId) {
+      const statePath = path.join(path.resolve(workspaceDir), 'mta_state.json');
+      if (fs.existsSync(statePath)) {
+        try {
+          const st = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+          if (st && st.conversation_id !== conversationId) {
+            st.conversation_id = conversationId;
+            st.test_configuration = null;
+            st.test_suite = null;
+            st.test_cases = [];
+            fs.writeFileSync(statePath, JSON.stringify(st, null, 2), 'utf-8');
+          }
+        } catch (e) {}
+      }
+    }
+    return { decision: 'allow' };
+  }
+
+  // Handler 2: PreToolUse on File Write/Edit tools targeting EP_*.md
+  const isFileWriteTool = /^(write_file|write_to_file|edit_file|replace_file_content|multi_replace_file_content|Write|Edit|MultiEdit)$/i.test(rawToolName);
+  if (isFileWriteTool) {
+    const targetPath = String(rawToolInput.Path || rawToolInput.file_path || rawToolInput.TargetFile || rawToolInput.path || '').trim();
+    const baseName = path.basename(targetPath);
+    if (/^EP_.*\.md$/i.test(baseName)) {
+      const absTarget = path.isAbsolute(targetPath) ? targetPath : path.join(path.resolve(workspaceDir), targetPath);
+      const existingContent = fs.existsSync(absTarget) ? fs.readFileSync(absTarget, 'utf-8') : null;
+      const existingMeta = existingContent ? extractMetadata(existingContent) : null;
+
+      let proposedContent = '';
+      if (rawToolInput.Content !== undefined || rawToolInput.content !== undefined) {
+        proposedContent = String(rawToolInput.Content ?? rawToolInput.content ?? '');
+      } else if (existingContent !== null && (rawToolInput.Target !== undefined || rawToolInput.old_string !== undefined)) {
+        const targetStr = String(rawToolInput.Target ?? rawToolInput.old_string ?? '');
+        const replStr = String(rawToolInput.Replacement ?? rawToolInput.new_string ?? '');
+        proposedContent = targetStr ? existingContent.split(targetStr).join(replStr) : existingContent;
+      }
+
+      if (proposedContent) {
+        const proposedMeta = extractMetadata(proposedContent);
+
+        // Guard A1: Locked Oracle Tamper Guard (PAT-124 / ANTI-78)
+        if (existingContent && existingMeta && existingMeta.protection_level === 'locked' && existingMeta.locked_sha256) {
+          const oldHash = computePlanHash(existingContent);
+          const newHash = computePlanHash(proposedContent);
+          const isSupersededDraft = proposedMeta && proposedMeta.status === 'DRAFT' && Number(proposedMeta.revision) > Number(existingMeta.revision || 1);
+          if (oldHash === existingMeta.locked_sha256 && newHash !== oldHash && !isSupersededDraft) {
+            return {
+              decision: 'deny',
+              code: 'LOCKED_TEST_TAMPERED',
+              reason: 'STATE VIOLATION (PAT-124 / ANTI-78): Cannot modify Section 3, Section 4, or IMMUTABLE_ASSERTION_ANCHOR of a cryptographically locked Execution Plan during CODE_REPAIR_INTERMISSION.'
+            };
+          }
+        }
+
+        // Guard A2: Single-Turn Self-Approval Guard (ANTI-56 / ANTI-80)
+        if (proposedMeta && proposedMeta.status === 'APPROVED' && (!existingMeta || existingMeta.status !== 'APPROVED')) {
+          const planId = proposedMeta.plan_id ? String(proposedMeta.plan_id).trim() : '';
+          const ledger = readGateLedger(absTarget);
+          const entry = planId ? ledger[planId] : null;
+          if (!entry || !entry.draft_linted_at || computeStageSeal(planId, entry) !== entry.stage_seal_sha256) {
+            return {
+              decision: 'deny',
+              code: 'SELF_FORGED_APPROVAL_VIOLATION',
+              reason: `STATE VIOLATION (ANTI-56 / ANTI-80): Cannot set status: "APPROVED" on '${baseName}' without first writing and linting the plan in status: "DRAFT" via 'node tools/mta-lint.mjs plan' and awaiting user approval.`
+            };
+          }
+
+          const requiresGate2 = proposedMeta.category === 'Frontend' ||
+            (proposedMeta.execution_target && String(proposedMeta.execution_target).trim() !== 'MTA_plugin') ||
+            String(proposedMeta.rollback || '').toLowerCase() === 'no' ||
+            (proposedMeta.target_configuration_key !== null && proposedMeta.target_configuration_key !== undefined);
+
+          if (requiresGate2 && !entry.placement_staged_at) {
+            return {
+              decision: 'deny',
+              code: 'GATE_2_PLACEMENT_BYPASSED',
+              reason: `STATE VIOLATION (PAT-118 / ANTI-56): Cannot set status: "APPROVED" on '${baseName}' before staging Gate 2 placement via 'node tools/mta-lint.mjs stage-placement' and presenting Checkpoint 2 to the user.`
+            };
+          }
+
+          const currentUserTurns = options.userTurnCount !== undefined ? options.userTurnCount : resolveTranscriptUserTurnCount(absTarget, transcriptPath);
+          const refTurnCount = requiresGate2 ? entry.placement_user_turn_count : entry.draft_user_turn_count;
+          const refEpochMs = requiresGate2 ? (entry.placement_staged_epoch_ms || Date.parse(entry.placement_staged_at) || 0) : (entry.draft_linted_epoch_ms || Date.parse(entry.draft_linted_at) || 0);
+          const hasTranscriptSameTurn = currentUserTurns !== null && refTurnCount !== null && refTurnCount !== undefined && currentUserTurns <= refTurnCount;
+          const hasRapidSameTurn = options.enforceRapidChainingCheck !== false && (Date.now() - refEpochMs < 1500);
+
+          if (hasTranscriptSameTurn || hasRapidSameTurn) {
+            return {
+              decision: 'deny',
+              code: 'SAME_TURN_APPROVAL_BLOCKED',
+              reason: `STATE VIOLATION (ANTI-80): You cannot set status: "APPROVED" on '${baseName}' in the same turn as staging! Present the Checkpoint summary in chat and END YOUR TURN so the user can approve it.`
+            };
+          }
+        }
+      }
+    }
+    return { decision: 'allow' };
+  }
+
+  // Handler 3: PreToolUse on MCP Tools (call_mcp_tool or eager mcp_mta* / mcp_mta_plugin*)
+  let mcpServer = '';
+  let mcpTool = '';
+  if (rawToolName === 'call_mcp_tool') {
+    mcpServer = String(rawToolInput.ServerName || rawToolInput.server_name || '').trim();
+    mcpTool = String(rawToolInput.ToolName || rawToolInput.tool_name || '').trim();
+  } else if (/^mcp_(mta_plugin|mta)_(.+)$/i.test(rawToolName)) {
+    const m = rawToolName.match(/^mcp_(mta_plugin|mta)_(.+)$/i);
+    mcpServer = m[1].toLowerCase() === 'mta_plugin' ? 'MTA_plugin' : 'MTA';
+    mcpTool = m[2];
+  }
+
+  if (!mcpTool) {
+    return { decision: 'allow' };
+  }
+
+  // Read-only Get* tools are always allowed
+  if (/^Get[A-Z]/i.test(mcpTool)) {
+    return { decision: 'allow' };
+  }
+
+  // MTA_plugin.execute-testcase -> Enforce pre-exec gate
+  if (mcpServer.toLowerCase() === 'mta_plugin' || mcpTool === 'execute-testcase') {
+    const activePlan = options.planPath || findActiveExecutionPlan(workspaceDir);
+    if (!activePlan || !fs.existsSync(activePlan)) {
+      return {
+        decision: 'deny',
+        code: 'MISSING_EXECUTION_PLAN',
+        reason: 'STATE VIOLATION (ANTI-46): Calling MTA_plugin.execute-testcase without a persisted EP_*.md file on disk is strictly prohibited. Draft and lint EP_*.md first.'
+      };
+    }
+    const preExecRes = verifyPreExecGate(activePlan);
+    if (!preExecRes.valid) {
+      return {
+        decision: 'deny',
+        code: 'PRE_EXEC_GATE_FAILED',
+        reason: `STATE VIOLATION (PAT-43 / ANTI-46): MTA_plugin.execute-testcase blocked because pre-exec failed on '${path.basename(activePlan)}': ${preExecRes.errors.map(e => e.message).join('; ')}`
+      };
+    }
+    return { decision: 'allow' };
+  }
+
+  // Mutating MTA Platform tools (Create*, Edit*, Set*, Move*, Generate*, Add*, ExecuteTest) -> Enforce pre-build gate
+  const isMutatingMtaTool = /^(Create|Edit|Set|Move|Generate|Add|Delete|ExecuteTest)/i.test(mcpTool);
+  if (mcpServer.toLowerCase() === 'mta' && isMutatingMtaTool) {
+    const activePlan = options.planPath || findActiveExecutionPlan(workspaceDir);
+    if (!activePlan || !fs.existsSync(activePlan)) {
+      return {
+        decision: 'deny',
+        code: 'MISSING_EXECUTION_PLAN',
+        reason: `STATE VIOLATION (PAT-43 / ANTI-56): Calling mutating MTA tool '${mcpTool}' without an approved EP_*.md execution plan is strictly prohibited.`
+      };
+    }
+    const preBuildRes = verifyPreBuildGate(activePlan);
+    if (!preBuildRes.valid) {
+      return {
+        decision: 'deny',
+        code: 'PRE_BUILD_GATE_FAILED',
+        reason: `STATE VIOLATION (PAT-43 / ANTI-56): Mutating MTA tool '${mcpTool}' blocked because pre-build verification failed on '${path.basename(activePlan)}': ${preBuildRes.errors.map(e => e.message).join('; ')}`
+      };
+    }
+    return { decision: 'allow' };
+  }
+
+  return { decision: 'allow' };
 }
 
 // ==========================================
@@ -946,6 +1608,21 @@ export function lintExecutionPlan(filePath) {
     addCheck("Plan ID Specified", !!metadata.plan_id, "Missing 'plan_id' in metadata", "MISSING_PLAN_ID");
     addCheck("Category Specified", ['Backend', 'Frontend'].includes(metadata.category), `Category must be 'Backend' or 'Frontend', found: '${metadata.category}'`, "INVALID_CATEGORY");
 
+    // Workstream A.2: Prohibit pre-baking placement keys in DRAFT or AUTO_APPROVED plans
+    const isDraftOrAuto = !metadata.status || metadata.status === 'DRAFT' || metadata.status === 'AUTO_APPROVED';
+    if (isDraftOrAuto) {
+      const hasPrebakedConfig = metadata.target_configuration_key !== null && metadata.target_configuration_key !== undefined && String(metadata.target_configuration_key).trim() !== '';
+      const hasPrebakedSuite = metadata.target_suite_key !== null && metadata.target_suite_key !== undefined && String(metadata.target_suite_key).trim() !== '';
+      if (hasPrebakedConfig || hasPrebakedSuite) {
+        addCheck(
+          "Stage-Gated Placement Isolation (PAT-118, ANTI-56)",
+          false,
+          `Plan in status '${metadata.status || 'DRAFT'}' cannot pre-bake target_configuration_key ('${metadata.target_configuration_key}') or target_suite_key ('${metadata.target_suite_key}'). Placement keys must remain null until Gate 2 user confirmation.`,
+          "PREMATURE_PLACEMENT_KEY_IN_DRAFT"
+        );
+      }
+    }
+
     // Approval Status & Provenance (PLAN-STATUS-DRAFT-ON-CREATION)
     if (metadata.status === 'APPROVED' || metadata.status === 'BUILT_AND_VERIFIED') {
       const hasApprovedBy = !!metadata.approved_by && String(metadata.approved_by).trim().length > 0;
@@ -956,8 +1633,44 @@ export function lintExecutionPlan(filePath) {
         (hasApprovedBy && hasApprovedAt) ? null : `Plan marked as ${metadata.status} without valid approval provenance (approved_by and approved_at must be non-empty)`,
         "PLAN-STATUS-DRAFT-ON-CREATION"
       );
+
+      if (metadata.status === 'APPROVED') {
+        const requiresGate2Placement = metadata.category === 'Frontend' ||
+          (metadata.execution_target !== undefined && metadata.execution_target !== null && String(metadata.execution_target).trim() !== '' && String(metadata.execution_target).trim() !== 'MTA_plugin') ||
+          String(metadata.rollback || '').trim().toLowerCase() === 'no' ||
+          (metadata.target_configuration_key !== null && metadata.target_configuration_key !== undefined) ||
+          (metadata.target_suite_key !== null && metadata.target_suite_key !== undefined);
+
+        if (requiresGate2Placement) {
+          const rawConfigKey = metadata.target_configuration_key;
+          const isNonEmptyConfigVal = rawConfigKey !== null && rawConfigKey !== undefined && typeof rawConfigKey !== 'boolean' && String(rawConfigKey).trim() !== '';
+          const configKey = isNonEmptyConfigVal ? Number(rawConfigKey) : NaN;
+          const validConfig = !isNaN(configKey) && configKey > 0;
+          addCheck(
+            "Target Configuration Placement (Gate 2)",
+            validConfig,
+            validConfig ? null : `Invalid or missing target_configuration_key: '${rawConfigKey}' on APPROVED plan. Gate 2 placement discovery required.`,
+            "INVALID_CONFIG_KEY"
+          );
+
+          const suiteKey = metadata.target_suite_key;
+          const isNonEmptySuiteVal = suiteKey !== null && suiteKey !== undefined && typeof suiteKey !== 'boolean' && String(suiteKey).trim() !== '';
+          const rawSuiteName = metadata.target_suite !== null && metadata.target_suite !== undefined ? String(metadata.target_suite).trim() : '';
+          const hasValidNewSuiteName = rawSuiteName.length > 0 && !/^<.*>$|^null$|^tbd$/i.test(rawSuiteName);
+          const validSuite = (suiteKey === "NEW_SUITE" && hasValidNewSuiteName) || (isNonEmptySuiteVal && !isNaN(Number(suiteKey)) && Number(suiteKey) > 0);
+          addCheck(
+            "Target Test Suite Placement (Gate 2)",
+            validSuite,
+            validSuite ? null : `Invalid or missing target_suite_key: '${metadata.target_suite_key}' on APPROVED plan (must be integer > 0, or 'NEW_SUITE' with non-empty target_suite). Gate 2 placement discovery required.`,
+            "INVALID_SUITE_KEY"
+          );
+        }
+
+        verifyGateLedgerAndProvenance(filePath, metadata, addCheck, requiresGate2Placement);
+        verifyFrontendExecutionOptions(metadata, addCheck);
+      }
     } else if (metadata.status === 'AUTO_APPROVED') {
-      const autoGuard = evaluateAutoApprovedGuard(metadata, content);
+      const autoGuard = evaluateAutoApprovedGuard(metadata, content, filePath);
       if (!autoGuard.allowed) {
         addCheck(
           "AUTO_APPROVED Scope Guard (PAT-43, ANTI-46, ANTI-56)",
@@ -1096,6 +1809,38 @@ export function lintExecutionPlan(filePath) {
   const totalCount = checks.length;
   const valid = errors.length === 0;
 
+  let stateControllerDirective = null;
+  let stateControllerBanner = null;
+
+  if (valid && metadata && (!metadata.status || metadata.status === 'DRAFT' || metadata.status === 'AUTO_APPROVED') && metadata.plan_id) {
+    recordPhase1DraftReceipt(filePath, metadata, content);
+    if (!metadata.status || metadata.status === 'DRAFT') {
+      const autoGuard = evaluateAutoApprovedGuard(metadata, content, filePath);
+      if (!autoGuard.allowed) {
+        stateControllerDirective = "STATE: PLAN_STEP_1 -> AWAITING GATE 1 APPROVAL. DO NOT call GetApplicationDetails, GetTestConfigurationDetails, or stage-placement in this turn. Render Checkpoint 1 in chat and END YOUR TURN NOW.";
+        stateControllerBanner = [
+          "================================================================================",
+          "🛑 STATE CONTROLLER DIRECTIVE [STATE: PLAN_STEP_1 -> AWAITING GATE 1 APPROVAL]",
+          "================================================================================",
+          "1. DO NOT call GetApplicationDetails, GetTestConfigurationDetails, or stage-placement in this turn.",
+          "2. DO NOT edit status to \"APPROVED\" or \"AUTO_APPROVED\" in this turn.",
+          "3. Render the Checkpoint 1 Executive Summary in chat and END YOUR TURN NOW.",
+          "================================================================================"
+        ].join("\n");
+      } else {
+        stateControllerDirective = "STATE: PLAN_STEP_1 -> OPTION A AUTO-EXEC OR GATE 1. For Option A, set status: AUTO_APPROVED and run pre-exec. For Option B, render Checkpoint 1 and END YOUR TURN NOW.";
+        stateControllerBanner = [
+          "================================================================================",
+          "⚡ STATE CONTROLLER DIRECTIVE [STATE: PLAN_STEP_1 -> OPTION A AUTO-EXEC OR GATE 1]",
+          "================================================================================",
+          "- Option A (in-memory MTA_plugin): You may set status: \"AUTO_APPROVED\", run 'mta-lint.mjs pre-exec', and call execute-testcase.",
+          "- Option B (MTA Platform): Render Checkpoint 1 in chat and END YOUR TURN NOW. Do NOT call placement tools in this turn.",
+          "================================================================================"
+        ].join("\n");
+      }
+    }
+  }
+
   return {
     valid,
     target: path.basename(filePath),
@@ -1103,7 +1848,9 @@ export function lintExecutionPlan(filePath) {
     passedCount,
     totalCount,
     checks,
-    errors
+    errors,
+    stateControllerDirective,
+    stateControllerBanner
   };
 }
 
@@ -3612,6 +4359,10 @@ category: "Backend"
 
     const validApprovedPlan = path.join(fixturesDir, 'valid_approved_plan.md');
     if (fs.existsSync(validApprovedPlan)) {
+      const approvedContent = fs.readFileSync(validApprovedPlan, 'utf-8');
+      const approvedMeta = extractMetadata(approvedContent);
+      recordPhase1DraftReceipt(validApprovedPlan, { ...approvedMeta, status: 'DRAFT' }, approvedContent);
+      stagePlacementGate(validApprovedPlan, { configKey: approvedMeta.target_configuration_key, suiteKey: approvedMeta.target_suite_key });
       const resPlan = lintExecutionPlan(validApprovedPlan);
       addCheck("Fixture: valid_approved_plan.md passes plan lint", resPlan.valid, `Expected valid, got errors: ${resPlan.errors.map(e => e.message).join('; ')}`);
       const resGate = verifyPreBuildGate(validApprovedPlan);
@@ -3905,6 +4656,143 @@ category: "Backend"
           fs.writeFileSync(draftPlanPath, builtVerifiedMd, 'utf8');
           const preExecBuilt = verifyPreExecGate(draftPlanPath);
           addCheck("PAT-43: pre-exec and plan lint pass valid BUILT_AND_VERIFIED execution plan", preExecBuilt.valid, `Expected valid pre-exec on BUILT_AND_VERIFIED plan, got: ${preExecBuilt.errors.map(e => e.message).join('; ')}`);
+
+          // Workstream A Self-Tests (1-4)
+          // 1. TEST_PROMPT_APPROVAL_BLOCKS_AUTO_APPROVED
+          const tempConfigDir = path.join(fixturesDir, 'temp_prompt_approval_dir');
+          try {
+            if (!fs.existsSync(tempConfigDir)) fs.mkdirSync(tempConfigDir, { recursive: true });
+            fs.writeFileSync(path.join(tempConfigDir, 'mta_config.json'), JSON.stringify({ exploratory_execution_mode: 'prompt_approval' }), 'utf8');
+            const tempAutoPlan = path.join(tempConfigDir, 'EP_TempPromptApproval.md');
+            fs.writeFileSync(tempAutoPlan, autoApprovedMd, 'utf8');
+            const promptApprovalPlanRes = lintExecutionPlan(tempAutoPlan);
+            const promptApprovalExecRes = verifyPreExecGate(tempAutoPlan);
+            addCheck(
+              "TEST_PROMPT_APPROVAL_BLOCKS_AUTO_APPROVED: mta_config.json exploratory_execution_mode='prompt_approval' blocks AUTO_APPROVED",
+              !promptApprovalPlanRes.valid && promptApprovalPlanRes.errors.some(e => e.code === 'AUTO_APPROVE_FORBIDDEN') &&
+              !promptApprovalExecRes.valid && promptApprovalExecRes.errors.some(e => e.code === 'AUTO_APPROVE_FORBIDDEN'),
+              "Expected AUTO_APPROVE_FORBIDDEN when exploratory_execution_mode is prompt_approval"
+            );
+          } finally {
+            if (fs.existsSync(tempConfigDir)) {
+              try { fs.rmSync(tempConfigDir, { recursive: true, force: true }); } catch (e) {}
+            }
+          }
+
+          // 2. TEST_DRAFT_PROHIBITS_PREBAKED_PLACEMENT_KEYS
+          const prebakedDraftMd = baseDraftMd.replace('target_configuration_key: null', 'target_configuration_key: 131');
+          fs.writeFileSync(draftPlanPath, prebakedDraftMd, 'utf8');
+          const prebakedDraftRes = lintExecutionPlan(draftPlanPath);
+          addCheck(
+            "TEST_DRAFT_PROHIBITS_PREBAKED_PLACEMENT_KEYS: DRAFT plan with pre-baked placement keys is rejected",
+            !prebakedDraftRes.valid && prebakedDraftRes.errors.some(e => e.code === 'PREMATURE_PLACEMENT_KEY_IN_DRAFT'),
+            "Expected PREMATURE_PLACEMENT_KEY_IN_DRAFT on DRAFT plan with non-null target_configuration_key"
+          );
+
+          // 3. TEST_SINGLE_TURN_SELF_FORGED_APPROVAL_BLOCKED
+          const selfForgedMd = baseDraftMd
+            .replace('plan_id: "TC_SampleDraft-v1"', 'plan_id: "TC_SelfForgedSingleTurn-v1"')
+            .replace(/status:\s*"?[A-Z_]+"?/i, 'status: "APPROVED"')
+            .replace('approved_by: null', 'approved_by: "User Request"')
+            .replace('approved_at: null', 'approved_at: "2026-10-26T10:00:00Z"')
+            .replace('target_configuration_key: null', 'target_configuration_key: 131')
+            .replace('target_suite_key: null', 'target_suite_key: 201');
+          fs.writeFileSync(draftPlanPath, selfForgedMd, 'utf8');
+          const selfForgedPlanRes = lintExecutionPlan(draftPlanPath);
+          const selfForgedBuildRes = verifyPreBuildGate(draftPlanPath);
+          addCheck(
+            "TEST_SINGLE_TURN_SELF_FORGED_APPROVAL_BLOCKED: Single-turn APPROVED plan without Phase 1/2 ledger receipt is rejected",
+            !selfForgedPlanRes.valid && selfForgedPlanRes.errors.some(e => e.code === 'SELF_FORGED_APPROVAL_VIOLATION') &&
+            !selfForgedBuildRes.valid && selfForgedBuildRes.errors.some(e => e.code === 'SELF_FORGED_APPROVAL_VIOLATION'),
+            "Expected SELF_FORGED_APPROVAL_VIOLATION on single-turn self-approved plan"
+          );
+
+          // 4. TEST_FRONTEND_REQUIRES_PLAYWRIGHT_OPTIONS_METADATA
+          if (fs.existsSync(validOrderedVal)) {
+            const baseFrontendMd = fs.readFileSync(validOrderedVal, 'utf8');
+            const frontendApprovedMissingOptsMd = baseFrontendMd.replace(
+              'category: "Frontend"',
+              [
+                'category: "Frontend"',
+                'status: "APPROVED"',
+                'approved_by: "markus"',
+                'approved_at: "2026-10-26T10:05:00Z"',
+                'approval_turn_id: "turn_2"',
+                'target_configuration_key: 131',
+                'target_suite_key: 201'
+              ].join('\n')
+            );
+            fs.writeFileSync(draftPlanPath, frontendApprovedMissingOptsMd, 'utf8');
+            const feMissingPlanRes = lintExecutionPlan(draftPlanPath);
+            const feMissingBuildRes = verifyPreBuildGate(draftPlanPath);
+            addCheck(
+              "TEST_FRONTEND_REQUIRES_PLAYWRIGHT_OPTIONS_METADATA: Frontend APPROVED plan missing Playwright options is rejected",
+              !feMissingPlanRes.valid && feMissingPlanRes.errors.some(e => e.code === 'MISSING_FRONTEND_OPTIONS_ELICITATION') &&
+              !feMissingBuildRes.valid && feMissingBuildRes.errors.some(e => e.code === 'MISSING_FRONTEND_OPTIONS_ELICITATION'),
+              "Expected MISSING_FRONTEND_OPTIONS_ELICITATION on Frontend APPROVED plan without Playwright metadata"
+            );
+          }
+
+          // Workstream 1A & 2 Self-Tests (5-8)
+          // 5. TEST_SAME_TURN_STAGE_PLACEMENT_BLOCKED
+          const sameTurnDraftMd = baseDraftMd.replace('plan_id: "TC_SampleDraft-v1"', 'plan_id: "TC_SameTurnChain-v1"');
+          fs.writeFileSync(draftPlanPath, sameTurnDraftMd, 'utf8');
+          recordPhase1DraftReceipt(draftPlanPath, extractMetadata(sameTurnDraftMd), sameTurnDraftMd, { userTurnCount: 1 });
+          const sameTurnStageRes = stagePlacementGate(draftPlanPath, { configKey: 131, suiteKey: 201, userTurnCount: 1 });
+          const nextTurnStageRes = stagePlacementGate(draftPlanPath, { configKey: 131, suiteKey: 201, userTurnCount: 2 });
+          addCheck(
+            "TEST_SAME_TURN_STAGE_PLACEMENT_BLOCKED: Chaining plan and stage-placement in the same turn is blocked",
+            !sameTurnStageRes.valid && sameTurnStageRes.errors.some(e => e.code === 'SAME_TURN_GATE_CHAINING_BLOCKED') && nextTurnStageRes.valid,
+            "Expected SAME_TURN_GATE_CHAINING_BLOCKED when userTurnCount has not advanced since Phase 1 draft"
+          );
+
+          // 6. TEST_HOOK_GATE_BLOCKS_UNAPPROVED_MCP_CREATE
+          const unapprovedHookRes = evaluateHookPayload({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'call_mcp_tool',
+            tool_input: {
+              ServerName: 'MTA',
+              ToolName: 'CreateTestCase',
+              Arguments: { Name: 'TC_Sneaky' }
+            }
+          }, { planPath: draftPlanPath });
+          addCheck(
+            "TEST_HOOK_GATE_BLOCKS_UNAPPROVED_MCP_CREATE: PreToolUse hook blocks CreateTestCase on unapproved plan",
+            unapprovedHookRes.decision === 'deny' && unapprovedHookRes.code === 'PRE_BUILD_GATE_FAILED',
+            `Expected deny with PRE_BUILD_GATE_FAILED, got ${JSON.stringify(unapprovedHookRes)}`
+          );
+
+          // 7. TEST_HOOK_GATE_BLOCKS_SAME_TURN_APPROVED_EDIT
+          const sameTurnEditHookRes = evaluateHookPayload({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'edit_file',
+            tool_input: {
+              Path: draftPlanPath,
+              Target: 'status: "DRAFT"',
+              Replacement: 'status: "APPROVED"\napproved_by: "markus"\napproved_at: "2026-10-26T12:00:00Z"\ntarget_configuration_key: 131\ntarget_suite_key: 201'
+            }
+          }, { userTurnCount: 2, enforceRapidChainingCheck: true });
+          addCheck(
+            "TEST_HOOK_GATE_BLOCKS_SAME_TURN_APPROVED_EDIT: PreToolUse hook blocks editing EP_*.md to status: APPROVED in same turn as stage-placement",
+            sameTurnEditHookRes.decision === 'deny' && sameTurnEditHookRes.code === 'SAME_TURN_APPROVAL_BLOCKED',
+            `Expected deny with SAME_TURN_APPROVAL_BLOCKED, got ${JSON.stringify(sameTurnEditHookRes)}`
+          );
+
+          // 8. TEST_HOOK_GATE_ALLOWS_READONLY_GET
+          const readOnlyHookRes = evaluateHookPayload({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'call_mcp_tool',
+            tool_input: {
+              ServerName: 'MTA',
+              ToolName: 'GetAppModelData',
+              Arguments: {}
+            }
+          }, { planPath: draftPlanPath });
+          addCheck(
+            "TEST_HOOK_GATE_ALLOWS_READONLY_GET: PreToolUse hook allows read-only GetAppModelData tool",
+            readOnlyHookRes.decision === 'allow',
+            `Expected allow for GetAppModelData, got ${JSON.stringify(readOnlyHookRes)}`
+          );
         } finally {
           if (fs.existsSync(draftPlanPath)) {
             try { fs.unlinkSync(draftPlanPath); } catch (e) {}
@@ -4140,6 +5028,11 @@ category: "Backend"
       const res = runSmokeAudit(validOrderedVal, suiteFailServer);
       const caughtCaseMismatch = res.errors.some(e => e.code === 'CASE_COUNT_MISMATCH');
       addCheck("Fixture: Suite smoke audit catches monolithic single-case drift", !res.valid && caughtCaseMismatch, "Expected failed suite audit on case count mismatch");
+    }
+
+    const tempFixtureLedger = path.join(fixturesDir, '.mta-gate-ledger.json');
+    if (fs.existsSync(tempFixtureLedger)) {
+      try { fs.unlinkSync(tempFixtureLedger); } catch (e) {}
     }
   }
 
