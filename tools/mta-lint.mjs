@@ -19,13 +19,23 @@ import path from 'node:path';
 import process from 'node:process';
 import crypto from 'node:crypto';
 
-export const LINTER_VERSION = "1.8.0";
+export const LINTER_VERSION = "1.10.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
 // CLI Argument Dispatcher
 // ==========================================
 async function main() {
+  // PAT-113 / ANTI-62: Vendor Tool Immutability & Custom Override Guard
+  const __dir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([a-zA-Z]:)/, '$1'));
+  const customOverridePath = path.join(__dir, 'mta-lint.custom.mjs');
+  if (fs.existsSync(customOverridePath)) {
+    console.error('🚨 [ANTI-62 VIOLATION] Unauthorized local linter override detected: tools/mta-lint.custom.mjs');
+    console.error('Creating or modifying local linter overrides to bypass MTA quality checks is strictly prohibited under PAT-113 / ANTI-62.');
+    console.error('Please delete tools/mta-lint.custom.mjs and fix the Execution Plan or report false positives to support@menditect.com.');
+    process.exit(2);
+  }
+
   const args = process.argv.slice(2);
   const command = args[0];
   const isJson = args.includes('--json');
@@ -45,11 +55,12 @@ async function main() {
       case 'lock': {
         const filePath = args[1];
         const force = args.includes('--force');
+        const resealWiring = args.includes('--reseal-wiring');
         if (!filePath || filePath.startsWith('--')) {
-          console.error("Error: Missing execution plan path. Usage: mta-lint lock <path/to/EP_*.md> [--force]");
+          console.error("Error: Missing execution plan path. Usage: mta-lint lock <path/to/EP_*.md> [--force] [--reseal-wiring]");
           process.exit(1);
         }
-        const result = lockExecutionPlan(filePath, { force });
+        const result = lockExecutionPlan(filePath, { force, resealWiring });
         outputResult(result, isJson, "Execution Plan Cryptographic Lock Seal");
         process.exit(result.valid ? 0 : 1);
         break;
@@ -100,12 +111,12 @@ async function main() {
       }
       case 'audit': {
         const planPath = args[1];
-        const serverJsonPath = args[2];
-        if (!planPath || !serverJsonPath || planPath.startsWith('--') || serverJsonPath.startsWith('--')) {
-          console.error("Error: Missing arguments. Usage: mta-lint audit <path/to/EP_*.md> <path/to/server-data.json>");
+        const serverJsonPaths = args.slice(2).filter(a => !a.startsWith('--'));
+        if (!planPath || planPath.startsWith('--') || serverJsonPaths.length === 0) {
+          console.error("Error: Missing arguments. Usage: mta-lint audit <path/to/EP_*.md> <path/to/server-data1.json> [server-data2.json ...]");
           process.exit(1);
         }
-        const result = runSmokeAudit(planPath, serverJsonPath);
+        const result = runSmokeAudit(planPath, serverJsonPaths.length === 1 ? serverJsonPaths[0] : serverJsonPaths);
         outputResult(result, isJson, "MTA Post-Construction 4-Phase Smoke Audit");
         process.exit(result.valid ? 0 : 1);
         break;
@@ -466,6 +477,7 @@ export function computePlanHash(content) {
 
 export function lockExecutionPlan(filePath, options = {}) {
   const force = options.force || false;
+  const resealWiring = options.resealWiring || false;
   if (!fs.existsSync(filePath)) {
     return {
       valid: false,
@@ -481,14 +493,81 @@ export function lockExecutionPlan(filePath, options = {}) {
   const metadata = extractMetadata(content);
 
   if (metadata && metadata.locked_sha256 && !force) {
-    return {
-      valid: false,
-      target: filePath,
-      passedCount: 0,
-      totalCount: 1,
-      checks: [{ name: "One-Way Cryptographic Latch (PAT-124)", pass: false, reason: `Plan already locked with hash '${metadata.locked_sha256}'. Use --force to overwrite (human only).` }],
-      errors: [{ code: "ALREADY_LOCKED", message: `Execution plan is already locked with hash '${metadata.locked_sha256}'. One-way latch engaged (PAT-124).` }]
-    };
+    if (!resealWiring) {
+      return {
+        valid: false,
+        target: filePath,
+        passedCount: 0,
+        totalCount: 1,
+        checks: [{ name: "One-Way Cryptographic Latch (PAT-124)", pass: false, reason: `Plan already locked with hash '${metadata.locked_sha256}'. Use --force to overwrite (human only) or --reseal-wiring for verified promotion/wiring repair.` }],
+        errors: [{ code: "ALREADY_LOCKED", message: `Execution plan is already locked with hash '${metadata.locked_sha256}'. One-way latch engaged (PAT-124).` }]
+      };
+    }
+
+    // --reseal-wiring requires an intact IMMUTABLE_ASSERTION_ANCHOR whose target assertion value still matches Section 3/4
+    const anchorMatch = content.match(/(?:###\s*🔒?\s*IMMUTABLE_ASSERTION_ANCHOR:\s*([^\r\n]+)|###\s*🔒?\s*IMMUTABLE_ASSERTION_ANCHOR[^\r\n]*\r?\n([^\r\n#]+)|IMMUTABLE_ASSERTION_ANCHOR:\s*([^\r\n]+))/i);
+    const anchorStr = anchorMatch ? (anchorMatch[1] || anchorMatch[2] || anchorMatch[3] || '').trim() : null;
+    if (!anchorStr) {
+      return {
+        valid: false,
+        target: filePath,
+        passedCount: 0,
+        totalCount: 1,
+        checks: [{ name: "Wiring Re-Seal Anchor Verification (PAT-124)", pass: false, reason: "Cannot use --reseal-wiring without an intact IMMUTABLE_ASSERTION_ANCHOR in Section 1." }],
+        errors: [{ code: "MISSING_ASSERTION_ANCHOR", message: "--reseal-wiring requires an intact IMMUTABLE_ASSERTION_ANCHOR in Section 1." }]
+      };
+    }
+    const assertTokens = [...anchorStr.matchAll(/ASSERT_([A-Z_]+)\s*=\s*([^\r\n|]+)/gi)].map(m => ({
+      type: m[1].trim().toUpperCase(),
+      val: m[2].trim().replace(/^['"`]|['"`]$/g, '')
+    }));
+    const coreSectionsContent = content.split(/##\s*[56]\.\s*(?:Quality|Pre-Approval|Verification|Build\s*Receipt|Smoke\s*Audit)/i)[0] || content;
+    const coreTables = parseMarkdownTables(coreSectionsContent);
+    let stepLedgerTable = null;
+    let variationMatrixTable = null;
+    for (const t of coreTables) {
+      const headerStr = t.headers.join(' ').toLowerCase();
+      if (!stepLedgerTable && (headerStr.includes('step action') || headerStr.includes('output handle') || headerStr.includes('action & target'))) {
+        stepLedgerTable = t;
+      } else if (!variationMatrixTable && (headerStr.includes('step target') || headerStr.includes('scenario #1') || (headerStr.includes('scenario name') && headerStr.includes('scenario')))) {
+        variationMatrixTable = t;
+      }
+    }
+
+    const assertionTexts = [];
+    if (stepLedgerTable) {
+      const assertColIdx = stepLedgerTable.headers.findIndex(h => /assert/i.test(h));
+      for (const row of stepLedgerTable.rows) {
+        const cells = row._cells || Object.values(row);
+        if (assertColIdx !== -1 && cells[assertColIdx] !== undefined) {
+          assertionTexts.push(String(cells[assertColIdx]));
+        } else if (cells[6] !== undefined) {
+          assertionTexts.push(String(cells[6]));
+        }
+      }
+    }
+    if (variationMatrixTable) {
+      for (const row of variationMatrixTable.rows) {
+        const cells = row._cells || Object.values(row);
+        const rowTarget = String(cells[0] || '');
+        if (/assert|validation|feedback|return\s*value/i.test(rowTarget)) {
+          assertionTexts.push(cells.slice(1).join(' | '));
+        }
+      }
+    }
+    const combinedAssertionSurface = assertionTexts.join(' | ');
+    for (const tok of assertTokens) {
+      if (tok.val && !combinedAssertionSurface.includes(tok.val)) {
+        return {
+          valid: false,
+          target: filePath,
+          passedCount: 0,
+          totalCount: 1,
+          checks: [{ name: "Wiring Re-Seal Assertion Integrity (ANTI-78)", pass: false, reason: `Anchored assertion value '${tok.val}' (ASSERT_${tok.type}) was removed or altered in Section 3 Embedded Assertions / Section 4 assertion rows! --reseal-wiring cannot weaken or alter the oracle assertion (ANTI-78).` }],
+          errors: [{ code: "LOCKED_TEST_TAMPERED", message: `Anchored assertion value '${tok.val}' missing from Section 3 Embedded Assertions / Section 4 assertion rows during --reseal-wiring (ANTI-78).` }]
+        };
+      }
+    }
   }
 
   const hash = computePlanHash(content);
@@ -659,25 +738,42 @@ export function verifyPreBuildGate(filePath) {
     "MISSING_APPROVAL_PROVENANCE"
   );
 
-  // 3. Target Configuration Key (numeric > 0)
-  const configKey = Number(metadata.target_configuration_key);
+  // 3. Target Configuration Key (numeric > 0, strictly non-null / non-boolean / non-empty)
+  const rawConfigKey = metadata.target_configuration_key;
+  const isNonEmptyConfigVal = rawConfigKey !== null && rawConfigKey !== undefined && typeof rawConfigKey !== 'boolean' && String(rawConfigKey).trim() !== '';
+  const configKey = isNonEmptyConfigVal ? Number(rawConfigKey) : NaN;
   const validConfig = !isNaN(configKey) && configKey > 0;
   addCheck(
     "Target Configuration Placement (Gate 2)",
     validConfig,
-    validConfig ? null : `Invalid or missing target_configuration_key: '${metadata.target_configuration_key}'. Gate 2 placement discovery required.`,
+    validConfig ? null : `Invalid or missing target_configuration_key: '${rawConfigKey}'. Gate 2 placement discovery required.`,
     "INVALID_CONFIGURATION_KEY"
   );
 
-  // 4. Target Suite Key (numeric >= 0 or "NEW_SUITE")
+  // 4. Target Suite Key (numeric > 0 or "NEW_SUITE" with non-empty target_suite, strictly non-null / non-boolean / non-empty)
   const suiteKey = metadata.target_suite_key;
-  const validSuite = suiteKey === "NEW_SUITE" || (typeof suiteKey === 'number' && suiteKey >= 0) || (!isNaN(Number(suiteKey)) && Number(suiteKey) >= 0);
+  const isNonEmptySuiteVal = suiteKey !== null && suiteKey !== undefined && typeof suiteKey !== 'boolean' && String(suiteKey).trim() !== '';
+  const rawSuiteName = metadata.target_suite !== null && metadata.target_suite !== undefined ? String(metadata.target_suite).trim() : '';
+  const hasValidNewSuiteName = rawSuiteName.length > 0 && !/^<.*>$|^null$|^tbd$/i.test(rawSuiteName);
+  const validSuite = (suiteKey === "NEW_SUITE" && hasValidNewSuiteName) || (isNonEmptySuiteVal && !isNaN(Number(suiteKey)) && Number(suiteKey) > 0);
   addCheck(
     "Target Test Suite Placement (Gate 2)",
     validSuite,
-    validSuite ? null : `Invalid or missing target_suite_key: '${metadata.target_suite_key}'. Gate 2 placement discovery required.`,
+    validSuite ? null : `Invalid or missing target_suite_key: '${metadata.target_suite_key}' (must be integer > 0, or 'NEW_SUITE' with non-empty target_suite; 0 is prohibited). Gate 2 placement discovery required.`,
     "INVALID_SUITE_KEY"
   );
+
+  // 5. Post-Green TDBF Lock Integrity Gate (PAT-124, ANTI-78)
+  if (metadata.test_intent === 'bug_reproduction' && metadata.verified_at) {
+    const isLockedAttr = metadata.protection_level === 'locked' && !!metadata.locked_sha256;
+    const lockRes = isLockedAttr ? verifyLockedExecutionPlan(filePath) : { valid: false, errors: [{ message: "Post-green bug_reproduction plan must have protection_level: 'locked' and valid locked_sha256" }] };
+    addCheck(
+      "TDBF Oracle Lock Integrity (PAT-124, ANTI-78)",
+      lockRes.valid,
+      lockRes.valid ? null : (lockRes.errors[0]?.message || "Locked oracle test verification failed before Option B build"),
+      "LOCKED_TEST_TAMPERED"
+    );
+  }
 
   const valid = checks.every(c => c.pass);
   return {
@@ -687,6 +783,33 @@ export function verifyPreBuildGate(filePath) {
     totalCount: checks.length,
     checks,
     errors
+  };
+}
+
+function evaluateAutoApprovedGuard(metadata, content = '') {
+  const reasons = [];
+  const rollbackStr = metadata.rollback !== undefined && metadata.rollback !== null ? String(metadata.rollback).trim().toLowerCase() : null;
+  if (rollbackStr !== null && rollbackStr !== 'yes') {
+    reasons.push(`rollback is '${metadata.rollback}' (auto-execution requires rollback: 'Yes' with zero live database mutation)`);
+  }
+  if (metadata.category !== 'Backend') {
+    reasons.push(`category is '${metadata.category}' (only Backend in-memory tests can auto-execute; Frontend requires MTA Platform Gate 1 & Gate 2 approval per PAT-62)`);
+  }
+  const execTarget = metadata.execution_target !== undefined && metadata.execution_target !== null ? String(metadata.execution_target).trim() : null;
+  if (execTarget !== null && execTarget !== 'MTA_plugin') {
+    reasons.push(`execution_target is '${metadata.execution_target}' (persistent MTA Platform mutations cannot auto-execute per ANTI-56)`);
+  }
+  const intent = metadata.test_intent ? String(metadata.test_intent).trim() : null;
+  if (intent === 'bug_reproduction') {
+    reasons.push("test_intent is 'bug_reproduction' (requires Checkpoint 1 Case 6 human approval per PAT-124)");
+  } else if (intent === 'data_seeding') {
+    reasons.push("test_intent is 'data_seeding' (live data seeding requires explicit user approval)");
+  } else if ((intent === 'exploratory_feature' || intent === 'tdd') && metadata.spec_source && metadata.spec_source.type === 'prompt_spec') {
+    reasons.push(`test_intent is '${intent}' with spec_source.type='prompt_spec' (Conservative Gate requires human confirmation of inferred requirements at Checkpoint 1)`);
+  }
+  return {
+    allowed: reasons.length === 0,
+    reasons
   };
 }
 
@@ -756,15 +879,11 @@ export function verifyPreExecGate(filePath) {
       "MISSING_APPROVAL_PROVENANCE"
     );
   } else if (metadata.status === 'AUTO_APPROVED') {
-    const isRollbackNo = metadata.rollback !== undefined && String(metadata.rollback).trim().toLowerCase() === 'no';
-    const isFrontend = metadata.category === 'Frontend';
-    const isPlatformTarget = metadata.execution_target !== undefined && String(metadata.execution_target).trim() !== 'MTA_plugin';
-    const isBugFix = metadata.test_intent === 'bug_reproduction';
-    const autoAllowed = !isRollbackNo && !isFrontend && !isPlatformTarget && !isBugFix;
+    const autoGuard = evaluateAutoApprovedGuard(metadata, content);
     addCheck(
       "AUTO_APPROVED Execution Guard (PAT-43, ANTI-46, ANTI-56)",
-      autoAllowed,
-      autoAllowed ? null : "status 'AUTO_APPROVED' is prohibited when rollback='No' (live database mutation), category='Frontend', execution_target!='MTA_plugin', or test_intent='bug_reproduction'. Explicit human approval (status: 'APPROVED') is required.",
+      autoGuard.allowed,
+      autoGuard.allowed ? null : `status 'AUTO_APPROVED' is prohibited: ${autoGuard.reasons.join('; ')}. Explicit human approval (status: 'APPROVED') is required.`,
       "AUTO_APPROVE_FORBIDDEN"
     );
   }
@@ -838,20 +957,12 @@ export function lintExecutionPlan(filePath) {
         "PLAN-STATUS-DRAFT-ON-CREATION"
       );
     } else if (metadata.status === 'AUTO_APPROVED') {
-      const isRollbackNo = metadata.rollback !== undefined && String(metadata.rollback).trim().toLowerCase() === 'no';
-      const isFrontend = metadata.category === 'Frontend';
-      const isPlatformTarget = metadata.execution_target !== undefined && String(metadata.execution_target).trim() !== 'MTA_plugin';
-      const isBugFix = metadata.test_intent === 'bug_reproduction';
-      if (isRollbackNo || isFrontend || isPlatformTarget || isBugFix) {
-        const reasons = [];
-        if (isRollbackNo) reasons.push("rollback is 'No' (live database mutation requires explicit user approval)");
-        if (isFrontend) reasons.push("category is 'Frontend' (requires MTA Platform Gate 1 & Gate 2 approval per PAT-62)");
-        if (isPlatformTarget) reasons.push(`execution_target is '${metadata.execution_target}' (persistent MTA Platform mutations cannot auto-execute per ANTI-56)`);
-        if (isBugFix) reasons.push("test_intent is 'bug_reproduction' (requires Checkpoint 1 Case 6 approval per PAT-124)");
+      const autoGuard = evaluateAutoApprovedGuard(metadata, content);
+      if (!autoGuard.allowed) {
         addCheck(
           "AUTO_APPROVED Scope Guard (PAT-43, ANTI-46, ANTI-56)",
           false,
-          `Plan cannot use status 'AUTO_APPROVED' when: ${reasons.join('; ')}.`,
+          `Plan cannot use status 'AUTO_APPROVED' when: ${autoGuard.reasons.join('; ')}.`,
           "AUTO_APPROVE_FORBIDDEN"
         );
       } else {
@@ -956,14 +1067,25 @@ export function lintExecutionPlan(filePath) {
   validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variationMatrixTable, addCheck);
   // 3g. Cryptographic Lock Verification (PAT-124, ANTI-78)
   if (metadata && metadata.locked_sha256) {
-    const lockRes = verifyLockedExecutionPlan(filePath);
-    addCheck(
-      "PAT-124: Cryptographic Lock Verification",
-      lockRes.valid,
-      lockRes.valid ? null : (lockRes.errors[0]?.message || "Locked test plan tampered"),
-      "LOCKED_TEST_TAMPERED",
-      lockRes.valid ? `Hash verified: ${lockRes.hash}` : "Tamper detected"
-    );
+    const isSupersededDraftRevision = metadata.status === 'DRAFT' && Number(metadata.revision) > 1 && !!metadata.supersedes_plan_id;
+    if (isSupersededDraftRevision) {
+      addCheck(
+        "PAT-124: Superseded Draft Revision (Pre-Relock)",
+        true,
+        null,
+        null,
+        `Draft revision ${metadata.revision} superseding ${metadata.supersedes_plan_id} (ready for mta-lint lock)`
+      );
+    } else {
+      const lockRes = verifyLockedExecutionPlan(filePath);
+      addCheck(
+        "PAT-124: Cryptographic Lock Verification",
+        lockRes.valid,
+        lockRes.valid ? null : (lockRes.errors[0]?.message || "Locked test plan tampered"),
+        "LOCKED_TEST_TAMPERED",
+        lockRes.valid ? `Hash verified: ${lockRes.hash}` : "Tamper detected"
+      );
+    }
   }
 
 
@@ -2457,16 +2579,83 @@ function scanAntiPatterns(content, stepTable, matrixTable, addCheck) {
 // ==========================================
 // Smoke Audit Engine (mta-lint audit)
 // ==========================================
-export function runSmokeAudit(planPath, serverJsonPath) {
+export function runSmokeAudit(planPath, serverJsonPaths) {
   if (!fs.existsSync(planPath)) {
     throw new Error(`Execution plan not found: ${planPath}`);
   }
-  if (!fs.existsSync(serverJsonPath)) {
-    throw new Error(`Server JSON data file not found: ${serverJsonPath}`);
+  const pathsList = Array.isArray(serverJsonPaths) ? serverJsonPaths : [serverJsonPaths];
+  if (pathsList.length === 0 || !pathsList[0]) {
+    throw new Error(`Server JSON data file path not provided`);
+  }
+  for (const p of pathsList) {
+    if (!fs.existsSync(p)) {
+      throw new Error(`Server JSON data file not found: ${p}`);
+    }
   }
 
   const planContent = fs.readFileSync(planPath, 'utf-8');
-  const serverData = JSON.parse(fs.readFileSync(serverJsonPath, 'utf-8'));
+  let serverData;
+  if (pathsList.length === 1) {
+    serverData = JSON.parse(fs.readFileSync(pathsList[0], 'utf-8'));
+  } else {
+    const casePayloads = pathsList.map((p, idx) => {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      const tcObj = parsed.testCase || parsed;
+      return {
+        ...tcObj,
+        SequenceNumber: tcObj.SequenceNumber !== undefined ? tcObj.SequenceNumber : (tcObj.sequenceNumber !== undefined ? tcObj.sequenceNumber : (idx + 1)),
+        testSteps: parsed.testSteps || parsed.steps || tcObj.testSteps || tcObj.steps || [],
+        dataVariationItems: parsed.dataVariationItems || parsed.variationItems || tcObj.dataVariationItems || tcObj.variationItems || [],
+        dataVariations: parsed.scenarios || parsed.dataVariations || tcObj.scenarios || tcObj.dataVariations || [],
+        constructionErrors: parsed.constructionErrors !== undefined ? parsed.constructionErrors : (parsed.TCER_TestConstructionErrors || tcObj.TCER_TestConstructionErrors || 0)
+      };
+    });
+    const totalVariationItemsCount = casePayloads.reduce((sum, c) => sum + (c.dataVariationItems || []).length, 0);
+    const casesWithVariations = casePayloads.filter(c => (c.dataVariationItems && c.dataVariationItems.length > 0) || (c.dataVariations && c.dataVariations.length > 0));
+    const maxScenarios = casesWithVariations.reduce((max, c) => Math.max(max, (c.dataVariations || []).length), 0);
+    const mergedDataVariations = [];
+    for (let sIdx = 0; sIdx < maxScenarios; sIdx++) {
+      const baseVar = casesWithVariations.find(c => c.dataVariations && c.dataVariations[sIdx])?.dataVariations[sIdx] || {};
+      const anyCaseHasExplicitCellValues = casePayloads.some(c => {
+        const cv = (c.dataVariations || [])[sIdx];
+        return cv && Array.isArray(cv.TCVA_TestCaseVariationValues || cv.values || cv.cells);
+      });
+      if (!anyCaseHasExplicitCellValues) {
+        mergedDataVariations.push({ ...baseVar });
+        continue;
+      }
+      const baseVals = baseVar.TCVA_TestCaseVariationValues || baseVar.values || baseVar.cells || [];
+      const singlePopulatedCaseHasAllItems =
+        casesWithVariations.filter(c => c.dataVariations && c.dataVariations[sIdx]).length === 1 &&
+        baseVals.length === totalVariationItemsCount;
+      const mergedValues = [];
+      if (singlePopulatedCaseHasAllItems) {
+        mergedValues.push(...baseVals);
+      } else {
+        for (const c of casePayloads) {
+          if (!c.dataVariationItems || c.dataVariationItems.length === 0) continue;
+          const caseVar = (c.dataVariations || [])[sIdx];
+          const caseVals = caseVar
+            ? (caseVar.TCVA_TestCaseVariationValues || caseVar.values || caseVar.cells || [])
+            : c.dataVariationItems.map(() => ({ value: '' }));
+          mergedValues.push(...caseVals);
+        }
+      }
+      mergedDataVariations.push({
+        ...baseVar,
+        TCVA_TestCaseVariationValues: mergedValues
+      });
+    }
+    serverData = {
+      name: casePayloads[0]?.name || 'Multi-Case Suite Audit',
+      description: casePayloads.map(c => c.description || c.Description || '').find(d => d.trim().length > 0) || '',
+      testCases: casePayloads,
+      testSteps: casePayloads.flatMap(c => c.testSteps),
+      dataVariationItems: casePayloads.flatMap(c => c.dataVariationItems),
+      dataVariations: mergedDataVariations,
+      TCER_TestConstructionErrors: casePayloads.reduce((sum, c) => sum + Number(c.constructionErrors || 0), 0)
+    };
+  }
   const tables = parseMarkdownTables(planContent);
 
   let stepLedgerTable = null;
@@ -3077,6 +3266,7 @@ export function lintArtifacts(outputDir = 'menditect-output', options = {}) {
       file: pf.name,
       path: pf.path,
       metadata,
+      content,
       testName: tcName
     };
 
@@ -3123,13 +3313,38 @@ export function lintArtifacts(outputDir = 'menditect-output', options = {}) {
     );
   }
 
-  // 4. Verify each execution file has a corresponding Execution Plan
+  // 4. Verify each execution file has a corresponding Execution Plan and matching target microflows
+  const extractDomainMicroflows = (rawText) => {
+    const flows = new Set();
+    const mfRegex = /"(?:Microflow|MicroflowName|MicroflowQualifiedName)"\s*:\s*"([^"]+)"/gi;
+    let m;
+    while ((m = mfRegex.exec(rawText)) !== null) {
+      const mf = m[1].trim();
+      if (
+        mf &&
+        !mf.startsWith('MenditectMxFrontendTestKit.') &&
+        !mf.startsWith('MenditectPlaywrightConnector.') &&
+        !mf.startsWith('MtaPluginModule.')
+      ) {
+        flows.add(mf);
+      }
+    }
+    return [...flows];
+  };
+
+  const allPlanContents = planFiles.map(pf => ({
+    file: pf.name,
+    content: fs.readFileSync(pf.path, 'utf8')
+  }));
+
   for (const ef of executionFiles) {
     let isTestExecution = false;
     let explicitTcName = null;
+    let rawExecText = '';
 
     try {
-      const jsonContent = JSON.parse(fs.readFileSync(ef.path, 'utf8'));
+      rawExecText = fs.readFileSync(ef.path, 'utf8');
+      const jsonContent = JSON.parse(rawExecText);
       if (jsonContent && typeof jsonContent === 'object') {
         if (
           jsonContent.RollbackTcseAfterExecution !== undefined ||
@@ -3148,12 +3363,13 @@ export function lintArtifacts(outputDir = 'menditect-output', options = {}) {
         }
       }
     } catch (e) {
-      if (ef.name.startsWith('TC_') || ef.name.startsWith('test_')) {
+      if (ef.name.startsWith('TC_') || ef.name.startsWith('test_') || ef.name.endsWith('.jsonl')) {
         isTestExecution = true;
       }
     }
 
-    if (!isTestExecution) continue;
+    const executedDomainFlows = extractDomainMicroflows(rawExecText);
+    if (!isTestExecution && executedDomainFlows.length === 0) continue;
 
     const baseName = ef.name.replace(/\.json$/i, '');
     const cleanBaseName = baseName.replace(/_(?:Persisted|Result|Payload|Output)$/i, '');
@@ -3177,13 +3393,29 @@ export function lintArtifacts(outputDir = 'menditect-output', options = {}) {
     }
 
     if (matchedPlan) {
-      addCheck(
-        `Artifact Traceability: ${ef.name}`,
-        true,
-        null,
-        null,
-        `Matched Execution Plan '${matchedPlan.file}'`
-      );
+      // Also verify that any domain microflows invoked in the execution payload match the plan (or another valid EP_*.md in plansDir)
+      const unmatchedFlows = executedDomainFlows.filter(mf => {
+        const shortName = mf.includes('.') ? mf.split('.').pop() : mf;
+        return !matchedPlan.content.includes(mf) && !matchedPlan.content.includes(shortName) &&
+          !allPlanContents.some(p => p.content.includes(mf) || p.content.includes(shortName));
+      });
+      if (unmatchedFlows.length > 0) {
+        addCheck(
+          `Artifact Traceability: ${ef.name}`,
+          false,
+          `[MTA-LINT-E010] [unplanned-microflow-execution] Execution payload '${ef.name}' invokes domain microflow(s) [${unmatchedFlows.join(', ')}] not documented in '${matchedPlan.file}' or any Execution Plan in '${plansDir}' (PAT-43, ANTI-46).`,
+          "MTA-LINT-E010",
+          `Unplanned microflow(s) executed: ${unmatchedFlows.join(', ')}`
+        );
+      } else {
+        addCheck(
+          `Artifact Traceability: ${ef.name}`,
+          true,
+          null,
+          null,
+          `Matched Execution Plan '${matchedPlan.file}'`
+        );
+      }
     } else {
       addCheck(
         `Artifact Traceability: ${ef.name}`,
@@ -3641,6 +3873,31 @@ category: "Backend"
           const preExecRollbackNo = verifyPreExecGate(draftPlanPath);
           addCheck("ANTI-56: pre-exec blocks AUTO_APPROVED when rollback is No", !preExecRollbackNo.valid && preExecRollbackNo.errors.some(e => e.code === 'AUTO_APPROVE_FORBIDDEN'), "Expected AUTO_APPROVE_FORBIDDEN when rollback is No");
 
+          // Test rollback: "false" & Conservative Gate prompt_spec rejection in AUTO_APPROVED
+          const autoApprovedRollbackFalseMd = autoApprovedMd.replace('status: "AUTO_APPROVED"', 'status: "AUTO_APPROVED"\nrollback: "false"');
+          fs.writeFileSync(draftPlanPath, autoApprovedRollbackFalseMd, 'utf8');
+          const preExecRollbackFalse = verifyPreExecGate(draftPlanPath);
+          addCheck("ANTI-56: pre-exec blocks AUTO_APPROVED when rollback is 'false'", !preExecRollbackFalse.valid && preExecRollbackFalse.errors.some(e => e.code === 'AUTO_APPROVE_FORBIDDEN'), "Expected AUTO_APPROVE_FORBIDDEN when rollback is 'false'");
+
+          // Test Gate 2 verifyPreBuildGate null target_suite_key rejection
+          const nullSuitePreBuildMd = baseDraftMd
+            .replace(/status:\s*"?[A-Z_]+"?/i, 'status: "APPROVED"')
+            .replace('approved_by: null', 'approved_by: "user"')
+            .replace('approved_at: null', 'approved_at: "2026-10-24T12:00:00Z"')
+            .replace('target_configuration_key: null', 'target_configuration_key: 131');
+          fs.writeFileSync(draftPlanPath, nullSuitePreBuildMd, 'utf8');
+          const preBuildNullSuite = verifyPreBuildGate(draftPlanPath);
+          addCheck("ANTI-56: pre-build blocks null target_suite_key (prevents Number(null)===0 coercion)", !preBuildNullSuite.valid && preBuildNullSuite.errors.some(e => e.code === 'INVALID_SUITE_KEY'), "Expected INVALID_SUITE_KEY on target_suite_key: null");
+
+          // Test 68: Gate 2 verifyPreBuildGate rejects target_suite_key: 0 and NEW_SUITE with null target_suite
+          const zeroSuitePreBuildMd = nullSuitePreBuildMd.replace('target_suite_key: null', 'target_suite_key: 0');
+          fs.writeFileSync(draftPlanPath, zeroSuitePreBuildMd, 'utf8');
+          const preBuildZeroSuite = verifyPreBuildGate(draftPlanPath);
+          const newSuiteNullNameMd = nullSuitePreBuildMd.replace('target_suite_key: null', 'target_suite_key: "NEW_SUITE"\ntarget_suite: null');
+          fs.writeFileSync(draftPlanPath, newSuiteNullNameMd, 'utf8');
+          const preBuildNewSuiteNull = verifyPreBuildGate(draftPlanPath);
+          addCheck("F-02: pre-build blocks target_suite_key: 0 and NEW_SUITE without valid target_suite name", !preBuildZeroSuite.valid && preBuildZeroSuite.errors.some(e => e.code === 'INVALID_SUITE_KEY') && !preBuildNewSuiteNull.valid && preBuildNewSuiteNull.errors.some(e => e.code === 'INVALID_SUITE_KEY'), "Expected INVALID_SUITE_KEY on target_suite_key: 0 and NEW_SUITE with null target_suite");
+
           const builtVerifiedMd = baseDraftMd
             .replace(/status:\s*"?[A-Z_]+"?/i, 'status: "BUILT_AND_VERIFIED"')
             .replace('approved_by: null', 'approved_by: "user"')
@@ -3654,6 +3911,28 @@ category: "Backend"
           }
         }
       }
+
+      // Test --reseal-wiring on locked plan (allows non-assertion wiring update while blocking assertion tampering)
+      const resealPlanContent = samplePlanContent
+        .replace('status: "DRAFT"', `status: "APPROVED"\nlocked_sha256: "${lockRes1.hash}"\nprotection_level: "locked"`)
+        .replace('Amount = 100.00', 'Amount = 100.00, Description = "Seeded"');
+      fs.writeFileSync(tempLockPlan, resealPlanContent, 'utf8');
+      const resealResOk = lockExecutionPlan(tempLockPlan, { resealWiring: true });
+      addCheck("PAT-124: lock --reseal-wiring updates hash when IMMUTABLE_ASSERTION_ANCHOR and assertion match", resealResOk.valid && resealResOk.hash !== lockRes1.hash, "Expected valid --reseal-wiring hash update");
+
+      const tamperedResealContent = resealPlanContent.replace(/25\.00/g, '99.99').replace('ASSERT_EQUAL=99.99', 'ASSERT_EQUAL=25.00');
+      fs.writeFileSync(tempLockPlan, tamperedResealContent, 'utf8');
+      const resealResFail = lockExecutionPlan(tempLockPlan, { resealWiring: true });
+      addCheck("ANTI-78: lock --reseal-wiring blocks tampered assertion value", !resealResFail.valid && resealResFail.errors.some(e => e.code === 'LOCKED_TEST_TAMPERED'), "Expected LOCKED_TEST_TAMPERED on --reseal-wiring with altered assertion");
+
+      // Test 69: lock --reseal-wiring rejects assertion softening when expected value is moved to a non-assertion cell
+      const decoyResealContent = resealPlanContent
+        .replace('Amount = 100.00', 'Amount = 25.00')
+        .replace('Assert res == 25.00', 'Assert res == 20.00')
+        .replace('| 2 | Step 2: Assert Return Value | `25.00` |', '| 2 | Step 2: Assert Return Value | `20.00` |');
+      fs.writeFileSync(tempLockPlan, decoyResealContent, 'utf8');
+      const decoyResealRes = lockExecutionPlan(tempLockPlan, { resealWiring: true });
+      addCheck("F-06: lock --reseal-wiring blocks assertion tampering even when anchor value exists in non-assertion cell", !decoyResealRes.valid && decoyResealRes.errors.some(e => e.code === 'LOCKED_TEST_TAMPERED'), "Expected LOCKED_TEST_TAMPERED when assertion cell is altered but decoy value remains in non-assertion cell");
     } finally {
       if (fs.existsSync(tempLockPlan)) {
         try { fs.unlinkSync(tempLockPlan); } catch (e) {}
@@ -3704,6 +3983,99 @@ category: "Backend"
     if (fs.existsSync(validOrderedVal) && fs.existsSync(suitePassServer)) {
       const res = runSmokeAudit(validOrderedVal, suitePassServer);
       addCheck("Fixture: Suite smoke audit passes on matching 3-case suite", res.valid, `Expected valid suite audit, got errors: ${res.errors.map(e => e.message).join('; ')}`);
+
+      // Test Multi-File Variadic 3-Case Smoke Audit (simulating 3 separate GetTestCaseDetails JSON files)
+      const tempCase1 = path.join(fixturesDir, 'temp_case_101.json');
+      const tempCase2 = path.join(fixturesDir, 'temp_case_102.json');
+      const tempCase3 = path.join(fixturesDir, 'temp_case_103.json');
+      try {
+        const suiteObj = JSON.parse(fs.readFileSync(suitePassServer, 'utf8'));
+        fs.writeFileSync(tempCase1, JSON.stringify({
+          key: "101",
+          name: suiteObj.testCases[0].name,
+          SequenceNumber: 1,
+          description: suiteObj.testCases[0].description,
+          testSteps: [suiteObj.testSteps[0]],
+          dataVariationItems: [suiteObj.dataVariationItems[0]],
+          dataVariations: suiteObj.dataVariations,
+          TCER_TestConstructionErrors: 0
+        }), 'utf8');
+        fs.writeFileSync(tempCase2, JSON.stringify({
+          key: "102",
+          name: suiteObj.testCases[1].name,
+          SequenceNumber: 2,
+          description: suiteObj.testCases[1].description,
+          testSteps: suiteObj.testSteps.slice(1, 6),
+          dataVariationItems: suiteObj.dataVariationItems.slice(1),
+          dataVariations: [],
+          TCER_TestConstructionErrors: 0
+        }), 'utf8');
+        fs.writeFileSync(tempCase3, JSON.stringify({
+          key: "103",
+          name: suiteObj.testCases[2].name,
+          SequenceNumber: 3,
+          description: suiteObj.testCases[2].description,
+          testSteps: [suiteObj.testSteps[6]],
+          dataVariationItems: [],
+          dataVariations: [],
+          TCER_TestConstructionErrors: 0
+        }), 'utf8');
+        const multiRes = runSmokeAudit(validOrderedVal, [tempCase1, tempCase2, tempCase3]);
+        addCheck("PAT-03: Variadic multi-file smoke audit passes across 3 separate case JSON files", multiRes.valid, `Expected valid variadic 3-case audit, got errors: ${multiRes.errors.map(e => e.message).join('; ')}`);
+
+        // Test 70: Variadic multi-file smoke audit merges dataVariations across Case 1 and Case 2
+        const case1SplitVars = [
+          { key: "301", name: "Valid Submission", description: "Submits form nominal", TCVA_TestCaseVariationValues: [{ value: "test@example.com" }] },
+          { key: "302", name: "Alternate Submission", description: "Submits form alternate", TCVA_TestCaseVariationValues: [{ value: "test2@example.com" }] }
+        ];
+        const case2SplitVars = [
+          { key: "301", name: "Valid Submission", description: "Submits form nominal", TCVA_TestCaseVariationValues: [{ value: "john@example.com" }, { value: "btnSubmit" }] },
+          { key: "302", name: "Alternate Submission", description: "Submits form alternate", TCVA_TestCaseVariationValues: [{ value: "jane@example.com" }, { value: "btnSubmit" }] }
+        ];
+        fs.writeFileSync(tempCase1, JSON.stringify({
+          key: "101",
+          name: suiteObj.testCases[0].name,
+          SequenceNumber: 1,
+          description: suiteObj.testCases[0].description,
+          testSteps: [suiteObj.testSteps[0]],
+          dataVariationItems: [suiteObj.dataVariationItems[0]],
+          dataVariations: case1SplitVars,
+          TCER_TestConstructionErrors: 0
+        }), 'utf8');
+        fs.writeFileSync(tempCase2, JSON.stringify({
+          key: "102",
+          name: suiteObj.testCases[1].name,
+          SequenceNumber: 2,
+          description: suiteObj.testCases[1].description,
+          testSteps: suiteObj.testSteps.slice(1, 6),
+          dataVariationItems: suiteObj.dataVariationItems.slice(1),
+          dataVariations: case2SplitVars,
+          TCER_TestConstructionErrors: 0
+        }), 'utf8');
+        const splitMultiRes = runSmokeAudit(validOrderedVal, [tempCase1, tempCase2, tempCase3]);
+        const case2TamperedVars = [
+          { key: "301", name: "Valid Submission", description: "Submits form nominal", TCVA_TestCaseVariationValues: [{ value: "WRONG_CASE2_VALUE" }, { value: "SubmitButton" }] },
+          { key: "302", name: "Alternate Submission", description: "Submits form alternate", TCVA_TestCaseVariationValues: [{ value: "jane@example.com" }, { value: "SaveButton" }] }
+        ];
+        fs.writeFileSync(tempCase2, JSON.stringify({
+          key: "102",
+          name: suiteObj.testCases[1].name,
+          SequenceNumber: 2,
+          description: suiteObj.testCases[1].description,
+          testSteps: suiteObj.testSteps.slice(1, 6),
+          dataVariationItems: suiteObj.dataVariationItems.slice(1),
+          dataVariations: case2TamperedVars,
+          TCER_TestConstructionErrors: 0
+        }), 'utf8');
+        const splitTamperedRes = runSmokeAudit(validOrderedVal, [tempCase1, tempCase2, tempCase3]);
+        addCheck("F-05: Variadic smoke audit merges per-case dataVariations across multiple cases", splitMultiRes.valid && !splitTamperedRes.valid && splitTamperedRes.errors.some(e => e.code === 'CELL_VALUE_MISMATCH'), `Expected valid merged multi-case variation audit and caught Case 2 cell mismatch, got: ${splitMultiRes.errors.map(e => e.message).join('; ')}`);
+      } finally {
+        for (const f of [tempCase1, tempCase2, tempCase3]) {
+          if (fs.existsSync(f)) {
+            try { fs.unlinkSync(f); } catch (e) {}
+          }
+        }
+      }
     }
 
     // Test MTA-LINT-E010 Artifact Traceability
@@ -3749,6 +4121,15 @@ category: "Backend"
 
       const cleanRes = lintArtifacts(tempArtifactsDir);
       addCheck("MTA-LINT-E010: Valid plan and execution pair passes traceability audit", cleanRes.valid, `Expected valid, got errors: ${cleanRes.errors.map(e => e.message).join('; ')}`);
+
+      // Test 71: Unplanned domain microflow execution caught even when filename matches existing EP_*.md
+      fs.writeFileSync(path.join(tempArtifactsDir, 'TC_ValidFeature.json'), JSON.stringify({
+        RollbackTcseAfterExecution: "Yes",
+        TCEX_RQ_TestStepRun: [{ MicroflowName: "Module.ACT_UnplannedSneakyFlow" }]
+      }), 'utf8');
+      const unplannedFlowRes = lintArtifacts(tempArtifactsDir);
+      const caughtUnplannedFlow = !unplannedFlowRes.valid && unplannedFlowRes.errors.some(e => e.code === 'MTA-LINT-E010' && e.message.includes('ACT_UnplannedSneakyFlow'));
+      addCheck("F-07: Artifact traceability catches execution of unplanned domain microflow", caughtUnplannedFlow, "Expected MTA-LINT-E010 when execution payload invokes unplanned microflow");
     } finally {
       if (fs.existsSync(tempArtifactsDir)) {
         try { fs.rmSync(tempArtifactsDir, { recursive: true, force: true }); } catch (e) {}
