@@ -100,14 +100,31 @@ function refreshConfigAndEnv() {
   config = {};
   const possibleConfigPaths = [
     process.env.MTA_CONFIG_PATH,
-    ...candidateDirs.map(d => path.join(d, 'mta_config.json'))
+    ...([...candidateDirs].reverse().map(d => path.join(d, 'mta_config.json')))
   ].filter(Boolean);
 
   for (const p of possibleConfigPaths) {
     if (fs.existsSync(p)) {
       try {
-        config = JSON.parse(fs.readFileSync(p, 'utf8'));
-        break;
+        const loaded = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (loaded && Object.keys(loaded).length > 0) {
+          config = loaded;
+          break;
+        }
+
+      } catch (e) {}
+    }
+  }
+
+  if (config.workspace_dir && fs.existsSync(config.workspace_dir)) {
+    process.env.MTA_WORKSPACE_DIR = config.workspace_dir;
+    const wsConfigPath = path.join(config.workspace_dir, 'mta_config.json');
+    if (fs.existsSync(wsConfigPath)) {
+      try {
+        const wsCfg = JSON.parse(fs.readFileSync(wsConfigPath, 'utf8'));
+        if (wsCfg && Object.keys(wsCfg).length > 0) {
+          config = { ...config, ...wsCfg };
+        }
       } catch (e) {}
     }
   }
@@ -308,7 +325,8 @@ async function makeRequest(payloadString, requestId, retryCount = 0) {
     if (isMutatingOrExec) {
       const lintMod = await getMtaLintModule();
       if (lintMod && typeof lintMod.evaluateHookPayload === 'function') {
-        const evalCwd = config.workspace_dir || (process.env.MTA_CONFIG_PATH ? path.dirname(process.env.MTA_CONFIG_PATH) : process.cwd());
+        const rawCwd = config.workspace_dir || process.env.MTA_WORKSPACE_DIR || (process.env.MTA_CONFIG_PATH ? path.dirname(process.env.MTA_CONFIG_PATH) : process.cwd());
+        const evalCwd = path.resolve(rawCwd);
         const decision = lintMod.evaluateHookPayload({
           hook_event_name: 'PreToolUse',
           tool_name: 'call_mcp_tool',

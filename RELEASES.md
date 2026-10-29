@@ -4,6 +4,7 @@ This page lists all the releases of the Menditect Agent Workspace Template, with
 
 | Release Version | Date | Key Highlights / Release Message |
 | :--- | :--- | :--- |
+| [v1.11.1](releases/v1.11.1.md) | 2026-10-29 | bugfix in mta-proxy.js |
 | [v1.11.0](releases/v1.11.0.md) | 2026-10-27 | improved linting and added hooks to enforce state model |
 | [v1.10.9](releases/v1.10.9.md) | 2026-10-22 | updated linter for state model changes |
 | [v1.10.8](releases/v1.10.8.md) | 2026-10-20 | improved linters for datavariation |
