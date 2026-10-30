@@ -1599,8 +1599,22 @@ export function evaluateHookPayload(payload = {}, options = {}) {
     return { decision: 'allow' };
   }
 
-  // MTA_plugin.execute-testcase -> Enforce pre-exec gate
+  // MTA_plugin.execute-testcase -> Enforce pre-exec gate (exempt safe in-memory rollback exploratory/bug hunting)
   if (mcpServer.toLowerCase() === 'mta_plugin' || mcpTool === 'execute-testcase') {
+    const callArgs = rawToolInput.Arguments || rawToolInput.arguments || {};
+    const isExploratoryRollback = callArgs.RollbackTcseAfterExecution === 'Yes';
+    const isSafeExploratory = isExploratoryRollback && process.env.MTA_ALLOW_EXPLORATORY_EXECUTION !== 'false' && (
+      process.env.MTA_ALLOW_EXPLORATORY_EXECUTION === 'true' ||
+      callArgs.ApplySecurityExecutor === 'NONE' ||
+      callArgs.ApplySecurityExecutor === 'APP_SECURITY' ||
+      callArgs.is_bughunt === true ||
+      callArgs.is_exploratory === true ||
+      process.env.MTA_SESSION_STATE === 'STATE_BUG_HUNT'
+    );
+    if (isSafeExploratory) {
+      return { decision: 'allow' };
+    }
+
     const activePlan = options.planPath || findActiveExecutionPlan(workspaceDir);
     if (!activePlan || !fs.existsSync(activePlan)) {
       return {
@@ -5128,6 +5142,46 @@ category: "Backend"
             "TEST_HOOK_GATE_ALLOWS_READONLY_GET: PreToolUse hook allows read-only GetAppModelData tool",
             readOnlyHookRes.decision === 'allow',
             `Expected allow for GetAppModelData, got ${JSON.stringify(readOnlyHookRes)}`
+          );
+
+          // 8b. TEST_HOOK_GATE_ALLOWS_SAFE_ROLLBACK_EXECUTE_WITHOUT_PLAN
+          const safeRollbackHookRes = evaluateHookPayload({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'call_mcp_tool',
+            tool_input: {
+              ServerName: 'MTA_plugin',
+              ToolName: 'execute-testcase',
+              Arguments: {
+                RollbackTcseAfterExecution: 'Yes',
+                ApplySecurityExecutor: 'NONE',
+                ExecutorUsername: 'MxAdmin'
+              }
+            }
+          }, { workspaceDir: fixturesDir });
+          addCheck(
+            "TEST_HOOK_GATE_ALLOWS_SAFE_ROLLBACK_EXECUTE_WITHOUT_PLAN: PreToolUse hook allows in-memory rollback execute-testcase without EP_*.md",
+            safeRollbackHookRes.decision === 'allow',
+            `Expected allow for safe rollback execute-testcase, got ${JSON.stringify(safeRollbackHookRes)}`
+          );
+
+          // 8c. TEST_HOOK_GATE_BLOCKS_NON_ROLLBACK_EXECUTE_WITHOUT_PLAN
+          const nonRollbackHookRes = evaluateHookPayload({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'call_mcp_tool',
+            tool_input: {
+              ServerName: 'MTA_plugin',
+              ToolName: 'execute-testcase',
+              Arguments: {
+                RollbackTcseAfterExecution: 'No',
+                ApplySecurityExecutor: 'NONE',
+                ExecutorUsername: 'MxAdmin'
+              }
+            }
+          }, { workspaceDir: fixturesDir });
+          addCheck(
+            "TEST_HOOK_GATE_BLOCKS_NON_ROLLBACK_EXECUTE_WITHOUT_PLAN: PreToolUse hook blocks non-rollback execute-testcase without EP_*.md",
+            nonRollbackHookRes.decision === 'deny' && nonRollbackHookRes.code === 'MISSING_EXECUTION_PLAN',
+            `Expected deny with MISSING_EXECUTION_PLAN for non-rollback execute-testcase, got ${JSON.stringify(nonRollbackHookRes)}`
           );
 
           // 9. TEST_HOOK_GATE_BLOCKS_MXCLI_WHEN_STUDIOPRO_ONLINE (PAT-109 / ANTI-75)

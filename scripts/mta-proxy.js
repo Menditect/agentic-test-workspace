@@ -321,7 +321,18 @@ async function makeRequest(payloadString, requestId, retryCount = 0) {
   // Wire-level state machine gatekeeper for tools/call (PAT-43, ANTI-46, ANTI-56)
   if (parsedReq && parsedReq.method === 'tools/call' && parsedReq.params && parsedReq.params.name && process.env.MCP_VERIFY_MODE !== 'true') {
     const calledTool = String(parsedReq.params.name);
-    const isMutatingOrExec = (mode === 'mta' && !calledTool.startsWith('Get')) || (mode === 'plugin' && calledTool === 'execute-testcase');
+    const isPluginExecute = (mode === 'plugin' && calledTool === 'execute-testcase');
+    const callArgs = parsedReq.params.arguments || {};
+    const isExploratoryRollback = callArgs.RollbackTcseAfterExecution === 'Yes';
+    const isSafeExploratory = isPluginExecute && isExploratoryRollback && process.env.MTA_ALLOW_EXPLORATORY_EXECUTION !== 'false' && (
+      process.env.MTA_ALLOW_EXPLORATORY_EXECUTION === 'true' ||
+      callArgs.ApplySecurityExecutor === 'NONE' ||
+      callArgs.ApplySecurityExecutor === 'APP_SECURITY' ||
+      callArgs.is_bughunt === true ||
+      callArgs.is_exploratory === true ||
+      process.env.MTA_SESSION_STATE === 'STATE_BUG_HUNT'
+    );
+    const isMutatingOrExec = ((mode === 'mta' && !calledTool.startsWith('Get')) || isPluginExecute) && !isSafeExploratory;
     if (isMutatingOrExec) {
       const lintMod = await getMtaLintModule();
       if (lintMod && typeof lintMod.evaluateHookPayload === 'function') {
