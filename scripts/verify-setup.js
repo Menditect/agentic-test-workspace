@@ -463,6 +463,30 @@ function checkSecurityHygiene() {
       console.log(`  ${PASS} Cloned agentic-test-workspace repository is clean (tools isolation verified).`);
     }
   }
+
+  // 6. Check Mendix Project Git Preparation for MTA Add-on modules
+  const mendixProjectDir = config.mendix_project_dir
+    ? path.resolve(config.mendix_project_dir)
+    : (config.mendix_mpr_path ? path.dirname(path.resolve(config.mendix_mpr_path)) : null);
+
+  if (mendixProjectDir && fs.existsSync(mendixProjectDir)) {
+    const mendixGitDir = path.join(mendixProjectDir, '.git');
+    if (fs.existsSync(mendixGitDir)) {
+      const mendixGitIgnore = path.join(mendixProjectDir, '.gitignore');
+      let isGitPrepared = false;
+      if (fs.existsSync(mendixGitIgnore)) {
+        const gitIgnoreText = fs.readFileSync(mendixGitIgnore, 'utf8');
+        isGitPrepared = gitIgnoreText.includes('javasource/*/actions/*') && gitIgnoreText.includes('javasource/*/proxies/*');
+      }
+      if (isGitPrepared) {
+        console.log(`  ${PASS} Mendix project Git is prepared for MTA Add-on modules (.gitignore configured).`);
+      } else {
+        console.warn(`  ${WARN} Mendix project is a Git repository, but Add-on module ignore rules are missing in .gitignore!`);
+        console.warn(`         Run "npm run setup" or "npm run update:modules" to prepare Git and prevent merge conflicts.`);
+        console.warn(`         (Reference: https://documentation.menditect.com/installation/import-plugin#prepare-git)`);
+      }
+    }
+  }
 }
 
 function checkAgentDirectives() {

@@ -342,6 +342,10 @@ These local runners automatically export `MTA_CONFIG_PATH` pointing to the works
 | **Live MTA Server MCP** | Connects to the MTA primitive tools server (`mcp_endpoint`), tests JSON-RPC handshake, and validates Bearer token authentication. |
 | **Live MTA Plugin MCP** | Connects to the local Mendix runtime plugin (`plugin_mcp_url`), checks handshake response, and verifies authorization. |
 | **Live Studio Pro MCP** | *(If `model_source: "studiopro"`)* Verifies live connection to the Mendix Studio Pro MCP server (`studiopro_mcp_url`). |
+| **Mendix Git & Add-on Hygiene** | Validates that Git is properly prepared for MTA Add-on modules (`.gitignore` rules to prevent merge conflicts on generated Java actions/proxies per [Menditect Documentation](https://documentation.menditect.com/installation/import-plugin#prepare-git)). |
+
+> [!TIP]
+> **Clean Deployment Directory & Git Preparation**: Whenever `npm run setup` or `npm run update:modules` updates Marketplace modules (`MtaPluginModule`, `MenditectMxFrontendTestKit`, `MenditectPlaywrightConnector`, `MenditectMtaCommons`, or the Playwright driver bundle JAR), it automatically cleans the Mendix app's `deployment/` directory to eliminate stale bytecode and prevent compilation/runtime errors. If your Mendix project is tracked by Git, it also prepares Git by untracking cached generated Java files (`modules/javasource/*/actions/*`, `proxies/*`, etc.) and configuring `.gitignore` to prevent team merge conflicts.
 
 <!-- BEGIN_SHARED_MTA_CONFIG_CONTRACT -->
 ## Configuration Contract (`mta_config.json`) & Resolution Hierarchy

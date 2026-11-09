@@ -284,7 +284,7 @@ function discoverWorkspaceConfigCandidates(explicitArgPath = null) {
   return validPaths;
 }
 
-function ensureGitIgnoreEntries(dirPath, entries) {
+function ensureGitIgnoreEntries(dirPath, entries, headerText = 'Menditect Agent local environment & secrets') {
   const gitIgnorePath = path.join(dirPath, '.gitignore');
   let currentContent = '';
   if (fs.existsSync(gitIgnorePath)) {
@@ -302,7 +302,7 @@ function ensureGitIgnoreEntries(dirPath, entries) {
   });
 
   if (linesToAdd.length > 0) {
-    const header = currentContent.trimEnd() ? '\n\n# Menditect Agent local environment & secrets\n' : '# Menditect Agent local environment & secrets\n';
+    const header = currentContent.trimEnd() ? `\n\n# ${headerText}\n` : `# ${headerText}\n`;
     const updated = currentContent.trimEnd() + header + linesToAdd.join('\n') + '\n';
     try {
       fs.writeFileSync(gitIgnorePath, updated, 'utf8');
@@ -311,6 +311,87 @@ function ensureGitIgnoreEntries(dirPath, entries) {
       console.warn(`Warning: Could not update ${gitIgnorePath}: ${e.message}`);
     }
   }
+}
+
+function cleanDeploymentDirectory(projectDir) {
+  if (!projectDir || !fs.existsSync(projectDir)) {
+    return { success: true, notPresent: true };
+  }
+
+  const deploymentDir = path.join(projectDir, 'deployment');
+  if (fs.existsSync(deploymentDir)) {
+    try {
+      fs.rmSync(deploymentDir, { recursive: true, force: true });
+      console.log(`  ${PASS} Cleaned deployment directory (${deploymentDir}) to prevent runtime errors with updated modules.`);
+      return { success: true, cleaned: true, path: deploymentDir };
+    } catch (err) {
+      console.warn(`  ${WARN} Could not remove deployment directory (${deploymentDir}): ${err.message}. If Mendix Studio Pro is running the application, stop it and clean the deployment directory before restarting.`);
+      return { success: false, error: err.message, path: deploymentDir };
+    }
+  }
+  return { success: true, cleaned: false, notPresent: true, path: deploymentDir };
+}
+
+function prepareMendixGitRepo(projectDir) {
+  if (!projectDir || !fs.existsSync(projectDir)) {
+    return { isGit: false };
+  }
+
+  let isGit = false;
+  try {
+    const gitOut = execSync('git rev-parse --is-inside-work-tree', {
+      cwd: projectDir,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8'
+    });
+    isGit = gitOut.trim() === 'true';
+  } catch (e) {
+    isGit = false;
+  }
+
+  if (!isGit) {
+    return { isGit: false };
+  }
+
+  console.log(`Checking Git repository setup in Mendix project (${projectDir})...`);
+
+  // Workaround for Mendix Add-on modules to prevent Git merge conflicts on generated Java files:
+  // https://documentation.menditect.com/installation/import-plugin#prepare-git
+  const patternsToUntrack = [
+    'modules/javasource/*/actions/*',
+    'modules/javasource/*/proxies/*',
+    'modules/javasource/system/*',
+    'javasource/*/actions/*',
+    'javasource/*/proxies/*',
+    'javasource/system/*'
+  ];
+
+  for (const pat of patternsToUntrack) {
+    try {
+      execSync(`git rm -r --cached --ignore-unmatch "${pat}"`, {
+        cwd: projectDir,
+        stdio: ['ignore', 'ignore', 'ignore']
+      });
+    } catch (e) {}
+  }
+
+  const gitIgnoreEntries = [
+    '/modules/javasource/*/actions/*',
+    '/modules/javasource/*/proxies/*',
+    '/modules/javasource/system/*',
+    '/javasource/*/actions/*',
+    '/javasource/*/proxies/*',
+    '/javasource/system/*'
+  ];
+
+  ensureGitIgnoreEntries(
+    projectDir,
+    gitIgnoreEntries,
+    'Menditect MTA Add-on module Git merge conflict workaround (https://documentation.menditect.com/installation/import-plugin#prepare-git)'
+  );
+
+  console.log(`  ${PASS} Prepared Git in Mendix project (untracked generated Java actions/proxies and configured .gitignore).`);
+  return { isGit: true, success: true };
 }
 
 function findMpr(dir) {
@@ -2256,6 +2337,7 @@ async function run(options = {}) {
         const mxVer = state.detectedVersion || '11.0.0';
 
         let stepSubBack = false;
+        let modulesUpdatedCount = 0;
 
         // 1. Automated Module Sync / Upgrade
         if (mxcliBin) {
@@ -2290,6 +2372,7 @@ async function run(options = {}) {
                 const actionLabel = !locInfo.installed ? 'Installing missing' : `Updating ${locInfo.version ? `v${locInfo.version}` : 'installed'} -> v${resolvedRemote.version} for`;
                 console.log(`  ${INFO} ${actionLabel} ${spec.displayName} (${spec.fileName})...`);
                 await installMxModuleFromMarketplace(spec, state.projectDir, mxVer, mxcliBin, { resolvedVersion: resolvedRemote });
+                modulesUpdatedCount++;
               } else {
                 console.log(`  ${PASS} ${spec.fileName} is up to date (v${locInfo.version}).`);
               }
@@ -2302,6 +2385,8 @@ async function run(options = {}) {
               const bundleRes = await ensurePlaywrightDriverBundle(state.projectDir, playwrightReleaseNotes, connectorPath);
               if (bundleRes.success && bundleRes.alreadyInstalled) {
                 console.log(`  ${PASS} Playwright Driver Bundle (driver-bundle-${bundleRes.version}.jar) is up to date in userlib/.`);
+              } else if (bundleRes.success && !bundleRes.alreadyInstalled) {
+                modulesUpdatedCount++;
               }
             }
           } else {
@@ -2575,6 +2660,7 @@ async function run(options = {}) {
                 if (authed) {
                   for (const modSpec of missingPaidMods) {
                     await installMxModuleFromMarketplace(modSpec, state.projectDir, mxVer, mxcliBin);
+                    modulesUpdatedCount++;
                   }
                 } else {
                   console.warn(`  ${WARN} Skipping add-on module download (Mendix PAT not provided). Run "npm run update:modules" anytime.`);
@@ -2584,11 +2670,12 @@ async function run(options = {}) {
               // Ensure Playwright Driver Bundle JAR is present in userlib/ whenever MenditectPlaywrightConnector is installed
               const afterAddonInstall = inspectInstalledMarketplaceModules(state.projectDir);
               if (afterAddonInstall.modules.MenditectPlaywrightConnector?.installed && !afterAddonInstall.driverBundle.installed) {
-                await ensurePlaywrightDriverBundle(
+                const bRes = await ensurePlaywrightDriverBundle(
                   state.projectDir,
                   '',
                   afterAddonInstall.modules.MenditectPlaywrightConnector.mxmodulePath
                 );
+                if (bRes && bRes.success) modulesUpdatedCount++;
               }
             } else {
               console.log(`${PASS} Menditect Paid MTA add-on modules (Frontend TestKit, Playwright Connector, MTA Commons) and Playwright Driver Bundle (${refreshedInstalled.driverBundle.fileName}) are installed.`);
@@ -2599,6 +2686,10 @@ async function run(options = {}) {
         if (stepSubBack) {
           goBack = true;
         } else {
+          if (modulesUpdatedCount > 0) {
+            cleanDeploymentDirectory(state.projectDir);
+          }
+          prepareMendixGitRepo(state.projectDir);
           nextStep = 'model_source';
         }
       }
@@ -3429,6 +3520,8 @@ if (require.main === module) {
     ensureExecutionPlanFolders,
     registerWorkspaceInHub,
     discoverWorkspaceConfigCandidates,
+    cleanDeploymentDirectory,
+    prepareMendixGitRepo,
     runDirectivesOnly,
     run
   };

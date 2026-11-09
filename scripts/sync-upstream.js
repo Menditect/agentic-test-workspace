@@ -1095,6 +1095,8 @@ async function syncMarketplaceModules(options = {}) {
     resolveCompatibleModuleVersion,
     ensurePlaywrightDriverBundle,
     installMxModuleFromMarketplace,
+    cleanDeploymentDirectory,
+    prepareMendixGitRepo,
     findMxcliBinary,
     detectMendixVersion,
     findMpr
@@ -1129,6 +1131,7 @@ async function syncMarketplaceModules(options = {}) {
 
   const authed = await ensureMxcliAuth(mxcliBin);
   let playwrightReleaseNotes = '';
+  let modulesUpdatedCount = 0;
 
   if (authed) {
     for (const spec of modsToSync) {
@@ -1146,6 +1149,7 @@ async function syncMarketplaceModules(options = {}) {
         continue;
       }
       await installMxModuleFromMarketplace(spec, projectDir, mendixVersion, mxcliBin, { resolvedVersion: resolvedRemote });
+      modulesUpdatedCount++;
     }
   } else {
     console.warn('  [WARN] Mendix Marketplace authentication (MENDIX_PAT) not configured; skipping .mxmodule downloads from Marketplace.');
@@ -1158,8 +1162,16 @@ async function syncMarketplaceModules(options = {}) {
     const bundleRes = await ensurePlaywrightDriverBundle(projectDir, playwrightReleaseNotes, connectorPath);
     if (bundleRes.success && bundleRes.alreadyInstalled) {
       console.log(`  [PASS] Playwright Driver Bundle (driver-bundle-${bundleRes.version}.jar) is already up to date in userlib/.`);
+    } else if (bundleRes.success && !bundleRes.alreadyInstalled) {
+      modulesUpdatedCount++;
     }
   }
+
+  if (modulesUpdatedCount > 0 || options.force) {
+    cleanDeploymentDirectory(projectDir);
+  }
+
+  prepareMendixGitRepo(projectDir);
 
   return true;
 }
