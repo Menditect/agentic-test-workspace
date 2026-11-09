@@ -4,6 +4,7 @@ This page lists all the releases of the Menditect Agent Workspace Template, with
 
 | Release Version | Date | Key Highlights / Release Message |
 | :--- | :--- | :--- |
+| [v1.12.1](releases/v1.12.1.md) | 2026-11-09 | fixed bug in verify script for multi app configuration setup |
 | [v1.12.0](releases/v1.12.0.md) | 2026-11-09 | new workspace configuration options available. One central template hub with multiple app specific workspaces |
 | [v1.11.2](releases/v1.11.2.md) | 2026-11-06 | improved linters |
 | [v1.11.1](releases/v1.11.1.md) | 2026-10-29 | bugfix in mta-proxy.js |
