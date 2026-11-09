@@ -347,6 +347,7 @@ async function checkVersions(options = {}) {
     mxcli: null,
     skills: null,
     linter: null,
+    modules: null,
     hasUpdates: false,
     summary: []
   };
@@ -479,6 +480,146 @@ async function checkVersions(options = {}) {
     if (updateAvailable) report.hasUpdates = true;
   }
 
+  if (target === 'all' || target === 'modules') {
+    const {
+      MENDITECT_MARKETPLACE_MODULES,
+      inspectInstalledMarketplaceModules,
+      isPaidMtaServerUrl,
+      checkMxcliAuthStatus,
+      resolveCompatibleModuleVersion,
+      extractPlaywrightDriverVersion,
+      findMxcliBinary,
+      detectMendixVersion,
+      findMpr
+    } = require('./setup');
+
+    const projectDir = config.mendix_project_dir || '';
+    const mprPath = config.mendix_mpr_path || (projectDir ? findMpr(projectDir) : '');
+    const mendixVersion = config.mendix_version || (mprPath ? detectMendixVersion(mprPath) : '') || '11.0.0';
+    const mxcliBin = findMxcliBinary(mprPath);
+    const isAuthed = checkMxcliAuthStatus ? checkMxcliAuthStatus(mxcliBin) : false;
+
+    if (projectDir && fs.existsSync(projectDir)) {
+      const installed = inspectInstalledMarketplaceModules(projectDir);
+      const isPaid = config.mta_license_tier === 'paid' || isPaidMtaServerUrl(config.mta_base_url);
+      const moduleRows = [];
+      let modulesUpdateAvailable = false;
+
+      const modsToCheck = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
+      if (isPaid || installed.modules.MenditectMxFrontendTestKit?.installed || installed.modules.MenditectPlaywrightConnector?.installed || installed.modules.MenditectMtaCommons?.installed) {
+        modsToCheck.push(
+          MENDITECT_MARKETPLACE_MODULES.MenditectMxFrontendTestKit,
+          MENDITECT_MARKETPLACE_MODULES.MenditectPlaywrightConnector,
+          MENDITECT_MARKETPLACE_MODULES.MenditectMtaCommons
+        );
+      }
+
+      let playwrightReleaseNotes = '';
+      for (const spec of modsToCheck) {
+        const locInfo = installed.modules[spec.moduleName] || {};
+        const localVer = locInfo.installed ? (locInfo.version || 'Installed') : '(not installed)';
+        let remoteVer = '(requires PAT auth)';
+        let status = 'Unknown';
+        let needsUpdate = false;
+        let resolvedRemote = null;
+
+        if (isAuthed && mxcliBin) {
+          resolvedRemote = resolveCompatibleModuleVersion(spec.id, mendixVersion, mxcliBin);
+          if (resolvedRemote && resolvedRemote.version) {
+            remoteVer = resolvedRemote.version;
+            if (spec.hasDriverBundle && resolvedRemote.releaseNotes) {
+              playwrightReleaseNotes = resolvedRemote.releaseNotes;
+            }
+            if (!locInfo.installed) {
+              status = 'Not installed (Download available)';
+              needsUpdate = true;
+            } else if (locInfo.version === resolvedRemote.version) {
+              status = 'Up to date';
+            } else {
+              status = 'Update available';
+              needsUpdate = true;
+            }
+          } else {
+            remoteVer = '(not found)';
+            status = locInfo.installed ? 'Installed (remote unavailable)' : 'Not installed';
+          }
+        } else {
+          if (!locInfo.installed) {
+            status = 'Not installed (Run update to authenticate & install)';
+            needsUpdate = true;
+          } else {
+            status = 'Installed (Set MENDIX_PAT or run update to check remote)';
+          }
+        }
+
+        if (needsUpdate) modulesUpdateAvailable = true;
+        moduleRows.push({
+          key: spec.moduleName,
+          name: `${spec.moduleName} (${spec.id})`,
+          spec,
+          localVersion: localVer,
+          remoteVersion: remoteVer,
+          status,
+          needsUpdate,
+          resolvedRemote
+        });
+      }
+
+      // Check Playwright Driver Bundle if Paid or Playwright Connector is installed/checked
+      if (modsToCheck.some(m => m.hasDriverBundle)) {
+        const locBundle = installed.driverBundle;
+        const localBundleVer = locBundle.installed ? locBundle.version : '(not installed)';
+        const localConnectorPath = installed.modules.MenditectPlaywrightConnector?.mxmodulePath || '';
+        const requiredBundleVer = extractPlaywrightDriverVersion(playwrightReleaseNotes, localConnectorPath);
+        let remoteBundleVer = requiredBundleVer || '(from connector)';
+        let bundleStatus = 'Unknown';
+        let bundleNeedsUpdate = false;
+
+        if (!locBundle.installed) {
+          bundleStatus = requiredBundleVer ? 'Not installed (Download available)' : 'Not installed';
+          bundleNeedsUpdate = true;
+        } else if (requiredBundleVer && locBundle.version === requiredBundleVer) {
+          bundleStatus = 'Up to date';
+        } else if (requiredBundleVer && locBundle.version !== requiredBundleVer) {
+          bundleStatus = 'Update available';
+          bundleNeedsUpdate = true;
+        } else {
+          bundleStatus = 'Installed';
+        }
+
+        if (bundleNeedsUpdate) modulesUpdateAvailable = true;
+        moduleRows.push({
+          key: 'driver-bundle',
+          name: 'Playwright Driver Bundle (userlib)',
+          isDriverBundle: true,
+          localVersion: localBundleVer,
+          remoteVersion: remoteBundleVer,
+          status: bundleStatus,
+          needsUpdate: bundleNeedsUpdate,
+          requiredVersion: requiredBundleVer
+        });
+      }
+
+      report.modules = {
+        projectDir,
+        mendixVersion,
+        isAuthed,
+        items: moduleRows,
+        updateAvailable: modulesUpdateAvailable
+      };
+
+      if (modulesUpdateAvailable) report.hasUpdates = true;
+    } else if (target === 'modules') {
+      report.modules = {
+        projectDir: '(not configured)',
+        mendixVersion: '',
+        isAuthed: false,
+        items: [],
+        updateAvailable: false
+      };
+    }
+  }
+
   return report;
 }
 
@@ -535,6 +676,27 @@ function printVersionTable(report) {
     console.log();
   }
 
+  if (report.modules) {
+    const mxLabel = report.modules.mendixVersion ? ` (Mendix ${report.modules.mendixVersion})` : '';
+    console.log(`--- Menditect Mendix Marketplace Modules${mxLabel} ---`);
+    console.log(`Mendix Project: ${report.modules.projectDir}`);
+    if (report.modules.items.length === 0) {
+      console.log('No Mendix project directory configured in mta_config.json. Run "npm run setup" first.');
+    } else {
+      console.log(`${pad('Module / Artifact', 35)} | ${pad('Local Version', 16)} | ${pad('Remote Version', 20)} | Status`);
+      console.log('-'.repeat(88));
+      for (const item of report.modules.items) {
+        console.log(
+          `${pad(item.name, 35)} | ` +
+          `${pad(item.localVersion, 16)} | ` +
+          `${pad(item.remoteVersion, 20)} | ` +
+          `${item.status}`
+        );
+      }
+    }
+    console.log();
+  }
+
   console.log('--------------------------------------------------------------------------------');
   const countUpdates = [];
   if (report.mxcli && report.mxcli.updateAvailable) countUpdates.push('mxcli binary');
@@ -542,6 +704,10 @@ function printVersionTable(report) {
   if (report.skills) {
     const updatedCount = report.skills.items.filter(i => i.needsUpdate).length;
     if (updatedCount > 0) countUpdates.push(`${updatedCount} skill(s) / orchestrator`);
+  }
+  if (report.modules && report.modules.items) {
+    const updatedMods = report.modules.items.filter(i => i.needsUpdate).length;
+    if (updatedMods > 0) countUpdates.push(`${updatedMods} Marketplace module(s) / driver bundle`);
   }
 
   if (countUpdates.length > 0) {
@@ -919,6 +1085,85 @@ async function syncMxcli() {
   }
 }
 
+async function syncMarketplaceModules(options = {}) {
+  const config = options.config || loadConfig();
+  const {
+    MENDITECT_MARKETPLACE_MODULES,
+    inspectInstalledMarketplaceModules,
+    isPaidMtaServerUrl,
+    ensureMxcliAuth,
+    resolveCompatibleModuleVersion,
+    ensurePlaywrightDriverBundle,
+    installMxModuleFromMarketplace,
+    findMxcliBinary,
+    detectMendixVersion,
+    findMpr
+  } = require('./setup');
+
+  const projectDir = config.mendix_project_dir || '';
+  if (!projectDir || !fs.existsSync(projectDir)) {
+    console.log('[NOTICE] No local Mendix project directory configured in mta_config.json. Skipping Marketplace modules sync.');
+    return false;
+  }
+
+  const mprPath = config.mendix_mpr_path || findMpr(projectDir);
+  const mendixVersion = config.mendix_version || (mprPath ? detectMendixVersion(mprPath) : '') || '11.0.0';
+  const mxcliBin = findMxcliBinary(mprPath);
+  if (!mxcliBin) {
+    console.warn('[WARN] mxcli binary not found. Cannot download Marketplace modules.');
+    return false;
+  }
+
+  console.log(`Syncing Menditect Marketplace modules for Mendix ${mendixVersion} in ${projectDir}...`);
+  const installed = inspectInstalledMarketplaceModules(projectDir);
+  const isPaid = config.mta_license_tier === 'paid' || isPaidMtaServerUrl(config.mta_base_url);
+
+  const modsToSync = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
+  if (isPaid || installed.modules.MenditectMxFrontendTestKit?.installed || installed.modules.MenditectPlaywrightConnector?.installed || installed.modules.MenditectMtaCommons?.installed) {
+    modsToSync.push(
+      MENDITECT_MARKETPLACE_MODULES.MenditectMxFrontendTestKit,
+      MENDITECT_MARKETPLACE_MODULES.MenditectPlaywrightConnector,
+      MENDITECT_MARKETPLACE_MODULES.MenditectMtaCommons
+    );
+  }
+
+  const authed = await ensureMxcliAuth(mxcliBin);
+  let playwrightReleaseNotes = '';
+
+  if (authed) {
+    for (const spec of modsToSync) {
+      const locInfo = installed.modules[spec.moduleName] || {};
+      const resolvedRemote = resolveCompatibleModuleVersion(spec.id, mendixVersion, mxcliBin);
+      if (!resolvedRemote || !resolvedRemote.version) {
+        console.warn(`  [WARN] Could not resolve compatible version for ${spec.moduleName} (${spec.id}) on Mendix ${mendixVersion}.`);
+        continue;
+      }
+      if (spec.hasDriverBundle && resolvedRemote.releaseNotes) {
+        playwrightReleaseNotes = resolvedRemote.releaseNotes;
+      }
+      if (!options.force && locInfo.installed && locInfo.version === resolvedRemote.version) {
+        console.log(`  [PASS] ${spec.fileName} is already at latest compatible version (v${locInfo.version}).`);
+        continue;
+      }
+      await installMxModuleFromMarketplace(spec, projectDir, mendixVersion, mxcliBin, { resolvedVersion: resolvedRemote });
+    }
+  } else {
+    console.warn('  [WARN] Mendix Marketplace authentication (MENDIX_PAT) not configured; skipping .mxmodule downloads from Marketplace.');
+  }
+
+  // Ensure Playwright Driver Bundle JAR is up to date whenever MenditectPlaywrightConnector is part of the sync or installed
+  const afterMods = inspectInstalledMarketplaceModules(projectDir);
+  if (modsToSync.some(m => m.hasDriverBundle) || afterMods.modules.MenditectPlaywrightConnector?.installed) {
+    const connectorPath = afterMods.modules.MenditectPlaywrightConnector?.mxmodulePath || '';
+    const bundleRes = await ensurePlaywrightDriverBundle(projectDir, playwrightReleaseNotes, connectorPath);
+    if (bundleRes.success && bundleRes.alreadyInstalled) {
+      console.log(`  [PASS] Playwright Driver Bundle (driver-bundle-${bundleRes.version}.jar) is already up to date in userlib/.`);
+    }
+  }
+
+  return true;
+}
+
 async function run(cliTarget = null) {
   const args = process.argv.slice(2);
   const isCheckOnly = args.includes('--check') || args.includes('-c');
@@ -974,6 +1219,8 @@ async function run(cliTarget = null) {
     await syncLinterTools();
   } else if (target === 'mxcli') {
     await syncMxcli();
+  } else if (target === 'modules') {
+    await syncMarketplaceModules({ force: isForce });
   } else {
     // 'all' (default: npm run update)
     await syncSkills();
@@ -981,6 +1228,8 @@ async function run(cliTarget = null) {
     await syncLinterTools();
     console.log();
     await syncMxcli();
+    console.log();
+    await syncMarketplaceModules({ force: isForce });
   }
   console.log('\n[PASS] Upstream update complete.');
 }
@@ -989,6 +1238,7 @@ module.exports = {
   syncSkills,
   syncLinterTools,
   syncMxcli,
+  syncMarketplaceModules,
   checkVersions,
   printVersionTable,
   getLocalMxcliVersion,

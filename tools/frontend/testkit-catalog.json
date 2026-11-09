@@ -1,0 +1,415 @@
+{
+  "$schema": "https://menditect.com/schemas/frontend-testkit-catalog-v1.json",
+  "version": "2.2.0",
+  "description": "Declarative runtime signature catalog for MenditectMxFrontendTestKit and MenditectPlaywrightConnector microflows (verified against Mendix Microflows.java proxies and api.json).",
+  "lifecycle": {
+    "Start_Frontend_Test_Locally": {
+      "qualifiedName": "MenditectPlaywrightConnector.Start_Frontend_Test_Locally",
+      "parameters": [
+        { "name": "BrowserType", "dataType": "EnumType", "defaultValue": "Chromium" },
+        { "name": "Headless", "dataType": "BooleanType", "defaultValue": "true" },
+        { "name": "Options", "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.LocalStartOptions", "optional": true }
+      ],
+      "returnType": { "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.Browser" }
+    },
+    "Start_MxFrontend_Test_Without_Login": {
+      "qualifiedName": "MenditectMxFrontendTestKit.Start_MxFrontend_Test_Without_Login",
+      "parameters": [
+        { "name": "Browser", "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.Browser", "handleFrom": "browser" },
+        { "name": "Mendix_URL", "dataType": "StringType", "defaultValue": "" },
+        { "name": "Options", "dataType": "ObjectType", "entity": "MenditectMxFrontendTestKit.StartMxFrontendTestOptions", "optional": true }
+      ],
+      "returnType": { "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.Page" }
+    },
+    "Start_MxFrontend_Test_With_Login": {
+      "qualifiedName": "MenditectMxFrontendTestKit.Start_MxFrontend_Test_With_Login",
+      "parameters": [
+        { "name": "Browser", "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.Browser", "handleFrom": "browser" },
+        { "name": "Login_URL", "dataType": "StringType", "defaultValue": "" },
+        { "name": "Username", "dataType": "StringType" },
+        { "name": "Password", "dataType": "StringType" },
+        { "name": "Options", "dataType": "ObjectType", "entity": "MenditectMxFrontendTestKit.StartMxFrontendTestOptions", "optional": true }
+      ],
+      "returnType": { "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.Page" }
+    },
+    "Stop_MxFrontendTest": {
+      "qualifiedName": "MenditectMxFrontendTestKit.Stop_MxFrontendTest",
+      "executionCondition": "Always",
+      "resumeOnException": "_Continue",
+      "parameters": [
+        { "name": "Page", "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.Page", "handleFrom": "page" }
+      ],
+      "returnType": { "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.TraceFile" }
+    },
+    "Teardown_Playwright": {
+      "qualifiedName": "MenditectPlaywrightConnector.Teardown_Playwright",
+      "executionCondition": "Always",
+      "resumeOnException": "_Continue",
+      "parameters": [],
+      "returnType": { "dataType": "VoidType", "entity": null }
+    }
+  },
+  "pageLocator": {
+    "Locate_MxPage": {
+      "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxPage",
+      "parameters": [
+        { "name": "PageClassName", "dataType": "StringType" },
+        { "name": "Page", "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.Page", "handleFrom": "page" },
+        { "name": "Options", "dataType": "ObjectType", "entity": "MenditectMxFrontendTestKit.LocateMxPageOptions", "optional": true }
+      ],
+      "returnType": { "dataType": "ObjectType", "entity": "MenditectMxFrontendTestKit.MxPageLocator" }
+    },
+    "Locate_MxWidget_Dialog": {
+      "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_Dialog",
+      "parameters": [
+        { "name": "Page", "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.Page", "handleFrom": "page" },
+        { "name": "Options", "dataType": "ObjectType", "entity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions", "optional": true }
+      ],
+      "returnType": { "dataType": "ObjectType", "entity": "MenditectMxFrontendTestKit.MxDialogLocator" }
+    }
+  },
+  "widgets": {
+    "TextBox": {
+      "chainLaw": "LAW_1_TWO_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_TextBox",
+        "returnEntity": "MenditectMxFrontendTestKit.MxTextBoxLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "validationLocator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_TextBox_ValidationMessage",
+        "locatorParam": "MxTextBoxLocator",
+        "returnEntity": "MenditectMxFrontendTestKit.MxValidationMessageLocator"
+      },
+      "actions": {
+        "fill": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_Fill_TextBox_Input",
+          "locatorParam": "MxTextBoxLocator",
+          "valueParams": [{ "name": "Value", "dataType": "StringType" }],
+          "optionsParams": [],
+          "returnType": "VoidType"
+        },
+        "clear": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_Clear_TextBox_Input",
+          "locatorParam": "MxTextBoxLocator",
+          "valueParams": [],
+          "optionsParams": [],
+          "returnType": "VoidType"
+        }
+      },
+      "assertions": {
+        "hasValue": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ASR_Has_Value_TextBox_Input",
+          "locatorParam": "MxTextBoxLocator",
+          "valueParams": [{ "name": "Expected", "dataType": "StringType" }],
+          "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.TextBoxInputHasValueOptions" }],
+          "returnType": "VoidType"
+        }
+      }
+    },
+    "TextArea": {
+      "chainLaw": "LAW_1_TWO_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_TextArea",
+        "returnEntity": "MenditectMxFrontendTestKit.MxTextAreaLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "validationLocator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_TextArea_ValidationMessage",
+        "locatorParam": "MxTextAreaLocator",
+        "returnEntity": "MenditectMxFrontendTestKit.MxValidationMessageLocator"
+      },
+      "actions": {
+        "fill": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_Fill_TextArea_Input",
+          "locatorParam": "MxTextAreaLocator",
+          "valueParams": [{ "name": "Value", "dataType": "StringType" }],
+          "optionsParams": [],
+          "returnType": "VoidType"
+        }
+      }
+    },
+    "DatePicker": {
+      "chainLaw": "LAW_1_TWO_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_DatePicker",
+        "returnEntity": "MenditectMxFrontendTestKit.MxDatePickerLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "validationLocator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_DatePicker_ValidationMessage",
+        "locatorParam": "MxDatePickerLocator",
+        "returnEntity": "MenditectMxFrontendTestKit.MxValidationMessageLocator"
+      },
+      "actions": {
+        "fillDate": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_Fill_DatePicker_Input",
+          "locatorParam": "MxDatePickerLocator",
+          "valueParams": [
+            { "name": "Value", "dataType": "DateTimeType" },
+            { "name": "Format", "dataType": "StringType", "defaultValue": "dd-MM-yyyy" },
+            { "name": "UTC", "dataType": "BooleanType", "defaultValue": "false" }
+          ],
+          "optionsParams": [],
+          "returnType": "VoidType"
+        }
+      },
+      "assertions": {
+        "hasValue": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ASR_Has_Value_DatePicker_Input",
+          "locatorParam": "MxDatePickerLocator",
+          "valueParams": [{ "name": "Expected", "dataType": "StringType" }],
+          "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.DatePickerInputHasValueOptions" }],
+          "returnType": "VoidType"
+        }
+      }
+    },
+    "DropDown": {
+      "chainLaw": "LAW_1_TWO_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_DropDown",
+        "returnEntity": "MenditectMxFrontendTestKit.MxDropDownLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "validationLocator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_DropDown_ValidationMessage",
+        "locatorParam": "MxDropDownLocator",
+        "returnEntity": "MenditectMxFrontendTestKit.MxValidationMessageLocator"
+      },
+      "actions": {
+        "selectByLabel": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_SelectOption_DropDown_Select_By_Label",
+          "locatorParam": "MxDropDownLocator",
+          "valueParams": [{ "name": "Label", "dataType": "StringType" }],
+          "optionsParams": [],
+          "returnType": "VoidType"
+        }
+      },
+      "assertions": {
+        "hasValue": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ASR_Has_Value_DropDown_Select",
+          "locatorParam": "MxDropDownLocator",
+          "valueParams": [{ "name": "Expected", "dataType": "StringType" }],
+          "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.DropDownSelectHasValueOptions" }],
+          "returnType": "VoidType"
+        }
+      }
+    },
+    "ReferenceSelector": {
+      "chainLaw": "LAW_1_TWO_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_ReferenceSelector",
+        "returnEntity": "MenditectMxFrontendTestKit.MxReferenceSelectorLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "validationLocator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_ReferenceSelector_ValidationMessage",
+        "locatorParam": "MxReferenceSelectorLocator",
+        "returnEntity": "MenditectMxFrontendTestKit.MxValidationMessageLocator"
+      },
+      "actions": {
+        "selectByLabel": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_SelectOption_ReferenceSelector_Select_By_Label",
+          "locatorParam": "MxReferenceSelectorLocator",
+          "valueParams": [{ "name": "Label", "dataType": "StringType" }],
+          "optionsParams": [],
+          "returnType": "VoidType"
+        }
+      },
+      "assertions": {
+        "hasValue": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ASR_Has_Value_ReferenceSelector_Select",
+          "locatorParam": "MxReferenceSelectorLocator",
+          "valueParams": [{ "name": "Expected", "dataType": "StringType" }],
+          "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.ReferenceSelectorSelectHasValueOptions" }],
+          "returnType": "VoidType"
+        }
+      }
+    },
+    "ComboBox": {
+      "chainLaw": "LAW_3_COMBOBOX_FOUR_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_ComboBox",
+        "returnEntity": "MenditectMxFrontendTestKit.MxComboBoxLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "actions": {
+        "trigger": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_Click_ComboBox_Trigger",
+          "locatorParam": "MxComboBoxLocator",
+          "valueParams": [],
+          "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.ComboBoxTriggerClickOptions" }],
+          "returnType": "VoidType"
+        },
+        "fill": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_Fill_ComboBox_Input",
+          "locatorParam": "MxComboBoxLocator",
+          "valueParams": [{ "name": "Value", "dataType": "StringType" }],
+          "optionsParams": [],
+          "returnType": "VoidType"
+        }
+      }
+    },
+    "Button": {
+      "chainLaw": "LAW_1_TWO_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_Button",
+        "returnEntity": "MenditectMxFrontendTestKit.MxButtonLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "actions": {
+        "click": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_Click_Button",
+          "locatorParam": "MxButtonLocator",
+          "valueParams": [],
+          "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.ButtonClickOptions" }],
+          "returnType": "VoidType"
+        }
+      }
+    },
+    "CheckBox": {
+      "chainLaw": "LAW_1_TWO_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_CheckBox",
+        "returnEntity": "MenditectMxFrontendTestKit.MxCheckBoxLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "validationLocator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_CheckBox_ValidationMessage",
+        "locatorParam": "MxCheckBoxLocator",
+        "returnEntity": "MenditectMxFrontendTestKit.MxValidationMessageLocator"
+      },
+      "actions": {
+        "check": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_Check_CheckBox_Input",
+          "locatorParam": "MxCheckBoxLocator",
+          "valueParams": [],
+          "optionsParams": [],
+          "returnType": "VoidType"
+        },
+        "uncheck": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ACT_Uncheck_CheckBox_Input",
+          "locatorParam": "MxCheckBoxLocator",
+          "valueParams": [],
+          "optionsParams": [],
+          "returnType": "VoidType"
+        }
+      }
+    },
+    "DynamicText": {
+      "chainLaw": "LAW_1_TWO_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_Text",
+        "returnEntity": "MenditectMxFrontendTestKit.MxTextLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "assertions": {
+        "hasText": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ASR_Has_Text_TextWidget",
+          "locatorParam": "MxTextLocator",
+          "valueParams": [{ "name": "Expected", "dataType": "StringType" }],
+          "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.TextWidgetHasTextOptions" }],
+          "returnType": "VoidType"
+        },
+        "containsText": {
+          "qualifiedName": "MenditectMxFrontendTestKit.ASR_Contains_Text_TextWidget",
+          "locatorParam": "MxTextLocator",
+          "valueParams": [{ "name": "Expected", "dataType": "StringType" }],
+          "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.TextWidgetContainsTextOptions" }],
+          "returnType": "VoidType"
+        }
+      }
+    }
+  },
+  "repeatingContainers": {
+    "Gallery": {
+      "chainLaw": "LAW_2_REPEATING_FOUR_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_Gallery",
+        "returnEntity": "MenditectMxFrontendTestKit.MxGalleryLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "filterByText": {
+        "qualifiedName": "MenditectMxFrontendTestKit.ELO_Filter_Gallery_Items_by_Text",
+        "containerParam": "MxGalleryLocator",
+        "textParam": "Text",
+        "optionsParams": [
+          { "name": "FilterByTextOptions", "entity": "MenditectMxFrontendTestKit.GalleryItemsFilterByTextOptions" },
+          { "name": "IsVisibleOptions", "entity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions" }
+        ],
+        "returnEntity": "MenditectMxFrontendTestKit.MxGalleryItemLocator"
+      },
+      "nthItem": {
+        "qualifiedName": "MenditectMxFrontendTestKit.ELO_Nth_Gallery_Item",
+        "containerParam": "MxGalleryLocator",
+        "indexParam": "Index",
+        "optionsParams": [
+          { "name": "IsVisibleOptions", "entity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions" }
+        ],
+        "returnEntity": "MenditectMxFrontendTestKit.MxGalleryItemLocator"
+      },
+      "clickItem": {
+        "qualifiedName": "MenditectMxFrontendTestKit.ACT_Click_Gallery_Item",
+        "locatorParam": "MxGalleryItemLocator",
+        "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.GalleryItemClickOptions" }],
+        "returnType": "VoidType"
+      }
+    },
+    "ListView": {
+      "chainLaw": "LAW_2_REPEATING_FOUR_STEP",
+      "locator": {
+        "qualifiedName": "MenditectMxFrontendTestKit.Locate_MxWidget_ListView",
+        "returnEntity": "MenditectMxFrontendTestKit.MxListViewLocator",
+        "optionsEntity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions"
+      },
+      "filterByText": {
+        "qualifiedName": "MenditectMxFrontendTestKit.ELO_Filter_ListView_Items_by_Text",
+        "containerParam": "MxListViewLocator",
+        "textParam": "Text",
+        "optionsParams": [
+          { "name": "FilterByTextOptions", "entity": "MenditectMxFrontendTestKit.ListViewItemsFilterByTextOptions" },
+          { "name": "IsVisibleOptions", "entity": "MenditectPlaywrightConnector.Locator_IsVisibleOptions" }
+        ],
+        "returnEntity": "MenditectMxFrontendTestKit.MxListViewItemLocator"
+      },
+      "clickItem": {
+        "qualifiedName": "MenditectMxFrontendTestKit.ACT_Click_ListView_Item",
+        "locatorParam": "MxListViewItemLocator",
+        "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.ListViewItemClickOptions" }],
+        "returnType": "VoidType"
+      }
+    }
+  },
+  "genericAssertions": {
+    "ASR_Is_Visible_MxLocator": {
+      "qualifiedName": "MenditectMxFrontendTestKit.ASR_Is_Visible_MxLocator",
+      "locatorParam": "MxLocator",
+      "locatorEntity": "MenditectMxFrontendTestKit.MxLocator",
+      "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.MxLocatorIsVisibleOptions" }],
+      "returnType": "VoidType"
+    },
+    "ASR_Is_Hidden_MxLocator": {
+      "qualifiedName": "MenditectMxFrontendTestKit.ASR_Is_Hidden_MxLocator",
+      "locatorParam": "MxLocator",
+      "locatorEntity": "MenditectMxFrontendTestKit.MxLocator",
+      "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.MxLocatorIsHiddenOptions" }],
+      "returnType": "VoidType"
+    },
+    "ASR_Has_Text_ValidationMessage": {
+      "qualifiedName": "MenditectMxFrontendTestKit.ASR_Has_Text_ValidationMessage",
+      "locatorParam": "MxValidationMessageLocator",
+      "locatorEntity": "MenditectMxFrontendTestKit.MxValidationMessageLocator",
+      "valueParams": [{ "name": "Expected", "dataType": "StringType" }],
+      "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.ValidationMessageHasTextOptions" }],
+      "returnType": "VoidType"
+    },
+    "ASR_Contains_Text_ValidationMessage": {
+      "qualifiedName": "MenditectMxFrontendTestKit.ASR_Contains_Text_ValidationMessage",
+      "locatorParam": "MxValidationMessageLocator",
+      "locatorEntity": "MenditectMxFrontendTestKit.MxValidationMessageLocator",
+      "valueParams": [{ "name": "Expected", "dataType": "StringType" }],
+      "optionsParams": [{ "name": "Options", "entity": "MenditectMxFrontendTestKit.ValidationMessageContainsTextOptions" }],
+      "returnType": "VoidType"
+    }
+  }
+}

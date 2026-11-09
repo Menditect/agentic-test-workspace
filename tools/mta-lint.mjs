@@ -1660,6 +1660,141 @@ export function evaluateHookPayload(payload = {}, options = {}) {
 }
 
 // ==========================================
+// Programmatic MTA_plugin Payload Validator (`lintPluginPayload`)
+// ==========================================
+export function lintPluginPayload(payload = {}, options = {}) {
+  const errors = [];
+  const warnings = [];
+
+  if (!payload || typeof payload !== 'object') {
+    return {
+      valid: false,
+      errors: [{ code: 'PAYLOAD_NOT_OBJECT', message: 'MTA_plugin payload must be a JSON object.' }],
+      warnings,
+    };
+  }
+
+  const steps = payload.TCEX_RQ_TestStepRun;
+  if (!Array.isArray(steps) || steps.length === 0) {
+    errors.push({
+      code: 'MISSING_STEP_RUNS',
+      message: 'MTA_plugin payload must contain a non-empty TCEX_RQ_TestStepRun array.',
+    });
+    return { valid: false, errors, warnings };
+  }
+
+  let hasFrontendStart = false;
+  let hasFrontendStop = false;
+  let hasPlaywrightTeardown = false;
+  const seenStepKeys = new Set();
+
+  for (let idx = 0; idx < steps.length; idx++) {
+    const step = steps[idx];
+    const stepLabel = `Step #${step?.SequenceNumber ?? step?.Key ?? idx + 1}`;
+    if (step?.Key !== undefined) {
+      seenStepKeys.add(step.Key);
+    }
+
+    if (step?.TestStepRunType === 'MicroflowCall') {
+      const mfc = step.TCEX_RQ_TestStepRunMfc;
+      if (!mfc || !mfc.QualifiedName) {
+        errors.push({
+          code: 'MISSING_MFC_QUALIFIED_NAME',
+          message: `${stepLabel}: MicroflowCall step is missing TCEX_RQ_TestStepRunMfc.QualifiedName.`,
+        });
+        continue;
+      }
+      const qName = String(mfc.QualifiedName);
+      if (/Start_Frontend_Test|Start_MxFrontend_Test/i.test(qName)) {
+        hasFrontendStart = true;
+      }
+      if (/Stop_MxFrontendTest/i.test(qName)) {
+        hasFrontendStop = true;
+        if (step.ExecutionCondition !== 'Always') {
+          errors.push({
+            code: 'FRONTEND_STOP_NOT_ALWAYS',
+            message: `${stepLabel} (${qName}): Stop_MxFrontendTest must set ExecutionCondition: "Always" so the browser closes on failure.`,
+          });
+        }
+      }
+      if (/Teardown_Playwright/i.test(qName)) {
+        hasPlaywrightTeardown = true;
+        if (step.ExecutionCondition !== 'Always') {
+          errors.push({
+            code: 'PLAYWRIGHT_TEARDOWN_NOT_ALWAYS',
+            message: `${stepLabel} (${qName}): Teardown_Playwright must set ExecutionCondition: "Always".`,
+          });
+        }
+      }
+
+      // Check Jackson @NonNull UseEmptyObjectList on every TCEX_RQ_MicroflowParameter
+      const params = Array.isArray(mfc.TCEX_RQ_MicroflowParameter) ? mfc.TCEX_RQ_MicroflowParameter : [];
+      for (const p of params) {
+        if (typeof p?.UseEmptyObjectList !== 'boolean') {
+          errors.push({
+            code: 'MISSING_USE_EMPTY_OBJECT_LIST',
+            message: `${stepLabel} (${qName}) parameter '${p?.ParameterName || '?'}': UseEmptyObjectList must be an explicit boolean (true/false) to satisfy MTA_plugin Jackson @NonNull deserialization.`,
+          });
+        }
+        if (p?.DataType === 'DateTimeType') {
+          for (const vr of p.TCEX_RQ_MicroflowParameterValueRun || []) {
+            if (vr?.Value && /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(String(vr.Value).trim())) {
+              errors.push({
+                code: 'LOCALE_SLASH_DATE_INVALID',
+                message: `${stepLabel} (${qName}) parameter '${p.ParameterName}': DateTimeType value '${vr.Value}' uses locale slashes instead of ISO-8601.`,
+              });
+            }
+          }
+        }
+      }
+
+      // Check TCEX_RQ_Smpr references point to an earlier step key
+      for (const smpr of mfc.TCEX_RQ_Smpr || []) {
+        for (const vr of smpr.TCEX_RQ_SmprValueRun || []) {
+          if (vr?.TestStepRunKey_output !== undefined && !seenStepKeys.has(vr.TestStepRunKey_output)) {
+            errors.push({
+              code: 'DANGLING_SMPR_HANDLE',
+              message: `${stepLabel} (${qName}): TCEX_RQ_Smpr parameter '${smpr.ParameterName}' references TestStepRunKey_output=${vr.TestStepRunKey_output}, which does not precede this step.`,
+            });
+          }
+        }
+      }
+
+      // Check TCEX_RQ_Svvr references point to an earlier step key
+      for (const svvr of mfc.TCEX_RQ_Svvr || []) {
+        if (svvr?.TestStepRunKey_output !== undefined && !seenStepKeys.has(svvr.TestStepRunKey_output)) {
+          errors.push({
+            code: 'DANGLING_SVVR_HANDLE',
+            message: `${stepLabel} (${qName}): TCEX_RQ_Svvr references TestStepRunKey_output=${svvr.TestStepRunKey_output}, which does not precede this step.`,
+          });
+        }
+      }
+    } else if (step?.TestStepRunType === 'Oact') {
+      const oact = step.TCEX_RQ_TestStepRunOact;
+      if (oact?.Action === 'Create' && (!oact.RetrieveOption || !oact.RetrieveSet)) {
+        warnings.push({
+          code: 'CREATE_MISSING_RETRIEVE_OPTION',
+          message: `${stepLabel}: Create Oact on '${oact?.EntityQualifiedName}' should specify RetrieveOption: "From_database" and RetrieveSet: "Head".`,
+        });
+      }
+    }
+  }
+
+  if (hasFrontendStart && (!hasFrontendStop || !hasPlaywrightTeardown)) {
+    errors.push({
+      code: 'MISSING_FRONTEND_TEARDOWN',
+      message: 'Frontend Playwright payload starts a browser session without both Stop_MxFrontendTest and Teardown_Playwright teardown steps.',
+    });
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
+// ==========================================
 // Execution Plan Linter Engine (mta-lint plan)
 // ==========================================
 export function lintExecutionPlan(filePath) {
@@ -5452,6 +5587,33 @@ category: "Backend"
       try { fs.unlinkSync(tempFixtureLedger); } catch (e) {}
     }
   }
+
+  // Test lintPluginPayload programmatic validator (Jackson @NonNull UseEmptyObjectList & Frontend Teardown)
+  const badPluginPayload = {
+    RollbackTcseAfterExecution: 'Yes',
+    TCEX_RQ_TestStepRun: [
+      {
+        Key: 1,
+        SequenceNumber: 1,
+        TestStepRunType: 'MicroflowCall',
+        ExecutionCondition: 'Always',
+        TCEX_RQ_TestStepRunMfc: {
+          QualifiedName: 'MenditectPlaywrightConnector.Start_Frontend_Test_Locally',
+          TCEX_RQ_MicroflowParameter: [
+            { ParameterName: 'BrowserType', DataType: 'EnumType' }
+          ]
+        }
+      }
+    ]
+  };
+  const badPayloadRes = lintPluginPayload(badPluginPayload);
+  addCheck(
+    "lintPluginPayload: catches missing boolean UseEmptyObjectList and missing Frontend browser teardown",
+    !badPayloadRes.valid &&
+      badPayloadRes.errors.some(e => e.code === 'MISSING_USE_EMPTY_OBJECT_LIST') &&
+      badPayloadRes.errors.some(e => e.code === 'MISSING_FRONTEND_TEARDOWN'),
+    `Expected MISSING_USE_EMPTY_OBJECT_LIST and MISSING_FRONTEND_TEARDOWN, got: ${JSON.stringify(badPayloadRes.errors)}`
+  );
 
   return {
     valid: errors.length === 0,

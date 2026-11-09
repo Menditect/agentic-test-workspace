@@ -1,5 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const https = require('https');
+const zlib = require('zlib');
 const readline = require('readline');
 const { execSync, spawn } = require('child_process');
 
@@ -662,6 +665,14 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
     });
 
     const configMap = new Map();
+    const configurationNames = [];
+
+    // 0. Parse AfterStartupMicroflow in alter settings model
+    let afterStartupMicroflow = '';
+    const afterStartupMatch = output.match(/AfterStartupMicroflow\s*=\s*'([^']*)'/i);
+    if (afterStartupMatch && afterStartupMatch[1]) {
+      afterStartupMicroflow = afterStartupMatch[1].trim();
+    }
 
     // 1. Parse configuration blocks to capture HttpPortNumber / ApplicationRootUrl per configuration
     // Supports both 'create or modify configuration' and 'alter settings configuration'
@@ -669,6 +680,9 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
     let cMatch;
     while ((cMatch = configBlockRegex.exec(output)) !== null) {
       const cfgName = cMatch[1];
+      if (!configurationNames.includes(cfgName)) {
+        configurationNames.push(cfgName);
+      }
       const body = cMatch[2];
       let port = null;
       const portMatch = body.match(/HttpPortNumber\s*=\s*(\d+)/i);
@@ -693,6 +707,12 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
         name: cfgName,
         token: '',
         mtaUrl: null,
+        rawMtaConnectionUrl: '',
+        connectionMethod: '',
+        connectionUsername: '',
+        connectionPassword: '',
+        enableMcpServer: '',
+        rawMcpServerAccessToken: '',
         runtimeUrl,
         pluginUrl,
         pluginToken: null,
@@ -706,11 +726,20 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
     while ((constMatch = constRegex.exec(output)) !== null) {
       const [_, constantName, rawVal, configName] = constMatch;
       const val = rawVal.trim();
+      if (!configurationNames.includes(configName)) {
+        configurationNames.push(configName);
+      }
       if (!configMap.has(configName)) {
         configMap.set(configName, {
           name: configName,
           token: '',
           mtaUrl: null,
+          rawMtaConnectionUrl: '',
+          connectionMethod: '',
+          connectionUsername: '',
+          connectionPassword: '',
+          enableMcpServer: '',
+          rawMcpServerAccessToken: '',
           runtimeUrl: null,
           pluginUrl: null,
           pluginToken: null,
@@ -718,27 +747,54 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
         });
       }
       const entry = configMap.get(configName);
-      if (constantName.toLowerCase().includes('applicationinstancetoken') && val) {
+      const lowerConst = constantName.toLowerCase();
+      if (lowerConst.includes('applicationinstancetoken') && val) {
         entry.token = val;
-      } else if (constantName.toLowerCase().includes('mtaconnectionurl') && val) {
+      } else if (lowerConst.includes('mtaconnectionurl') && val) {
+        entry.rawMtaConnectionUrl = val;
         entry.mtaUrl = val.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
-      } else if (constantName.toLowerCase().includes('mcpserveraccesstoken') && val) {
+      } else if (lowerConst.includes('connectionmethod') && val) {
+        entry.connectionMethod = val;
+      } else if (lowerConst.includes('mtaconnectionusername') && val) {
+        entry.connectionUsername = val;
+      } else if (lowerConst.includes('mtaconnectionpassword') && val) {
+        entry.connectionPassword = val;
+      } else if (lowerConst.includes('enablemcpserver') && val) {
+        entry.enableMcpServer = val;
+      } else if (lowerConst.includes('mcpserveraccesstoken') && val) {
+        entry.rawMcpServerAccessToken = val;
         entry.pluginToken = formatBearerToken(val);
       }
     }
 
     // 3. Global fallbacks if not defined on a specific configuration
     let globalMtaUrl = null;
+    let globalRawMtaConnectionUrl = '';
     const globalUrlMatch = output.match(/alter\s+settings\s+constant\s+'(?:[^']+\.)?MTAConnectionUrl'\s+value\s+'([^']*)'/i);
     if (globalUrlMatch && globalUrlMatch[1] && globalUrlMatch[1].trim()) {
-      globalMtaUrl = globalUrlMatch[1].trim().replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
+      globalRawMtaConnectionUrl = globalUrlMatch[1].trim();
+      globalMtaUrl = globalRawMtaConnectionUrl.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
     }
 
     let globalPluginToken = null;
+    let globalRawMcpServerAccessToken = '';
     const globalTokenMatch = output.match(/alter\s+settings\s+constant\s+'(?:[^']+\.)?McpServerAccessToken'\s+value\s+'([^']*)'/i);
     if (globalTokenMatch && globalTokenMatch[1] && globalTokenMatch[1].trim()) {
-      globalPluginToken = formatBearerToken(globalTokenMatch[1].trim());
+      globalRawMcpServerAccessToken = globalTokenMatch[1].trim();
+      globalPluginToken = formatBearerToken(globalRawMcpServerAccessToken);
     }
+
+    const globalConnectionMethodMatch = output.match(/alter\s+settings\s+constant\s+'(?:[^']+\.)?ConnectionMethod'\s+value\s+'([^']*)'/i);
+    const globalConnectionMethod = globalConnectionMethodMatch && globalConnectionMethodMatch[1] ? globalConnectionMethodMatch[1].trim() : '';
+
+    const globalConnectionUsernameMatch = output.match(/alter\s+settings\s+constant\s+'(?:[^']+\.)?MTAConnectionUsername'\s+value\s+'([^']*)'/i);
+    const globalConnectionUsername = globalConnectionUsernameMatch && globalConnectionUsernameMatch[1] ? globalConnectionUsernameMatch[1].trim() : '';
+
+    const globalConnectionPasswordMatch = output.match(/alter\s+settings\s+constant\s+'(?:[^']+\.)?MTAConnectionPassword'\s+value\s+'([^']*)'/i);
+    const globalConnectionPassword = globalConnectionPasswordMatch && globalConnectionPasswordMatch[1] ? globalConnectionPasswordMatch[1].trim() : '';
+
+    const globalEnableMcpMatch = output.match(/alter\s+settings\s+constant\s+'(?:[^']+\.)?EnableMcpServer'\s+value\s+'([^']*)'/i);
+    const globalEnableMcpServer = globalEnableMcpMatch && globalEnableMcpMatch[1] ? globalEnableMcpMatch[1].trim() : '';
 
     let globalPort = null;
     const globalPortMatch = output.match(/HttpPortNumber\s*=\s*(\d+)/i);
@@ -755,27 +811,717 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
     }
 
     const instances = [];
+    let isPluginConfigured = false;
     for (const entry of configMap.values()) {
+      if (!entry.mtaUrl && globalMtaUrl) entry.mtaUrl = globalMtaUrl;
+      if (!entry.rawMtaConnectionUrl && globalRawMtaConnectionUrl) entry.rawMtaConnectionUrl = globalRawMtaConnectionUrl;
+      if (!entry.pluginToken && globalPluginToken) entry.pluginToken = globalPluginToken;
+      if (!entry.rawMcpServerAccessToken && globalRawMcpServerAccessToken) entry.rawMcpServerAccessToken = globalRawMcpServerAccessToken;
+      if (!entry.connectionMethod && globalConnectionMethod) entry.connectionMethod = globalConnectionMethod;
+      if (!entry.connectionUsername && globalConnectionUsername) entry.connectionUsername = globalConnectionUsername;
+      if (!entry.connectionPassword && globalConnectionPassword) entry.connectionPassword = globalConnectionPassword;
+      if (!entry.enableMcpServer && globalEnableMcpServer) entry.enableMcpServer = globalEnableMcpServer;
+      if (!entry.runtimeUrl && globalRuntimeUrl) entry.runtimeUrl = globalRuntimeUrl;
+      if (!entry.pluginUrl && globalPluginUrl) entry.pluginUrl = globalPluginUrl;
+      if (!entry.pluginPort && globalPort) entry.pluginPort = globalPort;
+
       if (entry.token) {
-        if (!entry.mtaUrl && globalMtaUrl) entry.mtaUrl = globalMtaUrl;
-        if (!entry.pluginToken && globalPluginToken) entry.pluginToken = globalPluginToken;
-        if (!entry.runtimeUrl && globalRuntimeUrl) entry.runtimeUrl = globalRuntimeUrl;
-        if (!entry.pluginUrl && globalPluginUrl) entry.pluginUrl = globalPluginUrl;
-        if (!entry.pluginPort && globalPort) entry.pluginPort = globalPort;
         instances.push(entry);
+      }
+      if (
+        entry.token &&
+        entry.rawMtaConnectionUrl &&
+        entry.connectionMethod &&
+        entry.connectionUsername &&
+        entry.connectionPassword &&
+        entry.enableMcpServer &&
+        entry.rawMcpServerAccessToken
+      ) {
+        isPluginConfigured = true;
       }
     }
 
     return {
       instances,
+      configurationNames,
+      afterStartupMicroflow,
+      isPluginConfigured,
       globalMtaUrl,
+      globalRawMtaConnectionUrl,
       globalPluginToken,
+      globalRawMcpServerAccessToken,
+      globalConnectionMethod,
+      globalConnectionUsername,
+      globalConnectionPassword,
+      globalEnableMcpServer,
       globalRuntimeUrl,
       globalPluginUrl,
       globalPluginPort: globalPort
     };
   } catch (err) {
     return null;
+  }
+}
+
+const MENDITECT_MARKETPLACE_MODULES = {
+  MtaPluginModule: {
+    id: '214717',
+    moduleName: 'MtaPluginModule',
+    displayName: 'MTA App under test Plugin',
+    fileName: 'MtaPluginModule.mxmodule',
+    infoFileName: 'MtaPluginModule_AppStoreInfo.json',
+    requiredFor: 'all',
+    role: 'MTAPluginUser'
+  },
+  MenditectMxFrontendTestKit: {
+    id: '206637',
+    moduleName: 'MenditectMxFrontendTestKit',
+    displayName: 'Menditect Mx Frontend TestKit',
+    fileName: 'MenditectMxFrontendTestKit.mxmodule',
+    infoFileName: 'MenditectMxFrontendTestKit_AppStoreInfo.json',
+    requiredFor: 'paid',
+    role: 'MxFrontendTestKitUser'
+  },
+  MenditectPlaywrightConnector: {
+    id: '214764',
+    moduleName: 'MenditectPlaywrightConnector',
+    displayName: 'Menditect Playwright Connector',
+    fileName: 'MenditectPlaywrightConnector.mxmodule',
+    infoFileName: 'MenditectPlaywrightConnector_AppStoreInfo.json',
+    requiredFor: 'paid',
+    role: 'PlaywrightConnectorUser',
+    hasDriverBundle: true
+  },
+  MenditectMtaCommons: {
+    id: '254123',
+    moduleName: 'MenditectMtaCommons',
+    displayName: 'Menditect MTA Commons',
+    fileName: 'MenditectMtaCommons.mxmodule',
+    infoFileName: 'MenditectMtaCommons_AppStoreInfo.json',
+    requiredFor: 'paid',
+    role: 'MtaCommonsUser'
+  }
+};
+
+function readZipEntriesFromBuffer(buf) {
+  const entries = new Map();
+  if (!buf || buf.length < 22) return entries;
+  try {
+    let eocdPos = -1;
+    const minPos = Math.max(0, buf.length - 65557);
+    for (let i = buf.length - 22; i >= minPos; i--) {
+      if (buf.readUInt32LE(i) === 0x06054b50) {
+        eocdPos = i;
+        break;
+      }
+    }
+    if (eocdPos < 0) return entries;
+    const cdCount = buf.readUInt16LE(eocdPos + 10);
+    const cdOffset = buf.readUInt32LE(eocdPos + 16);
+    let pos = cdOffset;
+    for (let i = 0; i < cdCount && pos + 46 <= buf.length; i++) {
+      if (buf.readUInt32LE(pos) !== 0x02014b50) break;
+      const method = buf.readUInt16LE(pos + 10);
+      const compSize = buf.readUInt32LE(pos + 20);
+      const nameLen = buf.readUInt16LE(pos + 28);
+      const extraLen = buf.readUInt16LE(pos + 30);
+      const commentLen = buf.readUInt16LE(pos + 32);
+      const localHeaderOffset = buf.readUInt32LE(pos + 42);
+      const name = buf.toString('utf8', pos + 46, pos + 46 + nameLen);
+      entries.set(name, { method, compSize, localHeaderOffset });
+      pos += 46 + nameLen + extraLen + commentLen;
+    }
+  } catch (e) {}
+  return entries;
+}
+
+function extractZipEntryFromBuffer(buf, entry) {
+  if (!entry || entry.localHeaderOffset + 30 > buf.length) return null;
+  try {
+    const lho = entry.localHeaderOffset;
+    if (buf.readUInt32LE(lho) !== 0x04034b50) return null;
+    const nameLen = buf.readUInt16LE(lho + 26);
+    const extraLen = buf.readUInt16LE(lho + 28);
+    const dataStart = lho + 30 + nameLen + extraLen;
+    const compData = buf.subarray(dataStart, dataStart + entry.compSize);
+    if (entry.method === 0) {
+      return Buffer.from(compData);
+    } else if (entry.method === 8) {
+      return zlib.inflateRawSync(compData);
+    }
+  } catch (e) {}
+  return null;
+}
+
+function extractVersionFromMxModule(mxmodulePath) {
+  if (!mxmodulePath || !fs.existsSync(mxmodulePath)) return null;
+  try {
+    const buf = fs.readFileSync(mxmodulePath);
+    const entries = readZipEntriesFromBuffer(buf);
+    for (const [name, entry] of entries.entries()) {
+      const m = name.match(/^userlib\/(?:mta-plugin|menditect-[a-z-]+)-([0-9]+\.[0-9]+\.[0-9]+)\.jar$/i);
+      if (m) return m[1];
+    }
+  } catch (e) {}
+  return null;
+}
+
+function extractPlaywrightDriverVersion(releaseNotes, mxmodulePath) {
+  if (releaseNotes && typeof releaseNotes === 'string') {
+    const urlMatch = releaseNotes.match(/driver-bundle\/([0-9]+\.[0-9]+\.[0-9]+)\/driver-bundle-\1\.jar/i);
+    if (urlMatch && urlMatch[1]) return urlMatch[1];
+    const textMatch = releaseNotes.match(/Playwright\s+Driver\s+Bundle(?:\s+Jar)?[\s\S]{0,80}?\b([0-9]+\.[0-9]+\.[0-9]+)\b/i);
+    if (textMatch && textMatch[1]) return textMatch[1];
+  }
+
+  if (mxmodulePath && fs.existsSync(mxmodulePath)) {
+    try {
+      const outerBuf = fs.readFileSync(mxmodulePath);
+      const outerEntries = readZipEntriesFromBuffer(outerBuf);
+      for (const [name, entry] of outerEntries.entries()) {
+        if (/^userlib\/menditect-playwright-connector-.*\.jar$/i.test(name)) {
+          const innerJarBuf = extractZipEntryFromBuffer(outerBuf, entry);
+          if (innerJarBuf) {
+            const innerEntries = readZipEntriesFromBuffer(innerJarBuf);
+            const pomEntry = innerEntries.get('META-INF/maven/com.microsoft.playwright/driver/pom.properties');
+            if (pomEntry) {
+              const pomBuf = extractZipEntryFromBuffer(innerJarBuf, pomEntry);
+              if (pomBuf) {
+                const pomText = pomBuf.toString('utf8');
+                const verMatch = pomText.match(/^\s*version\s*=\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$/m);
+                if (verMatch && verMatch[1]) return verMatch[1].trim();
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  return null;
+}
+
+function inspectInstalledMarketplaceModules(projectDir) {
+  const result = {
+    modulesDir: projectDir ? path.join(projectDir, 'modules') : '',
+    userlibDir: projectDir ? path.join(projectDir, 'userlib') : '',
+    modules: {},
+    driverBundle: {
+      installed: false,
+      version: null,
+      fileName: null,
+      filePath: null
+    }
+  };
+
+  if (!projectDir || !fs.existsSync(projectDir)) return result;
+
+  const modulesDir = path.join(projectDir, 'modules');
+  for (const [key, spec] of Object.entries(MENDITECT_MARKETPLACE_MODULES)) {
+    const mxmodulePath = path.join(modulesDir, spec.fileName);
+    const infoPath = path.join(modulesDir, spec.infoFileName);
+    const installed = fs.existsSync(mxmodulePath);
+    let version = null;
+    let appStoreInfo = null;
+
+    if (fs.existsSync(infoPath)) {
+      try {
+        appStoreInfo = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+        if (appStoreInfo && appStoreInfo.AppStoreVersion) {
+          version = String(appStoreInfo.AppStoreVersion).trim();
+        }
+      } catch (e) {}
+    }
+    if (installed && !version) {
+      version = extractVersionFromMxModule(mxmodulePath) || 'Installed';
+    }
+
+    result.modules[key] = {
+      ...spec,
+      installed,
+      version,
+      mxmodulePath,
+      infoPath,
+      appStoreInfo
+    };
+  }
+
+  const userlibDir = path.join(projectDir, 'userlib');
+  if (fs.existsSync(userlibDir)) {
+    try {
+      const files = fs.readdirSync(userlibDir);
+      for (const f of files) {
+        const m = f.match(/^driver-bundle-([0-9]+\.[0-9]+\.[0-9]+)\.jar$/i);
+        if (m) {
+          result.driverBundle = {
+            installed: true,
+            version: m[1],
+            fileName: f,
+            filePath: path.join(userlibDir, f)
+          };
+          break;
+        }
+      }
+    } catch (e) {}
+  }
+
+  return result;
+}
+
+function isPaidMtaServerUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim().toLowerCase();
+  if (!trimmed) return false;
+  if (trimmed.includes('services.menditect.com')) return false;
+  return /^https?:\/\/|^wss?:\/\//i.test(trimmed);
+}
+
+function compareSemverDesc(a, b) {
+  const pa = String(a || '0.0.0').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '0.0.0').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pb[i] || 0) - (pa[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function isMendixVersionCompatible(minSupported, projectMendixVersion) {
+  if (!minSupported || !projectMendixVersion) return true;
+  const pMin = String(minSupported).replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pProj = String(projectMendixVersion).replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  if (pMin[0] !== pProj[0]) return false;
+  for (let i = 0; i < Math.max(pMin.length, pProj.length); i++) {
+    const a = pProj[i] || 0;
+    const b = pMin[i] || 0;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return true;
+}
+
+function checkMxcliAuthStatus(mxcliBin) {
+  if (!mxcliBin) return false;
+  try {
+    execSync(`"${mxcliBin}" auth status`, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 10000,
+      env: { ...process.env }
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function ensureMxcliAuth(mxcliBin, askFn = null) {
+  if (!mxcliBin) return false;
+  if (checkMxcliAuthStatus(mxcliBin)) return true;
+
+  const envPat = process.env.MENDIX_PAT || process.env.MXCLI_PAT || '';
+  if (envPat) {
+    try {
+      execSync(`"${mxcliBin}" auth login --token "${envPat.trim()}"`, {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 15000
+      });
+      if (checkMxcliAuthStatus(mxcliBin)) return true;
+    } catch (e) {}
+  }
+
+  if (!askFn && !process.stdin.isTTY) {
+    return false;
+  }
+
+  console.log(`\n${NOTICE} Mendix Marketplace authentication is required to download or check .mxmodule packages via mxcli.`);
+  console.log('         Create a Personal Access Token (PAT) at: https://user-settings.mendix.com/');
+  console.log('         (Required scope: mx:marketplace:WaitingRoom or Marketplace read access)\n');
+
+  const promptFunc = askFn || ((q, def) => ask(q, def, { allowBack: false }));
+  const pat = await promptFunc('Enter your Mendix Personal Access Token (PAT) (or press Enter to skip Marketplace download)', '');
+  if (!pat || isBack(pat) || !pat.trim()) {
+    return false;
+  }
+
+  try {
+    execSync(`"${mxcliBin}" auth login --token "${pat.trim()}"`, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 15000
+    });
+    process.env.MENDIX_PAT = pat.trim();
+    console.log(`${PASS} Authenticated mxcli with Mendix Marketplace.`);
+    return true;
+  } catch (err) {
+    console.warn(`${WARN} Failed to authenticate mxcli with provided PAT: ${err.message}`);
+    return false;
+  }
+}
+
+function resolveCompatibleModuleVersion(packageId, mendixVersion, mxcliBin) {
+  if (!mxcliBin || !packageId) return null;
+  const cleanMxVer = (mendixVersion || '11.0.0').trim();
+  const major = cleanMxVer.split('.')[0] || '11';
+
+  try {
+    const out = execSync(`"${mxcliBin}" marketplace versions ${packageId} --json`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 25000,
+      env: { ...process.env }
+    });
+    const parsed = JSON.parse(out);
+    const list = Array.isArray(parsed) ? parsed : (parsed.versions || parsed.items || parsed.data || []);
+    if (!Array.isArray(list) || list.length === 0) return null;
+
+    const normalized = list.map(item => {
+      const ver = String(item.version || item.Version || item.versionNumber || item.number || '').trim();
+      const minMx = String(item.minSupportedMendixVersion || item.MinSupportedMendixVersion || item.mendixVersion || item.frameworkVersion || '').trim();
+      const releaseNotes = item.releaseNotes || item.ReleaseNotes || item.notes || '';
+      const versionGuid = item.guid || item.Guid || item.versionGuid || item.VersionGuid || item.id || item.uuid || '';
+      const appStoreGuid = item.appStoreGuid || item.AppStoreGuid || item.packageGuid || versionGuid;
+      return {
+        version: ver,
+        minSupportedMendixVersion: minMx,
+        releaseNotes,
+        versionGuid,
+        appStoreGuid,
+        raw: item
+      };
+    }).filter(v => v.version);
+
+    // Filter by matching Mendix major version (9., 10., 11.) and minSupportedMendixVersion <= cleanMxVer
+    let candidates = normalized.filter(v => {
+      const verMajor = v.version.split('.')[0];
+      if (verMajor !== major) return false;
+      if (v.minSupportedMendixVersion && !isMendixVersionCompatible(v.minSupportedMendixVersion, cleanMxVer)) {
+        return false;
+      }
+      return true;
+    });
+
+    // Fallback if strict minSupportedMendixVersion filtered all out: match by Mendix major version prefix
+    if (candidates.length === 0) {
+      candidates = normalized.filter(v => v.version.split('.')[0] === major);
+    }
+
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => compareSemverDesc(a.version, b.version));
+    return candidates[0];
+  } catch (e) {
+    return null;
+  }
+}
+
+function downloadBinaryFile(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const options = { headers: { 'User-Agent': 'Menditect-Workspace-Setup' } };
+    https.get(url, options, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return downloadBinaryFile(res.headers.location, destPath).then(resolve).catch(reject);
+      }
+      if (res.statusCode >= 400) {
+        return reject(new Error(`HTTP ${res.statusCode} when downloading ${url}`));
+      }
+      const dir = path.dirname(destPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const file = fs.createWriteStream(destPath);
+      res.pipe(file);
+      file.on('finish', () => {
+        file.close(() => resolve(destPath));
+      });
+    }).on('error', (err) => {
+      try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch (e) {}
+      reject(err);
+    });
+  });
+}
+
+async function ensurePlaywrightDriverBundle(projectDir, releaseNotes = '', mxmodulePath = '') {
+  if (!projectDir || !fs.existsSync(projectDir)) {
+    return { success: false, error: 'Project directory does not exist' };
+  }
+
+  const effectiveMxModule = mxmodulePath || path.join(projectDir, 'modules', 'MenditectPlaywrightConnector.mxmodule');
+  const requiredVersion = extractPlaywrightDriverVersion(releaseNotes, effectiveMxModule);
+  if (!requiredVersion) {
+    return { success: false, error: 'Could not determine required Playwright driver-bundle version' };
+  }
+
+  const userlibDir = path.join(projectDir, 'userlib');
+  if (!fs.existsSync(userlibDir)) {
+    fs.mkdirSync(userlibDir, { recursive: true });
+  }
+
+  const targetFileName = `driver-bundle-${requiredVersion}.jar`;
+  const targetFilePath = path.join(userlibDir, targetFileName);
+
+  // Remove any older driver-bundle-*.jar files in userlib/
+  try {
+    const existingFiles = fs.readdirSync(userlibDir);
+    for (const f of existingFiles) {
+      if (/^driver-bundle-.*\.jar/i.test(f) && f !== targetFileName) {
+        try {
+          fs.unlinkSync(path.join(userlibDir, f));
+          console.log(`  Removed outdated Playwright driver bundle: userlib/${f}`);
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
+
+  if (fs.existsSync(targetFilePath)) {
+    return { success: true, version: requiredVersion, filePath: targetFilePath, alreadyInstalled: true };
+  }
+
+  const mavenUrl = `https://repo1.maven.org/maven2/com/microsoft/playwright/driver-bundle/${requiredVersion}/${targetFileName}`;
+  console.log(`  Downloading Playwright Driver Bundle (${targetFileName}) from Maven Central...`);
+  try {
+    await downloadBinaryFile(mavenUrl, targetFilePath);
+    console.log(`  ${PASS} Installed Playwright Driver Bundle at userlib/${targetFileName}`);
+    return { success: true, version: requiredVersion, filePath: targetFilePath, alreadyInstalled: false };
+  } catch (err) {
+    console.warn(`  ${WARN} Failed to download ${mavenUrl}: ${err.message}`);
+    return { success: false, version: requiredVersion, error: err.message };
+  }
+}
+
+async function installMxModuleFromMarketplace(modSpec, projectDir, mendixVersion, mxcliBin, options = {}) {
+  if (!modSpec || !projectDir || !mxcliBin) {
+    return { success: false, error: 'Missing required arguments' };
+  }
+
+  const resolved = options.resolvedVersion || resolveCompatibleModuleVersion(modSpec.id, mendixVersion, mxcliBin);
+  if (!resolved || !resolved.version) {
+    return {
+      success: false,
+      error: `Could not resolve a compatible version of ${modSpec.moduleName} (${modSpec.id}) for Mendix ${mendixVersion}`
+    };
+  }
+
+  const modulesDir = path.join(projectDir, 'modules');
+  if (!fs.existsSync(modulesDir)) {
+    fs.mkdirSync(modulesDir, { recursive: true });
+  }
+
+  const tmpDownloadPath = path.join(os.tmpdir(), `${modSpec.moduleName}-${resolved.version}-${Date.now()}.mpk`);
+  try {
+    console.log(`  Downloading ${modSpec.moduleName} v${resolved.version} (Marketplace ID ${modSpec.id})...`);
+    execSync(`"${mxcliBin}" marketplace download ${modSpec.id} --version "${resolved.version}" -o "${tmpDownloadPath}"`, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 120000,
+      env: { ...process.env }
+    });
+
+    if (!fs.existsSync(tmpDownloadPath)) {
+      throw new Error('Download command completed but output file was not created');
+    }
+
+    const targetMxModulePath = path.join(modulesDir, modSpec.fileName);
+    const downloadedBuf = fs.readFileSync(tmpDownloadPath);
+    const zipEntries = readZipEntriesFromBuffer(downloadedBuf);
+
+    // Check if the downloaded archive is an outer package containing <ModuleName>.mxmodule or is already the .mxmodule itself
+    let innerMxModuleEntry = null;
+    let innerAppStoreInfoEntry = null;
+    for (const [entryName, entryMeta] of zipEntries.entries()) {
+      if (entryName.toLowerCase().endsWith('.mxmodule')) {
+        innerMxModuleEntry = entryMeta;
+      } else if (entryName.toLowerCase().endsWith('_appstoreinfo.json')) {
+        innerAppStoreInfoEntry = entryMeta;
+      }
+    }
+
+    if (innerMxModuleEntry) {
+      const extractedMxModule = extractZipEntryFromBuffer(downloadedBuf, innerMxModuleEntry);
+      if (!extractedMxModule) {
+        throw new Error(`Failed to extract ${modSpec.fileName} from downloaded package`);
+      }
+      fs.writeFileSync(targetMxModulePath, extractedMxModule);
+    } else {
+      fs.copyFileSync(tmpDownloadPath, targetMxModulePath);
+    }
+
+    const targetInfoPath = path.join(modulesDir, modSpec.infoFileName);
+    let infoObj = {
+      AppStoreGuid: resolved.appStoreGuid || resolved.versionGuid || '',
+      AppStoreVersionGuid: resolved.versionGuid || resolved.appStoreGuid || '',
+      AppStoreVersion: resolved.version,
+      AppStorePackageId: String(modSpec.id)
+    };
+
+    if (innerAppStoreInfoEntry) {
+      const extractedInfo = extractZipEntryFromBuffer(downloadedBuf, innerAppStoreInfoEntry);
+      if (extractedInfo) {
+        try {
+          const parsedInfo = JSON.parse(extractedInfo.toString('utf8'));
+          infoObj = { ...infoObj, ...parsedInfo, AppStoreVersion: resolved.version, AppStorePackageId: String(modSpec.id) };
+        } catch (e) {}
+      }
+    } else if (fs.existsSync(targetInfoPath)) {
+      try {
+        const existingInfo = JSON.parse(fs.readFileSync(targetInfoPath, 'utf8'));
+        infoObj = {
+          AppStoreGuid: resolved.appStoreGuid || existingInfo.AppStoreGuid || '',
+          AppStoreVersionGuid: resolved.versionGuid || existingInfo.AppStoreVersionGuid || '',
+          AppStoreVersion: resolved.version,
+          AppStorePackageId: String(modSpec.id)
+        };
+      } catch (e) {}
+    }
+
+    fs.writeFileSync(targetInfoPath, JSON.stringify(infoObj), 'utf8');
+
+    // If MtaPluginModule was updated, remove any legacy duplicate mta-plugin-*.jar directly in userlib/
+    if (modSpec.moduleName === 'MtaPluginModule') {
+      const userlibDir = path.join(projectDir, 'userlib');
+      if (fs.existsSync(userlibDir)) {
+        try {
+          for (const f of fs.readdirSync(userlibDir)) {
+            if (/^mta-plugin-.*\.jar/i.test(f)) {
+              try { fs.unlinkSync(path.join(userlibDir, f)); } catch (e) {}
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    console.log(`  ${PASS} Installed ${modSpec.fileName} (v${resolved.version}) in modules/`);
+
+    let driverBundleResult = null;
+    if (modSpec.hasDriverBundle) {
+      driverBundleResult = await ensurePlaywrightDriverBundle(projectDir, resolved.releaseNotes, targetMxModulePath);
+    }
+
+    return {
+      success: true,
+      version: resolved.version,
+      releaseNotes: resolved.releaseNotes,
+      mxmodulePath: targetMxModulePath,
+      driverBundleResult
+    };
+  } catch (err) {
+    console.warn(`  ${WARN} Failed to install ${modSpec.moduleName}: ${err.message}`);
+    return { success: false, error: err.message };
+  } finally {
+    try {
+      if (fs.existsSync(tmpDownloadPath)) fs.unlinkSync(tmpDownloadPath);
+    } catch (e) {}
+  }
+}
+
+function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
+  if (!mprPath || !fs.existsSync(mprPath) || !mxcliBin) {
+    return { success: false, error: 'Missing .mpr path or mxcli binary' };
+  }
+
+  const escapeMdlStr = (val) => String(val ?? '').replace(/'/g, "''");
+
+  const currentSettings = inspectMendixMtaSettings(mprPath, mxcliBin);
+  const existingConfigs = (currentSettings && Array.isArray(currentSettings.configurationNames) && currentSettings.configurationNames.length > 0)
+    ? currentSettings.configurationNames
+    : [];
+  const targetConfigs = pluginConfig.configurationName
+    ? [pluginConfig.configurationName]
+    : (existingConfigs.length > 0 ? existingConfigs : ['Default']);
+  const needsDefaultConfigCreate = existingConfigs.length === 0;
+
+  const currentAfterStartup = currentSettings && currentSettings.afterStartupMicroflow
+    ? currentSettings.afterStartupMicroflow.trim()
+    : '';
+
+  let customAfterStartupMdl = '';
+  let targetAfterStartupMicroflow = 'MtaPluginModule.ASU_Setup_Connection_MTA';
+
+  // If a custom AfterStartup microflow already exists, inspect it and inject call to MtaPluginModule.ASU_Setup_Connection_MTA() if not already present
+  if (currentAfterStartup && currentAfterStartup !== 'MtaPluginModule.ASU_Setup_Connection_MTA') {
+    targetAfterStartupMicroflow = currentAfterStartup;
+    try {
+      const mfOutput = execSync(`"${mxcliBin}" describe microflow "${currentAfterStartup}" -p "${mprPath}"`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 20000
+      });
+      if (mfOutput && !mfOutput.includes('ASU_Setup_Connection_MTA')) {
+        const updatedMf = mfOutput
+          .replace(/^create\s+microflow\s+/i, 'create or replace microflow ')
+          .replace(/\bbegin\b/i, 'begin\n    call microflow MtaPluginModule.ASU_Setup_Connection_MTA();');
+        if (updatedMf.includes('ASU_Setup_Connection_MTA')) {
+          customAfterStartupMdl = updatedMf.trim().endsWith(';') ? updatedMf.trim() : `${updatedMf.trim()};`;
+        }
+      }
+    } catch (e) {
+      // If describing custom AfterStartup microflow fails, keep existing AfterStartupMicroflow setting untouched
+    }
+  }
+
+  const appInstanceToken = escapeMdlStr(pluginConfig.applicationInstanceToken || '');
+  const mtaConnectionUrl = escapeMdlStr(pluginConfig.mtaConnectionUrl || 'wss://services.menditect.com');
+  const connectionMethod = escapeMdlStr(pluginConfig.connectionMethod || 'AfterStartup');
+  const connectionUsername = escapeMdlStr(pluginConfig.connectionUsername || 'MTAConnectionUser');
+  const connectionPassword = escapeMdlStr(pluginConfig.connectionPassword || 'c0Nn3cT-mTa-PlUg1n!');
+  const enableMcpServer = escapeMdlStr(pluginConfig.enableMcpServer || 'True');
+  const mcpServerAccessToken = escapeMdlStr(pluginConfig.mcpServerAccessToken || '1');
+
+  const mdlLines = [
+    'CREATE MODULE MtaPluginModule;',
+    "CREATE CONSTANT MtaPluginModule.ApplicationInstanceToken TYPE String DEFAULT '';",
+    "CREATE CONSTANT MtaPluginModule.ConnectionMethod TYPE String DEFAULT 'AfterStartup';",
+    "CREATE CONSTANT MtaPluginModule.MTAConnectionPassword TYPE String DEFAULT '';",
+    "CREATE CONSTANT MtaPluginModule.MTAConnectionUrl TYPE String DEFAULT 'wss://services.menditect.com';",
+    "CREATE CONSTANT MtaPluginModule.MTAConnectionUsername TYPE String DEFAULT 'MTAConnectionUser';",
+    "CREATE CONSTANT MtaPluginModule.EnableMcpServer TYPE Boolean DEFAULT true;",
+    "CREATE CONSTANT MtaPluginModule.McpServerAccessToken TYPE String DEFAULT '';",
+    'CREATE MICROFLOW MtaPluginModule.ASU_Setup_Connection_MTA () RETURNS Boolean',
+    'BEGIN',
+    '  RETURN true;',
+    'END;'
+  ];
+
+  if (needsDefaultConfigCreate) {
+    mdlLines.push("CREATE OR MODIFY CONFIGURATION 'Default' HttpPortNumber = 8081, ApplicationRootUrl = 'http://localhost:8081/';");
+  }
+
+  for (const cfgName of targetConfigs) {
+    const safeCfg = escapeMdlStr(cfgName);
+    mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.ApplicationInstanceToken' VALUE '${appInstanceToken}' IN CONFIGURATION '${safeCfg}';`);
+    mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.ConnectionMethod' VALUE '${connectionMethod}' IN CONFIGURATION '${safeCfg}';`);
+    mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.MTAConnectionPassword' VALUE '${connectionPassword}' IN CONFIGURATION '${safeCfg}';`);
+    mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.MTAConnectionUrl' VALUE '${mtaConnectionUrl}' IN CONFIGURATION '${safeCfg}';`);
+    mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.MTAConnectionUsername' VALUE '${connectionUsername}' IN CONFIGURATION '${safeCfg}';`);
+    mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.EnableMcpServer' VALUE '${enableMcpServer}' IN CONFIGURATION '${safeCfg}';`);
+    mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.McpServerAccessToken' VALUE '${mcpServerAccessToken}' IN CONFIGURATION '${safeCfg}';`);
+  }
+
+  if (customAfterStartupMdl) {
+    mdlLines.push(customAfterStartupMdl);
+  } else if (!currentAfterStartup || currentAfterStartup === 'MtaPluginModule.ASU_Setup_Connection_MTA') {
+    mdlLines.push(`ALTER SETTINGS MODEL AfterStartupMicroflow = '${escapeMdlStr(targetAfterStartupMicroflow)}';`);
+  }
+
+  mdlLines.push('DROP MODULE MtaPluginModule;');
+
+  const tmpMdlPath = path.join(os.tmpdir(), `mta-plugin-config-${Date.now()}.mdl`);
+  try {
+    // Write UTF-8 without BOM
+    fs.writeFileSync(tmpMdlPath, mdlLines.join('\n') + '\n', 'utf8');
+    execSync(`"${mxcliBin}" exec "${tmpMdlPath}" -p "${mprPath}"`, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30000
+    });
+    return {
+      success: true,
+      configuredConfigurations: targetConfigs,
+      afterStartupMicroflow: targetAfterStartupMicroflow,
+      chainedIntoExistingAfterStartup: Boolean(customAfterStartupMdl)
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err.message
+    };
+  } finally {
+    try {
+      if (fs.existsSync(tmpMdlPath)) fs.unlinkSync(tmpMdlPath);
+    } catch (e) {}
   }
 }
 
@@ -1487,7 +2233,7 @@ async function run(options = {}) {
         if (state.workspaceChoice === '3' && !state.detectedVersion) {
           nextStep = 'version_check';
         } else {
-          nextStep = 'model_source';
+          nextStep = 'mta_plugin_setup';
         }
       }
     } else if (currentStep === 'version_check') {
@@ -1496,7 +2242,254 @@ async function run(options = {}) {
         goBack = true;
       } else {
         state.isMendix1112Plus = ans.toLowerCase().startsWith('y');
+        nextStep = 'mta_plugin_setup';
+      }
+    } else if (currentStep === 'mta_plugin_setup') {
+      if (!state.projectDir || !fs.existsSync(state.projectDir) || !state.mprPath || !fs.existsSync(state.mprPath)) {
         nextStep = 'model_source';
+      } else {
+        console.log('\n--- Menditect Marketplace Modules & MTA Plugin Setup ---');
+        const mxcliBin = await getOrDownloadMxcli(state.mprPath);
+        const installedInfo = inspectInstalledMarketplaceModules(state.projectDir);
+        const pluginModInfo = installedInfo.modules.MtaPluginModule;
+        const isPluginPresent = Boolean(pluginModInfo && pluginModInfo.installed);
+        const isPluginConfigured = Boolean(state.discoveredMta && state.discoveredMta.isPluginConfigured);
+        const mxVer = state.detectedVersion || '11.0.0';
+
+        let stepSubBack = false;
+
+        if (!isPluginPresent || !isPluginConfigured) {
+          if (!isPluginPresent) {
+            console.log(`\n${NOTICE} No MTA Plugin module (MtaPluginModule.mxmodule) detected in ${state.projectDir}.`);
+            console.log(`         Downloading and installing MtaPluginModule (Marketplace ID 214717) for Mendix ${mxVer}...`);
+          } else {
+            console.log(`\n${NOTICE} MTA Plugin module detected (${pluginModInfo.version ? `v${pluginModInfo.version}` : 'installed'}), but its constants are not configured.`);
+            console.log(`         Overwriting MtaPluginModule with the latest compatible version for Mendix ${mxVer} and configuring constants...`);
+          }
+
+          if (mxcliBin) {
+            const authed = await ensureMxcliAuth(mxcliBin, ask);
+            if (authed) {
+              await installMxModuleFromMarketplace(
+                MENDITECT_MARKETPLACE_MODULES.MtaPluginModule,
+                state.projectDir,
+                mxVer,
+                mxcliBin
+              );
+            } else if (!isPluginPresent) {
+              console.warn(`  ${WARN} Skipping MtaPluginModule download because Mendix Marketplace PAT was not provided.`);
+              console.warn(`         You can download it manually from https://marketplace.mendix.com/link/component/214717 or run "npm run update:modules" later.`);
+            }
+          }
+
+          console.log('\n--- Configure MTA Plugin Constants & AfterStartup ---');
+          console.log('Select your Menditect Test Automation (MTA) License / Connection Type:\n');
+          console.log('  [1] Free Exploratory License (Local AI Exploratory Testing):');
+          console.log('      • Uses Menditect free license server: https://services.menditect.com');
+          console.log('      • Sets MtaPluginModule.MTAConnectionUrl = wss://services.menditect.com');
+          console.log('      • ApplicationInstanceToken acts as your Menditect license key');
+          console.log('  [2] Paid MTA Server (Cloud or On-Premises MTA Platform):');
+          console.log('      • Connects to your dedicated MTA server (e.g. https://mta-trial.mendixcloud.com)');
+          console.log('      • Installs Frontend TestKit, Playwright Connector, MTA Commons & Playwright Driver Bundle\n');
+
+          const existingUrl = state.mtaUrl || state.discoveredMta?.globalMtaUrl || existingConfig.mta_base_url || '';
+          const defaultTierChoice = isPaidMtaServerUrl(existingUrl) ? '2' : '1';
+          let tierAns = '';
+          while (tierAns !== '1' && tierAns !== '2' && !isBack(tierAns)) {
+            tierAns = await ask('Select MTA License / Server Type: [1] Free Exploratory, [2] Paid MTA Server', defaultTierChoice);
+          }
+
+          if (isBack(tierAns)) {
+            stepSubBack = true;
+          } else {
+            const isPaidServer = tierAns === '2';
+            state.licenseTier = isPaidServer ? 'paid' : 'exploratory_free';
+
+            let rawMtaConnectionUrl = 'wss://services.menditect.com';
+            let httpMtaUrl = 'https://services.menditect.com';
+
+            if (isPaidServer) {
+              const defaultPaidWsUrl = (existingUrl && isPaidMtaServerUrl(existingUrl))
+                ? existingUrl.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://')
+                : 'wss://mta-trial.mendixcloud.com';
+              const wsAns = await ask('MtaPluginModule.MTAConnectionUrl (wss:// or https:// URL of your MTA Server)', defaultPaidWsUrl);
+              if (isBack(wsAns)) {
+                stepSubBack = true;
+              } else {
+                const cleanedUrl = wsAns.trim() || 'wss://mta-trial.mendixcloud.com';
+                rawMtaConnectionUrl = cleanedUrl.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://');
+                if (!/^wss?:\/\//i.test(rawMtaConnectionUrl)) {
+                  rawMtaConnectionUrl = `wss://${rawMtaConnectionUrl}`;
+                }
+                httpMtaUrl = rawMtaConnectionUrl.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
+              }
+            } else {
+              console.log(`  ${INFO} Free Exploratory License selected:`);
+              console.log(`         • MTA URL:                      https://services.menditect.com`);
+              console.log(`         • MtaPluginModule.MTAConnectionUrl: wss://services.menditect.com`);
+            }
+
+            let appInstanceToken = '';
+            if (!stepSubBack) {
+              const defaultInstToken = state.defaultInstanceToken
+                || (state.discoveredMta?.instances && state.discoveredMta.instances[0]?.token)
+                || existingConfig.default_app_instance_token
+                || '';
+              const tokenLabel = isPaidServer
+                ? 'MtaPluginModule.ApplicationInstanceToken (from MTA Portal > Application Instances)'
+                : 'MtaPluginModule.ApplicationInstanceToken (Menditect exploratory license key)';
+              while (!appInstanceToken) {
+                const tokAns = await ask(tokenLabel, defaultInstToken);
+                if (isBack(tokAns)) {
+                  stepSubBack = true;
+                  break;
+                }
+                appInstanceToken = tokAns.trim();
+                if (!appInstanceToken) {
+                  console.log(`${ERROR} ApplicationInstanceToken cannot be empty.`);
+                }
+              }
+            }
+
+            let enableMcpServer = 'True';
+            if (!stepSubBack) {
+              const defaultEnableMcp = (state.discoveredMta?.globalEnableMcpServer || 'True').toLowerCase() === 'false' ? 'n' : 'y';
+              const mcpEnableAns = await ask('Enable local MCP Server in MtaPluginModule (MtaPluginModule.EnableMcpServer)? (y/n)', defaultEnableMcp);
+              if (isBack(mcpEnableAns)) {
+                stepSubBack = true;
+              } else {
+                enableMcpServer = mcpEnableAns.toLowerCase().startsWith('n') ? 'False' : 'True';
+              }
+            }
+
+            let mcpServerAccessToken = '1';
+            if (!stepSubBack) {
+              const existingRawPluginTok = (state.rawPluginToken || state.discoveredMta?.globalRawMcpServerAccessToken || '1').replace(/^Bearer\s+/i, '').trim() || '1';
+              const mcpTokAns = await ask('MtaPluginModule.McpServerAccessToken (token for local MCP endpoint)', existingRawPluginTok);
+              if (isBack(mcpTokAns)) {
+                stepSubBack = true;
+              } else {
+                mcpServerAccessToken = (mcpTokAns.trim() || '1').replace(/^Bearer\s+/i, '').trim() || '1';
+              }
+            }
+
+            if (!stepSubBack && mxcliBin) {
+              console.log('\nApplying MTA Plugin constants and AfterStartup microflow to Mendix project (.mpr)...');
+              console.log('  • ConnectionMethod:       AfterStartup');
+              console.log('  • MTAConnectionUsername:  MTAConnectionUser');
+              console.log('  • MTAConnectionPassword:  c0Nn3cT-mTa-PlUg1n!');
+              console.log(`  • MTAConnectionUrl:       ${rawMtaConnectionUrl}`);
+              console.log(`  • EnableMcpServer:        ${enableMcpServer}`);
+              console.log(`  • AfterStartupMicroflow:  MtaPluginModule.ASU_Setup_Connection_MTA`);
+
+              const cfgRes = configureMtaPluginInMpr(state.mprPath, mxcliBin, {
+                applicationInstanceToken: appInstanceToken,
+                mtaConnectionUrl: rawMtaConnectionUrl,
+                connectionMethod: 'AfterStartup',
+                connectionUsername: 'MTAConnectionUser',
+                connectionPassword: 'c0Nn3cT-mTa-PlUg1n!',
+                enableMcpServer,
+                mcpServerAccessToken
+              });
+
+              if (cfgRes.success) {
+                console.log(`${PASS} Configured MtaPluginModule constants on configuration(s): [${cfgRes.configuredConfigurations.join(', ')}]`);
+                if (cfgRes.chainedIntoExistingAfterStartup) {
+                  console.log(`${PASS} Added MtaPluginModule.ASU_Setup_Connection_MTA call to existing AfterStartup microflow (${cfgRes.afterStartupMicroflow}).`);
+                } else {
+                  console.log(`${PASS} Configured AfterStartup microflow: ${cfgRes.afterStartupMicroflow}`);
+                }
+              } else {
+                console.warn(`${WARN} Could not automatically write constants to .mpr via mxcli: ${cfgRes.error}`);
+              }
+
+              // Refresh discovered MTA settings from updated .mpr and pre-populate wizard state
+              state.discoveredMta = inspectMendixMtaSettings(state.mprPath, mxcliBin);
+              state.mtaUrl = httpMtaUrl;
+              state.rawPluginToken = formatBearerToken(mcpServerAccessToken);
+              if (state.discoveredMta && state.discoveredMta.instances && state.discoveredMta.instances.length > 0) {
+                state.appInstances = state.discoveredMta.instances;
+                state.defaultInstanceName = state.appInstances[0].name;
+                state.defaultInstanceToken = state.appInstances[0].token;
+                state.activeConfig = state.appInstances[0];
+              } else {
+                const cfgName = (cfgRes.configuredConfigurations && cfgRes.configuredConfigurations[0]) || 'Default';
+                state.appInstances = [{
+                  name: cfgName,
+                  token: appInstanceToken,
+                  mtaUrl: httpMtaUrl,
+                  runtimeUrl: 'http://localhost:8081/',
+                  pluginUrl: 'http://localhost:8081/plugin/mcp',
+                  pluginToken: formatBearerToken(mcpServerAccessToken),
+                  pluginPort: '8081'
+                }];
+                state.defaultInstanceName = cfgName;
+                state.defaultInstanceToken = appInstanceToken;
+                state.activeConfig = state.appInstances[0];
+              }
+            }
+          }
+        } else {
+          console.log(`${PASS} MTA Plugin module (${pluginModInfo.version ? `v${pluginModInfo.version}` : 'MtaPluginModule.mxmodule'}) is already installed and configured.`);
+        }
+
+        // Check Paid MTA Server Add-on Modules (Frontend TestKit, Playwright Connector, MTA Commons + Playwright Driver Bundle)
+        if (!stepSubBack) {
+          const effectiveMtaUrl = state.mtaUrl
+            || (state.discoveredMta?.instances && state.discoveredMta.instances[0]?.mtaUrl)
+            || state.discoveredMta?.globalMtaUrl
+            || existingConfig.mta_base_url
+            || '';
+          const refreshedInstalled = inspectInstalledMarketplaceModules(state.projectDir);
+          const hasValidPlugin = Boolean(refreshedInstalled.modules.MtaPluginModule?.installed && state.discoveredMta?.isPluginConfigured);
+          const hasPaidServer = isPaidMtaServerUrl(effectiveMtaUrl);
+
+          if (hasValidPlugin && hasPaidServer && mxcliBin) {
+            const paidSpecs = [
+              MENDITECT_MARKETPLACE_MODULES.MenditectMxFrontendTestKit,
+              MENDITECT_MARKETPLACE_MODULES.MenditectPlaywrightConnector,
+              MENDITECT_MARKETPLACE_MODULES.MenditectMtaCommons
+            ];
+            const missingPaidMods = paidSpecs.filter(spec => !refreshedInstalled.modules[spec.moduleName]?.installed);
+            const missingDriverBundle = !refreshedInstalled.driverBundle.installed;
+
+            if (missingPaidMods.length > 0 || missingDriverBundle) {
+              console.log(`\n${INFO} Paid MTA Server detected (${effectiveMtaUrl}).`);
+              if (missingPaidMods.length > 0) {
+                console.log(`       Installing required Menditect add-on modules for Mendix ${mxVer}:`);
+                for (const modSpec of missingPaidMods) {
+                  console.log(`         • ${modSpec.displayName} (${modSpec.fileName}, ID ${modSpec.id})`);
+                }
+                const authed = await ensureMxcliAuth(mxcliBin, ask);
+                if (authed) {
+                  for (const modSpec of missingPaidMods) {
+                    await installMxModuleFromMarketplace(modSpec, state.projectDir, mxVer, mxcliBin);
+                  }
+                } else {
+                  console.warn(`  ${WARN} Skipping add-on module download (Mendix PAT not provided). Run "npm run update:modules" anytime.`);
+                }
+              }
+
+              // Ensure Playwright Driver Bundle JAR is present in userlib/ whenever MenditectPlaywrightConnector is installed
+              const afterAddonInstall = inspectInstalledMarketplaceModules(state.projectDir);
+              if (afterAddonInstall.modules.MenditectPlaywrightConnector?.installed && !afterAddonInstall.driverBundle.installed) {
+                await ensurePlaywrightDriverBundle(
+                  state.projectDir,
+                  '',
+                  afterAddonInstall.modules.MenditectPlaywrightConnector.mxmodulePath
+                );
+              }
+            } else {
+              console.log(`${PASS} Menditect Paid MTA add-on modules (Frontend TestKit, Playwright Connector, MTA Commons) and Playwright Driver Bundle (${refreshedInstalled.driverBundle.fileName}) are installed.`);
+            }
+          }
+        }
+
+        if (stepSubBack) {
+          goBack = true;
+        } else {
+          nextStep = 'model_source';
+        }
       }
     } else if (currentStep === 'model_source') {
       console.log('\n--- Model Inspection Source (AI Assistant) ---');
@@ -1890,6 +2883,8 @@ async function run(options = {}) {
       if (editingSingleSetting) {
         if (currentStep === 'workspace' && nextStep === 'workspace_dir') {
           currentStep = 'workspace_dir';
+        } else if (currentStep === 'project_dir' && nextStep === 'mta_plugin_setup') {
+          currentStep = 'mta_plugin_setup';
         } else if (currentStep === 'model_source' && nextStep === 'studiopro_url') {
           currentStep = 'studiopro_url';
         } else if (currentStep === 'app_name') {
@@ -2296,6 +3291,17 @@ if (require.main === module) {
   }
 } else {
   module.exports = {
+    MENDITECT_MARKETPLACE_MODULES,
+    inspectInstalledMarketplaceModules,
+    isPaidMtaServerUrl,
+    checkMxcliAuthStatus,
+    ensureMxcliAuth,
+    resolveCompatibleModuleVersion,
+    extractPlaywrightDriverVersion,
+    ensurePlaywrightDriverBundle,
+    installMxModuleFromMarketplace,
+    configureMtaPluginInMpr,
+    getOrDownloadMxcli,
     parseInstanceSelection,
     inspectMendixMtaSettings,
     findMxcliBinary,
