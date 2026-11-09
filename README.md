@@ -55,54 +55,75 @@ Before starting, ensure you have:
 ## Setup of workspace
 
 > [!TIP]
-> You can create your workspace in any directory on your computer (e.g. `C:\projects\my-app-test-workspace` or `~/projects/my-app-test-workspace`). The paths below are examples.
+> You can create your workspace in any directory on your computer (e.g. `C:\projects\menditect` or `~/projects/menditect`). The paths below are examples.
 
 > [!WARNING]
 > Mxcli will install software in the directory of the Mendix project, please make sure to read the mxcli documentation before proceeding. (https://www.mxcli.org/)
 
-### 1. Create and open your workspace directory
+### Choose Your Workspace Architecture (3 Options)
 
-Create a dedicated folder for your workspace on your local disk and navigate into it:
+When you run `npm run setup`, the wizard lets you choose between **3 workspace setup models** depending on whether you test multiple Mendix applications, a single isolated application, or collaborate directly inside a Mendix repository:
 
+| Setup Model | How Skills & Tools Are Stored | Pros | Cons | Best For |
+| :--- | :--- | :--- | :--- | :--- |
+| **`[1]` Central Tools Hub**<br>*(Recommended for Multi-App)*<br>`workspace_type: "custom"` | **Zero file duplication & zero symlinks.** `skills/`, `tools/`, and `bin/` remain strictly inside the central `agentic-test-workspace` repo. Each lightweight app workspace points directly to the central hub via `mta_config.json`, IDE MCP configs, and thin directive files. | • **Single-point update:** Run `npm run update` once in `agentic-test-workspace` to upgrade all linked app workspaces.<br>• Ultra-lightweight per-app folders (only `mta_config.json`, `.env`, `menditect-output/`, and thin IDE pointers).<br>• Zero Mendix `.mpr` repo pollution. | • All linked app workspaces upgrade simultaneously when the central hub updates.<br>• Moving/renaming the central hub folder requires re-running `npm run setup`. | Developers, QA engineers, and consultants working across **multiple Mendix apps** on one machine. |
+| **`[2]` Standalone Subfolder Workspace**<br>*(Single-App Isolated)*<br>`workspace_type: "clone_root"` | Clones `agentic-test-workspace` as a subfolder inside a single app workspace and copies `skills/` and `tools/` into the parent workspace folder. | • Complete version isolation per workspace.<br>• Self-contained folder structure.<br>• Zero Mendix `.mpr` repo pollution. | • Requires running `npm run update` separately inside each workspace.<br>• Duplicates `skills/` and `tools/` across workspaces. | Testing a **single Mendix application** or pinning a specific skill/linter version for one project. |
+| **`[3]` Direct Mendix Project Workspace**<br>*(In-Repo Collaboration)*<br>`workspace_type: "mendix_project"` | Installs `skills/` (or Mendix 11.12+ `skillssource/` module), `mta_config.json`, and `menditect-output/` directly inside the Mendix `.mpr` project folder. | • Everything lives inside the Mendix Git/Team Server repository.<br>• Required for native **Studio Pro MAIA** (`Menditect_AgenticTestSkills` module). | • Commits test plans and AI config into the Mendix app repository.<br>• Updates must be run per Mendix repo. | Teams using **Studio Pro MAIA** or sharing execution plans directly via the Mendix project repository. |
+
+#### Directory Layout Example: Option `[1]` Central Tools Hub (Multi-App)
+```text
+C:\projects\menditect\
+├── agentic-test-workspace\          <-- Clone ONCE & run `npm run update` here
+│   ├── skills\                      <-- Central SSOT for all MTA skills
+│   ├── tools\                       <-- Central SSOT for mta-lint.mjs & mta-bughunter.mjs
+│   ├── scripts\                     <-- Central mta-proxy.js, setup.js, sync-upstream.js
+│   └── bin\                         <-- Central mxcli binary
+│
+├── app-alpha-workspace\             <-- Open this folder in your AI IDE for App Alpha
+│   ├── mta_config.json              <-- Points `skills_dir` & `tools_dir` to ..\agentic-test-workspace
+│   ├── .env                         <-- App Alpha tokens & secrets
+│   ├── AGENTS.md / CLAUDE.md        <-- Thin pointer directives to central hub
+│   └── menditect-output\            <-- App Alpha Execution Plans (EP_*.md)
+│
+└── app-beta-workspace\              <-- Open this folder in your AI IDE for App Beta
+    ├── mta_config.json              <-- Points `skills_dir` & `tools_dir` to ..\agentic-test-workspace
+    ├── .env                         <-- App Beta tokens & secrets
+    ├── AGENTS.md / CLAUDE.md        <-- Thin pointer directives to central hub
+    └── menditect-output\            <-- App Beta Execution Plans (EP_*.md)
 ```
-# Create your workspace directory (replace 'C:\projects\your-workspace' with your preferred path)
-mkdir C:\projects\your-workspace
 
-# Navigate into the newly created workspace directory
-cd C:\projects\your-workspace
-```
+---
 
-### 2. Clone the repository
+### 1. Create your base directory and clone the repository
 
-Clone the `agentic-test-workspace` repository inside your workspace directory:
+Create a folder on your local disk and clone `agentic-test-workspace`:
 
 ```bash
+# Create your base directory (replace 'C:\projects\menditect' with your preferred path)
+mkdir C:\projects\menditect
+cd C:\projects\menditect
+
+# Clone the central agentic-test-workspace repository
 git clone https://github.com/Menditect/agentic-test-workspace.git
-```
-
-### 3. Go to agentic-test-workspace directory
-
-Navigate into the cloned repository folder:
-
-```bash
 cd agentic-test-workspace
 ```
 
-### 4. Run the setup wizard
+### 2. Run the setup wizard
 
-In the directory where you cloned the repository (`agentic-test-workspace`), run:
+Inside `agentic-test-workspace`, run:
 
 ```bash
 npm run setup
 ```
 
-The interactive script handles the full configuration in a few steps:
+The interactive wizard guides you through configuration in a few steps:
 
-- **Workspace & Model Detection**: Locates your Mendix `.mpr` file, detects Studio Pro version, and downloads `mxcli`.
+- **Workspace Location Strategy**: Choose `[1] Central Tools Hub` (and specify your lightweight app workspace folder, e.g. `../my-app-workspace`), `[2] Standalone Subfolder Workspace`, or `[3] Direct Mendix Project Workspace`.
+- **Mendix Model Detection**: Locates your Mendix `.mpr` file, detects Studio Pro version, and downloads `mxcli`.
 - **Model Inspection Source**: Lets you select between `mxcli` (standalone offline engine) or `Studio Pro MCP` (live IDE integration), while using `mxcli` in the background for project analysis.
-- **MTA & Instance Setup**: Scans your project for existing MTA application instances, configures connection settings, and isolates secrets into a local `.env` file.
+- **MTA & Instance Setup**: Scans your project for existing MTA application instances, configures connection settings, and isolates secrets into the workspace's `.env` file.
 - **Exploratory Execution Strategy**: Select your preferred AI velocity (`exploratory_execution_mode`). Choose `auto_execute` (default) for instant 1-turn test feedback (< 3s total latency) with plan generation and JVM rollback, or `prompt_approval` to require explicit plan sign-off at Checkpoint 1 before running.
-- **Skills & AI Scaffolding**: Downloads the latest test skills (`Menditect/agentic-test-skills`) and generates configuration files for IDEs like Cursor, VS Code, Claude, and Antigravity.
+- **Skills & AI Scaffolding**: Downloads the latest test skills (`Menditect/agentic-test-skills`) and generates IDE configuration files (`.vscode/mcp.json`, `.cursor/mcp.json`, `.claude/settings.json`, and agent directives) in your target workspace.
 - **Optional Code Indexing**: Offers to build a local project catalog (`.mxcli/catalog.db`) for deep code search and dependency analysis.
 
 > [!TIP]
@@ -111,9 +132,9 @@ The interactive script handles the full configuration in a few steps:
 > - Type **`b`** or **`back`** at any prompt to return to the previous question and change your answer.
 > - A numbered **Configuration Summary & Review** is presented before any files are saved, allowing you to review and jump directly to any setting to edit it.
 
-### 5. Open the workspace in your AI IDE
+### 3. Open the workspace in your AI IDE
 
-Open the selected workspace folder in your AI IDE (Cursor, Claude Code, GitHub Copilot, or Antigravity/Gemini). The MCP server configuration is **specific to your chosen AI assistant and IDE environment** (e.g., Cursor, VS Code, Claude Code, Cline, etc.).
+Open your configured **Target Workspace Directory** (e.g., `C:\projects\menditect\my-app-workspace`) in your AI IDE (Cursor, VS Code, Claude Code, or Antigravity/Gemini). The MCP server configuration is **specific to your chosen AI assistant and IDE environment**.
 
 #### Studio Pro MCP Configuration (Optional)
 
@@ -172,6 +193,41 @@ If you are using **Mendix Studio Pro / MAIA**, ensure the `Menditect_AgenticTest
   * **Paid Platform Capabilities:** Persistent cloud/on-prem test suites, Playwright Frontend UI testing, and CI/CD automated regression pipelines require a paid MTA Platform License.
 - **MCP SUBPROCESS PROTECTION & TOKEN ROTATION:** NEVER execute terminal commands (`Stop-Process`, `taskkill`, `kill`) against running MCP server/proxy processes (`mta-proxy.js`, `node.exe`, or custom proxies). Terminating stdio child processes causes AI IDEs (Antigravity, Cursor, Claude Desktop, VS Code) to permanently disable MCP servers for the active session. The built-in proxy reloads `.env` dynamically on every request with zero restart needed. If using a static or custom proxy that returns HTTP 401, prompt the user to update their credentials and use their IDE's "Restart MCP Server" / "Reload Window" UI action.
 ```
+
+## Switching Between Workspace Setup Models
+
+You can switch an existing workspace from any setup model (`[1]`, `[2]`, or `[3]`) to another at any time without losing your MTA settings, credentials (`.env`), or Execution Plans (`menditect-output/execution-plans/`).
+
+Simply run `npm run setup` inside `agentic-test-workspace`. The setup wizard automatically detects and pre-populates your existing `mta_config.json` and `.env` values so you can press **[Enter]** through all connection settings and only change your **Workspace Location Strategy**.
+
+### Scenario A: Switching from `[2] Standalone Subfolder` $\rightarrow$ `[1] Central Tools Hub`
+If you previously cloned `agentic-test-workspace` inside a single app workspace and want to convert it to the Central Tools Hub model:
+1. *(Optional)* If you want to move the `agentic-test-workspace` folder to a shared parent directory first, move it using your OS file explorer or terminal.
+2. Open a terminal in `agentic-test-workspace` and run:
+   ```bash
+   npm run setup
+   ```
+3. Select **`[1] Central Tools Hub — Multi-App / Shared Engine`** and enter the path to your existing app workspace folder.
+4. Confirm the summary. The wizard will:
+   - Update `mta_config.json`, IDE MCP configs, and agent directives (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) to point directly to the central hub's `skills/` and `tools/`.
+   - Prompt to **automatically remove the redundant local `skills/` and `tools/` copies** from your app workspace while keeping `menditect-output/` and `.env` intact.
+
+### Scenario B: Switching from `[1] Central Tools Hub` $\rightarrow$ `[2] Standalone Subfolder`
+If you want to decouple a linked app workspace from the central hub so it has its own isolated version of `skills/` and `tools/`:
+1. Ensure `agentic-test-workspace` is located inside your app workspace folder (or clone a copy there), and run `npm run setup`.
+2. Select **`[2] Standalone Subfolder Workspace — Single-App Isolated`**.
+3. Confirm the summary. The wizard will copy `skills/`, `tools/`, and the full `AGENTS.md` orchestrator locally into the workspace and update `mta_config.json` (`workspace_type: "clone_root"`).
+
+### Scenario C: Switching Between External Workspace (`[1]` or `[2]`) $\leftrightarrow$ `[3] Direct Mendix Project`
+- **From `[3] Direct Mendix Project` $\rightarrow$ `[1]` or `[2]`:**
+  1. Run `npm run setup` in `agentic-test-workspace` and select **`[1] Central Tools Hub`** (or **`[2] Standalone Subfolder`**).
+  2. When prompted for your Mendix `.mpr` path, point to your Mendix project folder. The wizard automatically reads your existing settings from the Mendix project's `mta_config.json` and `.env`.
+  3. Upon completion, the wizard offers to **automatically migrate `menditect-output/` (including all `EP_*.md` execution plans)** into the new external workspace and clean up the old `mta_config.json`, `.env`, `skills/`, and IDE MCP files from your Mendix `.mpr` directory so your Mendix Git status is clean.
+- **From `[1]` or `[2]` $\rightarrow$ `[3] Direct Mendix Project`:**
+  1. Run `npm run setup` in `agentic-test-workspace` and select **`[3] Direct Mendix Project Workspace`**.
+  2. If an external workspace was previously configured, the wizard offers to **copy your existing `menditect-output/` execution plans** directly into the Mendix project folder.
+
+---
 
 ## Synchronization & updates
 

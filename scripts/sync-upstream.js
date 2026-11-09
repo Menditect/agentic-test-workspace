@@ -625,9 +625,11 @@ function updateDirectives(targetDir, appName, mtaUrl, skillsStyle) {
   }
 }
 
-async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir } = {}) {
+async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir, config: cfg } = {}) {
+  const activeConfig = cfg || loadConfig();
   const targetRootDir = rDir || rootDir;
-  const targetWsDir = wsDir || loadConfig().workspace_dir || targetRootDir;
+  const targetWsDir = wsDir || activeConfig.workspace_dir || targetRootDir;
+  const shouldCopyToolsToWorkspace = activeConfig.workspace_type === 'clone_root' && targetWsDir && path.resolve(targetWsDir) !== path.resolve(targetRootDir);
 
   console.log('Syncing MTA linter tooling (tools/mta-lint.mjs) from Menditect/agentic-test-workspace...');
   const rootToolsDir = path.join(targetRootDir, 'tools');
@@ -639,7 +641,7 @@ async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir } = {}) {
     if (linterCode && linterCode.includes('LINTER_VERSION')) {
       fs.writeFileSync(path.join(rootToolsDir, 'mta-lint.mjs'), linterCode, 'utf8');
 
-      if (targetWsDir && path.resolve(targetWsDir) !== path.resolve(targetRootDir)) {
+      if (shouldCopyToolsToWorkspace) {
         const wsToolsDir = path.join(targetWsDir, 'tools');
         if (!fs.existsSync(wsToolsDir)) fs.mkdirSync(wsToolsDir, { recursive: true });
         fs.writeFileSync(path.join(wsToolsDir, 'mta-lint.mjs'), linterCode, 'utf8');
@@ -656,7 +658,7 @@ async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir } = {}) {
     const runnerCode = await fetchRawText(runnerUrl);
     if (runnerCode && runnerCode.includes('spawnSync')) {
       fs.writeFileSync(path.join(rootToolsDir, 'run-linter.mjs'), runnerCode, 'utf8');
-      if (targetWsDir && path.resolve(targetWsDir) !== path.resolve(targetRootDir)) {
+      if (shouldCopyToolsToWorkspace) {
         const wsToolsDir = path.join(targetWsDir, 'tools');
         if (!fs.existsSync(wsToolsDir)) fs.mkdirSync(wsToolsDir, { recursive: true });
         fs.writeFileSync(path.join(wsToolsDir, 'run-linter.mjs'), runnerCode, 'utf8');
@@ -704,7 +706,7 @@ async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir } = {}) {
       const content = await fetchRawText(fixUrl);
       if (content && content.length > 0) {
         fs.writeFileSync(path.join(rootFixturesDir, f), content, 'utf8');
-        if (targetWsDir && path.resolve(targetWsDir) !== path.resolve(targetRootDir)) {
+        if (shouldCopyToolsToWorkspace) {
           const wsFixDir = path.join(targetWsDir, 'tools', 'fixtures');
           if (!fs.existsSync(wsFixDir)) fs.mkdirSync(wsFixDir, { recursive: true });
           fs.writeFileSync(path.join(wsFixDir, f), content, 'utf8');
@@ -731,11 +733,13 @@ async function syncSkills(options = {}) {
   let targetSkillsDir = (options.config && options.config.skills_dir) || config.skills_dir || path.join(rootDir, 'skills');
   const workspaceDir = (options.config && options.config.workspace_dir) || config.workspace_dir || rootDir;
 
-  // Ensure execution-plans folder exists in workspace (menditect-output/execution-plans)
-  const menditectOutputDir = config.mta_output_path || path.join(workspaceDir, 'menditect-output');
-  const plansDir = config.execution_plans_dir || path.join(menditectOutputDir, 'execution-plans');
-  if (!fs.existsSync(menditectOutputDir)) fs.mkdirSync(menditectOutputDir, { recursive: true });
-  if (!fs.existsSync(plansDir)) fs.mkdirSync(plansDir, { recursive: true });
+  // Ensure execution-plans folder exists in workspace when a workspace is configured
+  if (config.workspace_dir || config.mta_output_path || config.execution_plans_dir) {
+    const menditectOutputDir = config.mta_output_path || path.join(workspaceDir, 'menditect-output');
+    const plansDir = config.execution_plans_dir || path.join(menditectOutputDir, 'execution-plans');
+    if (!fs.existsSync(menditectOutputDir)) fs.mkdirSync(menditectOutputDir, { recursive: true });
+    if (!fs.existsSync(plansDir)) fs.mkdirSync(plansDir, { recursive: true });
+  }
 
   // Check if Marketplace module was recently added and offer/perform automatic migration (requires Mendix 11.12+)
   if (config.workspace_type === 'mendix_project' && config.skills_style === 'standard') {
@@ -809,7 +813,7 @@ async function syncSkills(options = {}) {
       }
 
       // Synchronize MTA linter tooling and execute health self-test
-      await syncLinterTools({ rootDir, workspaceDir });
+      await syncLinterTools({ rootDir, workspaceDir, config });
 
       return true;
     } else {
@@ -871,8 +875,8 @@ async function syncMxcli() {
     }
     console.log(`mxcli updated successfully in ${defaultBinDir}`);
 
-    // If workspace is separate, ensure workspace bin directory also has the binary
-    if (path.resolve(workspaceDir) !== path.resolve(rootDir)) {
+    // If Standalone Subfolder workspace (clone_root) is separate, ensure workspace bin directory also has the binary
+    if (config.workspace_type === 'clone_root' && path.resolve(workspaceDir) !== path.resolve(rootDir)) {
       const workspaceBinDir = path.join(workspaceDir, 'bin');
       if (!fs.existsSync(workspaceBinDir)) fs.mkdirSync(workspaceBinDir, { recursive: true });
       const targetBinaryPath = path.join(workspaceBinDir, finalBinName);

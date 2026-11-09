@@ -66,9 +66,16 @@ function findCandidateDirs() {
   }
   dirs.push(...parents);
   
-  // 3. Explicit MTA_CONFIG_PATH directory (highest priority)
+  // 3. Explicit MTA_CONFIG_PATH directory
   if (process.env.MTA_CONFIG_PATH) {
     dirs.push(path.dirname(process.env.MTA_CONFIG_PATH));
+  }
+
+  // 4. If running inside an active workspace with its own mta_config.json (and not in verify mode),
+  // ensure process.cwd() takes top priority over a static global MTA_CONFIG_PATH
+  const cwdConfig = path.join(process.cwd(), 'mta_config.json');
+  if (process.env.MCP_VERIFY_MODE !== 'true' && fs.existsSync(cwdConfig)) {
+    dirs.push(process.cwd());
   }
   
   // Deduplicate preserving last occurrence (highest priority)
@@ -98,7 +105,10 @@ function refreshConfigAndEnv() {
   }
   
   config = {};
+  const cwdConfigPath = path.join(process.cwd(), 'mta_config.json');
+  const preferCwdConfig = process.env.MCP_VERIFY_MODE !== 'true' && fs.existsSync(cwdConfigPath);
   const possibleConfigPaths = [
+    preferCwdConfig ? cwdConfigPath : null,
     process.env.MTA_CONFIG_PATH,
     ...([...candidateDirs].reverse().map(d => path.join(d, 'mta_config.json')))
   ].filter(Boolean);

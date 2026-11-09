@@ -51,10 +51,11 @@ function loadEnvFile(filePath) {
 }
 
 const candidateConfigPaths = [
+  process.env.MTA_CONFIG_PATH,
   path.join(process.cwd(), 'mta_config.json'),
   path.join(rootDir, 'mta_config.json'),
   path.join(rootDir, '..', 'mta_config.json')
-];
+].filter(Boolean);
 
 let rawConfig = {};
 let activeConfigPath = null;
@@ -286,7 +287,8 @@ function checkMxcliBinary() {
 }
 
 function checkLinterTooling() {
-  const linterPath = path.join(rootDir, 'tools', 'mta-lint.mjs');
+  const toolsBaseDir = config.tools_dir || path.join(config.tools_root_dir || rootDir, 'tools');
+  const linterPath = path.join(toolsBaseDir, 'mta-lint.mjs');
   if (!fs.existsSync(linterPath)) {
     console.warn(`${WARN} MTA linter tool not found at ${linterPath}. Run "npm run update" to install it.`);
     return false;
@@ -696,11 +698,21 @@ function verifyMode(mode) {
 async function run() {
   console.log(`--- Menditect Workspace Verification${scriptVersion} ---\n`);
   const wsType = config.workspace_type || 'clone_root';
+  const wsTypeLabel = wsType === 'custom'
+    ? 'custom (Central Tools Hub)'
+    : wsType === 'mendix_project'
+      ? 'mendix_project (Direct Mendix Project)'
+      : 'clone_root (Standalone Subfolder)';
   const wsDir = config.workspace_dir || path.join(__dirname, '..');
   const skillsDir = config.skills_dir || path.join(wsDir, 'skills');
-  console.log(`Workspace Type:     ${wsType}`);
+  const toolsDir = config.tools_dir || path.join(config.tools_root_dir || rootDir, 'tools');
+  console.log(`Workspace Type:     ${wsTypeLabel}`);
   console.log(`Workspace Dir:      ${wsDir}`);
-  console.log(`Skills Destination: ${skillsDir}\n`);
+  if (wsType === 'custom') {
+    console.log(`Central Tools Hub:  ${config.tools_root_dir || rootDir}`);
+  }
+  console.log(`Skills Location:    ${skillsDir}`);
+  console.log(`Tools Location:     ${toolsDir}\n`);
 
   console.log('Checking configuration schema compliance...');
   if (!activeConfigPath) {

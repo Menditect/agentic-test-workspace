@@ -765,7 +765,7 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
 
   // 4. Claude .claude/settings.json (merge mcpServers and hooks while preserving permissions and other settings)
   mergeJsonFile(path.join(workspaceDir, '.claude', 'settings.json'), (existing) => {
-    return {
+    const updated = {
       ...existing,
       mcpServers: {
         ...(existing.mcpServers || {}),
@@ -776,6 +776,18 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
         ...hookSpec
       }
     };
+    if (!isToolsWorkspace) {
+      const existingPerms = existing.permissions || {};
+      const existingDirs = Array.isArray(existingPerms.additionalDirectories) ? existingPerms.additionalDirectories : [];
+      const normalizedToolsDir = toolsRootDir.replace(/\\/g, '/');
+      if (!existingDirs.some(d => path.resolve(d) === path.resolve(toolsRootDir))) {
+        updated.permissions = {
+          ...existingPerms,
+          additionalDirectories: [...existingDirs, normalizedToolsDir]
+        };
+      }
+    }
+    return updated;
   });
 
   // 5. Global Antigravity mcp_config.json
@@ -980,7 +992,11 @@ function ensureExecutionPlanFolders(targetDir) {
   return { menditectOutputDir, plansDir };
 }
 
-function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [], defaultInstanceName = '', skillsRelPath = 'skills/AGENTS.md') {
+function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [], defaultInstanceName = '', skillsRelPath = 'skills/AGENTS.md', toolsDir = null) {
+  const cleanToolsDir = toolsDir ? toolsDir.replace(/\\/g, '/') : null;
+  const lintCmd = cleanToolsDir ? `node "${cleanToolsDir}/mta-lint.mjs"` : 'node tools/mta-lint.mjs';
+  const bughunterCmd = cleanToolsDir ? `node "${cleanToolsDir}/mta-bughunter.mjs"` : 'node tools/mta-bughunter.mjs';
+
   if (skillsStyle === 'mendix_module') {
     return [
       '# Menditect Architecture Setup',
@@ -998,7 +1014,7 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
       '- **ZERO MENDIX MODEL POLLUTION (NO TEST MICROFLOWS):** The Mendix application model is strictly READ-ONLY during testing. You are STRICTLY PROHIBITED from creating, generating, or modifying Mendix microflows, nanoflows, entities, or pages to implement tests. Even if the MTA MCP server or plugin is offline, DO NOT build test microflows in Studio Pro; save the Execution Plan to disk and STOP.',
       '- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).',
       '- **EXPLORATORY EXECUTION STRATEGY (mta_config.json SSOT):** Read `exploratory_execution_mode` from `mta_config.json` before drafting any plan. If `"prompt_approval"`, you MUST set `status: "DRAFT"`, present Checkpoint 1, and HALT for human approval (`AUTO_APPROVED` is strictly prohibited). Only if `"auto_execute"` (and Backend in-memory `Rollback: "Yes"` with no `bug_reproduction`/`data_seeding`/`prompt_spec` override) may you set `status: "AUTO_APPROVED"` and auto-execute.',
-      '- **STRICT TWO-GATE HUMAN APPROVAL INVARIANT (ANTI-56, PAT-106, PAT-118):** Persistent MTA Platform construction (`Create*`, `Edit*`, `Set*`) and all Frontend tests NEVER auto-execute and NEVER self-approve in a single turn. Always write `EP_*.md` as `status: "DRAFT"`, present Checkpoint 1 & Gate 2 placement (and elicit Playwright Browser/Mode/SlowMo via `ask_question` for Frontend), and HALT your turn. Only after the user replies in a subsequent turn may you run `node tools/mta-lint.mjs stage-placement`, seal `status: "APPROVED"`, and run `node tools/mta-lint.mjs pre-build`.',
+      `- **STRICT TWO-GATE HUMAN APPROVAL INVARIANT (ANTI-56, PAT-106, PAT-118):** Persistent MTA Platform construction (\`Create*\`, \`Edit*\`, \`Set*\`) and all Frontend tests NEVER auto-execute and NEVER self-approve in a single turn. Always write \`EP_*.md\` as \`status: "DRAFT"\`, present Checkpoint 1 & Gate 2 placement (and elicit Playwright Browser/Mode/SlowMo via \`ask_question\` for Frontend), and HALT your turn. Only after the user replies in a subsequent turn may you run \`${lintCmd} stage-placement\`, seal \`status: "APPROVED"\`, and run \`${lintCmd} pre-build\`.`,
       '- **MTA LICENSE TIER & CAPABILITIES:**',
       '  * If `MTA` MCP server is not configured and `MtaPluginModule.MTAConnectionUrl` is `wss://services.menditect.com`, the user is operating under the **Free MTA Exploratory License**.',
       '  * **Free Capabilities:** Unlimited local in-memory microflow testing (`execute-testcase`) and local Execution Plan generation (`EP_*.md`).',
@@ -1007,9 +1023,14 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
     ].join('\n');
   }
 
-  return [
+  const lines = [
     '# Menditect Architecture Setup',
-    `- **CRITICAL OPERATIONAL COMMAND:** Always execute tasks using the core rules defined in \`${skillsRelPath}\`.`,
+    `- **CRITICAL OPERATIONAL COMMAND:** Always execute tasks using the core rules defined in \`${skillsRelPath}\`.`
+  ];
+  if (cleanToolsDir) {
+    lines.push(`- **CENTRAL TOOLS HUB LOCATION:** MTA skills reside at \`${path.dirname(skillsRelPath).replace(/\\/g, '/')}/\` and MTA CLI tools reside at \`${cleanToolsDir}/\`. Whenever any skill instructs you to run \`node tools/mta-lint.mjs\` or \`node tools/mta-bughunter.mjs\`, execute them from the central tools path: \`${lintCmd}\` and \`${bughunterCmd}\`.`);
+  }
+  lines.push(
     `- **Application name is: ${appName || '[ApplicationName]'}**`,
     `- **MTA Url: ${mtaUrl || '[MtaUrl]'}**`,
     '- **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json`.',
@@ -1017,21 +1038,23 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
     '- **ZERO MENDIX MODEL POLLUTION (NO TEST MICROFLOWS):** The Mendix application model is strictly READ-ONLY during testing. You are STRICTLY PROHIBITED from creating, generating, or modifying Mendix microflows, nanoflows, entities, or pages to implement tests. Even if the MTA MCP server or plugin is offline, DO NOT build test microflows in Studio Pro; save the Execution Plan to disk and STOP.',
     '- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).',
     '- **EXPLORATORY EXECUTION STRATEGY (mta_config.json SSOT):** Read `exploratory_execution_mode` from `mta_config.json` before drafting any plan. If `"prompt_approval"`, you MUST set `status: "DRAFT"`, present Checkpoint 1, and HALT for human approval (`AUTO_APPROVED` is strictly prohibited). Only if `"auto_execute"` (and Backend in-memory `Rollback: "Yes"` with no `bug_reproduction`/`data_seeding`/`prompt_spec` override) may you set `status: "AUTO_APPROVED"` and auto-execute.',
-    '- **STRICT TWO-GATE HUMAN APPROVAL INVARIANT (ANTI-56, PAT-106, PAT-118):** Persistent MTA Platform construction (`Create*`, `Edit*`, `Set*`) and all Frontend tests NEVER auto-execute and NEVER self-approve in a single turn. Always write `EP_*.md` as `status: "DRAFT"`, present Checkpoint 1 & Gate 2 placement (and elicit Playwright Browser/Mode/SlowMo via `ask_question` for Frontend), and HALT your turn. Only after the user replies in a subsequent turn may you run `node tools/mta-lint.mjs stage-placement`, seal `status: "APPROVED"`, and run `node tools/mta-lint.mjs pre-build`.',
+    `- **STRICT TWO-GATE HUMAN APPROVAL INVARIANT (ANTI-56, PAT-106, PAT-118):** Persistent MTA Platform construction (\`Create*\`, \`Edit*\`, \`Set*\`) and all Frontend tests NEVER auto-execute and NEVER self-approve in a single turn. Always write \`EP_*.md\` as \`status: "DRAFT"\`, present Checkpoint 1 & Gate 2 placement (and elicit Playwright Browser/Mode/SlowMo via \`ask_question\` for Frontend), and HALT your turn. Only after the user replies in a subsequent turn may you run \`${lintCmd} stage-placement\`, seal \`status: "APPROVED"\`, and run \`${lintCmd} pre-build\`.`,
     '- **MTA LICENSE TIER & CAPABILITIES:**',
     '  * If `MTA` MCP server is not configured and `MtaPluginModule.MTAConnectionUrl` is `wss://services.menditect.com`, the user is operating under the **Free MTA Exploratory License**.',
     '  * **Free Capabilities:** Unlimited local in-memory microflow testing (`execute-testcase`) and local Execution Plan generation (`EP_*.md`).',
     '  * **Paid Platform Capabilities:** Persistent cloud/on-prem test suites, Playwright Frontend UI testing, and CI/CD automated regression pipelines require a paid MTA Platform License.',
     '- **MCP SUBPROCESS PROTECTION & TOKEN ROTATION:** NEVER execute terminal commands (`Stop-Process`, `taskkill`, `kill`) against running MCP server/proxy processes (`mta-proxy.js`, `node.exe`, or custom proxies). Terminating stdio child processes causes AI IDEs (Antigravity, Cursor, Claude Desktop, VS Code) to permanently disable MCP servers for the active session. The built-in proxy reloads `.env` dynamically on every request with zero restart needed. If using a static or custom proxy that returns HTTP 401, prompt the user to update their credentials and use their IDE\'s "Restart MCP Server" / "Reload Window" UI action.'
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
-function updateDirectiveFile(filePath, appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsRelPath = 'skills/AGENTS.md') {
+function updateDirectiveFile(filePath, appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsRelPath = 'skills/AGENTS.md', toolsDir = null) {
   let content = '';
+  const isExternalWorkspace = path.resolve(path.dirname(filePath)) !== path.resolve(toolsRootDir);
   if (fs.existsSync(filePath)) {
     content = fs.readFileSync(filePath, 'utf8');
-  } else {
-    // Seed from toolsRootDir template if available
+  } else if (!toolsDir || !isExternalWorkspace) {
+    // Seed from toolsRootDir template if available (for standalone/tools-root setups)
     const baseFile = path.join(toolsRootDir, path.basename(filePath));
     if (fs.existsSync(baseFile)) {
       content = fs.readFileSync(baseFile, 'utf8');
@@ -1039,16 +1062,16 @@ function updateDirectiveFile(filePath, appName, mtaUrl, skillsStyle, appInstance
   }
 
   if (skillsRelPath === 'skills/AGENTS.md') {
-    content = content.replace(/[a-zA-Z0-9_\-\.]+\/skills\/AGENTS\.md/g, 'skills/AGENTS.md');
-    content = content.replace(/`[a-zA-Z0-9_\-\.]+\/skills\/`/g, '`skills/`');
-    content = content.replace(/in the `[a-zA-Z0-9_\-\.]+\/skills\/` directory/g, 'in the `skills/` directory');
+    content = content.replace(/[a-zA-Z0-9_\-\.\/\\:]+\/skills\/AGENTS\.md/g, 'skills/AGENTS.md');
+    content = content.replace(/`[a-zA-Z0-9_\-\.\/\\:]+\/skills\/`/g, '`skills/`');
+    content = content.replace(/in the `[a-zA-Z0-9_\-\.\/\\:]+\/skills\/` directory/g, 'in the `skills/` directory');
   } else {
     content = content.replace(/skills\/AGENTS\.md/g, skillsRelPath);
     const skillsDirRel = path.dirname(skillsRelPath);
     content = content.replace(/`skills\/`/g, `\`${skillsDirRel}/\``);
   }
 
-  const setupBlock = getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsRelPath);
+  const setupBlock = getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsRelPath, toolsDir);
 
   const headerRegex = /# Menditect Architecture Setup[\s\S]*?(?=(?:\r?\n#[^#]|$))/;
   if (headerRegex.test(content)) {
@@ -1062,7 +1085,7 @@ function updateDirectiveFile(filePath, appName, mtaUrl, skillsStyle, appInstance
   fs.writeFileSync(filePath, content, 'utf8');
 }
 
-function updateAgentDirectives(targetDir, appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsDir) {
+function updateAgentDirectives(targetDir, appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsDir, toolsDir = null) {
   const targetFiles = [
     path.join(targetDir, 'AGENTS.md'),
     path.join(targetDir, 'CLAUDE.md'),
@@ -1072,12 +1095,17 @@ function updateAgentDirectives(targetDir, appName, mtaUrl, skillsStyle, appInsta
 
   let skillsRelPath = 'skills/AGENTS.md';
   if (skillsDir) {
-    const rel = path.relative(targetDir, skillsDir).replace(/\\/g, '/');
-    skillsRelPath = rel ? `${rel}/AGENTS.md` : 'skills/AGENTS.md';
+    if (toolsDir && path.resolve(targetDir) !== path.resolve(toolsRootDir)) {
+      // Central Tools Hub mode: use clean absolute path to central skills/AGENTS.md
+      skillsRelPath = `${skillsDir.replace(/\\/g, '/')}/AGENTS.md`;
+    } else {
+      const rel = path.relative(targetDir, skillsDir).replace(/\\/g, '/');
+      skillsRelPath = rel ? `${rel}/AGENTS.md` : 'skills/AGENTS.md';
+    }
   }
 
   for (const file of targetFiles) {
-    updateDirectiveFile(file, appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsRelPath);
+    updateDirectiveFile(file, appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsRelPath, toolsDir);
   }
   console.log(`Configured Menditect Architecture Setup in ${targetDir}`);
 }
@@ -1110,12 +1138,49 @@ async function run(options = {}) {
   console.log('');
 
   let existingConfig = {};
-  try {
-    const existingConfigPath = path.join(toolsRootDir, 'mta_config.json');
-    if (fs.existsSync(existingConfigPath)) {
-      existingConfig = normalizeConfigAliases(JSON.parse(fs.readFileSync(existingConfigPath, 'utf8')));
+  const candidateInitConfigs = [
+    path.join(process.cwd(), 'mta_config.json'),
+    path.join(toolsRootDir, '..', 'mta_config.json'),
+    path.join(toolsRootDir, 'mta_config.json')
+  ];
+  for (const cfgCandidate of candidateInitConfigs) {
+    try {
+      if (fs.existsSync(cfgCandidate)) {
+        existingConfig = normalizeConfigAliases(JSON.parse(fs.readFileSync(cfgCandidate, 'utf8')));
+        loadEnvFile(path.join(path.dirname(cfgCandidate), '.env.local'));
+        loadEnvFile(path.join(path.dirname(cfgCandidate), '.env'));
+        break;
+      }
+    } catch (e) {}
+  }
+
+  function hydrateStateFromWorkspaceDir(dir, st) {
+    if (!dir || !fs.existsSync(dir)) return;
+    const cfgPath = path.join(dir, 'mta_config.json');
+    loadEnvFile(path.join(dir, '.env.local'));
+    loadEnvFile(path.join(dir, '.env'));
+    if (fs.existsSync(cfgPath)) {
+      try {
+        const loaded = normalizeConfigAliases(JSON.parse(fs.readFileSync(cfgPath, 'utf8')));
+        console.log(`${FOUND} Loaded existing workspace configuration from ${cfgPath}`);
+        if (!st.projectDir && loaded.mendix_project_dir) st.projectDir = loaded.mendix_project_dir;
+        if (!st.mprPath && loaded.mendix_mpr_path) st.mprPath = loaded.mendix_mpr_path;
+        if (loaded.model_source) st.modelSource = loaded.model_source === 'studiopro' ? '2' : '1';
+        if (loaded.studiopro_mcp_url) st.studioproMcpUrl = loaded.studiopro_mcp_url;
+        if (!st.appInstances.length && Array.isArray(loaded.app_instances) && loaded.app_instances.length) {
+          st.appInstances = [...loaded.app_instances];
+        }
+        if (!st.defaultInstanceName && loaded.default_app_instance) st.defaultInstanceName = loaded.default_app_instance;
+        if (!st.defaultInstanceToken && loaded.default_app_instance_token) st.defaultInstanceToken = loaded.default_app_instance_token;
+        if (!st.appName && loaded.application_name) st.appName = loaded.application_name;
+        if (!st.mtaUrl && loaded.mta_base_url) st.mtaUrl = loaded.mta_base_url;
+        if (!st.pluginUrl && loaded.plugin_mcp_url) st.pluginUrl = loaded.plugin_mcp_url;
+        if (loaded.exploratory_execution_mode) st.exploratoryMode = loaded.exploratory_execution_mode;
+      } catch (e) {}
     }
-  } catch (e) {}
+    if (!st.rawMtaToken && process.env.MTA_MCP_AUTH_HEADER) st.rawMtaToken = process.env.MTA_MCP_AUTH_HEADER;
+    if (!st.rawPluginToken && process.env.PLUGIN_MCP_TOKEN) st.rawPluginToken = process.env.PLUGIN_MCP_TOKEN;
+  }
 
   console.log('======================================================');
   console.log(' NAVIGATION TIPS:');
@@ -1127,8 +1192,18 @@ async function run(options = {}) {
   const defaultMpr = existingConfig.mendix_mpr_path || '';
   const defaultDetectedVersion = defaultMpr ? detectMendixVersion(defaultMpr) : '';
 
+  let defaultWorkspaceChoice = '1';
+  if (existingConfig.workspace_type === 'mendix_project') {
+    defaultWorkspaceChoice = '3';
+  } else if (existingConfig.workspace_type === 'clone_root') {
+    defaultWorkspaceChoice = '2';
+  } else if (existingConfig.workspace_type === 'custom') {
+    defaultWorkspaceChoice = '1';
+  }
+
   const state = {
-    workspaceChoice: existingConfig.workspace_type === 'mendix_project' ? '2' : '1',
+    workspaceChoice: defaultWorkspaceChoice,
+    customWorkspaceDir: existingConfig.workspace_dir || path.resolve(toolsRootDir, '..'),
     projectDir: existingConfig.mendix_project_dir || '',
     mprPath: defaultMpr,
     detectedVersion: defaultDetectedVersion,
@@ -1162,14 +1237,21 @@ async function run(options = {}) {
       console.log('\n--- Workspace Structure ---');
       console.log('Choose how you want to structure your Agentic Testing Workspace:');
       console.log('(The workspace is the dedicated project environment where your AI agent operates with skills, MCP tools, and test plans)\n');
-      console.log('[1] Dedicated Tools Workspace (Recommended)');
-      console.log('    ★ ADVANTAGE: Keeps your Mendix project Git 100% clean and untouched.');
-      console.log('    - Active Workspace: Parent directory (workspace/)');
-      console.log('    - How It Works: Test execution plans, agent directives, and local tooling configs');
-      console.log('      stay isolated in your workspace without modifying your Mendix repository.');
-      console.log('    - Best For: Individual developers, multi-app setups, or testing without polluting');
-      console.log('      Mendix project git history.\n');
-      console.log('[2] Direct Mendix Project Workspace');
+      console.log('[1] Central Tools Hub — Multi-App / Shared Engine (Recommended)');
+      console.log('    ★ ADVANTAGE: Update once in this repository, apply automatically to all app workspaces.');
+      console.log('    - Active Workspace: Any dedicated local folder for your app (e.g. C:\\Workspaces\\MyApp)');
+      console.log('    - How It Works: Skills (skills/) and linter tools (tools/) remain strictly in this central');
+      console.log('      repository with zero file duplication or symlinks. Each app workspace contains only its');
+      console.log('      own mta_config.json, .env, thin agent directives, and execution plans.');
+      console.log('    - Best For: Testing multiple Mendix apps with single-command updates (npm run update) and');
+      console.log('      keeping Mendix project Git 100% clean.\n');
+      console.log('[2] Standalone Subfolder Workspace — Single-App Isolated');
+      console.log('    ★ ADVANTAGE: Self-contained & version-isolated per workspace.');
+      console.log('    - Active Workspace: Parent directory (..) containing this cloned repository as a subfolder');
+      console.log('    - How It Works: Installs a dedicated local copy of skills/ and tools/ in the parent folder');
+      console.log('      while keeping your Mendix project Git 100% clean.');
+      console.log('    - Best For: Single-app setups or pinning a specific skill/linter version for one project.\n');
+      console.log('[3] Direct Mendix Project Workspace — In-Repo Team Collaboration');
       console.log('    ★ ADVANTAGE: Team collaboration — test skills and agent configs are committed');
       console.log('      directly into your Mendix repository and shared with your team via Git.');
       console.log('    - Active Workspace: Your local Mendix project directory');
@@ -1177,13 +1259,34 @@ async function run(options = {}) {
       console.log('    - Best For: Teams collaborating on automated testing within the same Mendix repository.\n');
 
       let ans = '';
-      while (ans !== '1' && ans !== '2' && !isBack(ans)) {
-        ans = await ask('Select Workspace Option (1/2)', state.workspaceChoice);
+      while (ans !== '1' && ans !== '2' && ans !== '3' && !isBack(ans)) {
+        ans = await ask('Select Workspace Option (1/2/3)', state.workspaceChoice);
       }
       if (isBack(ans)) {
         goBack = true;
       } else {
         state.workspaceChoice = ans;
+        if (ans === '1') {
+          nextStep = 'workspace_dir';
+        } else {
+          if (ans === '2') {
+            hydrateStateFromWorkspaceDir(path.resolve(toolsRootDir, '..'), state);
+          }
+          nextStep = 'project_dir';
+        }
+      }
+    } else if (currentStep === 'workspace_dir') {
+      console.log('\n--- Target App Workspace Directory (Central Tools Hub) ---');
+      console.log('Specify the local folder where this Mendix app\'s workspace files');
+      console.log('(mta_config.json, .env, and menditect-output/ test plans) should live.');
+      console.log(`(Skills and CLI tools will remain in the Central Hub: ${toolsRootDir})\n`);
+      const defaultWsDir = state.customWorkspaceDir || existingConfig.workspace_dir || path.resolve(toolsRootDir, '..');
+      const ans = await ask('Target App Workspace Folder', defaultWsDir);
+      if (isBack(ans)) {
+        goBack = true;
+      } else {
+        state.customWorkspaceDir = path.resolve(ans);
+        hydrateStateFromWorkspaceDir(state.customWorkspaceDir, state);
         nextStep = 'project_dir';
       }
     } else if (currentStep === 'project_dir') {
@@ -1194,6 +1297,9 @@ async function run(options = {}) {
         goBack = true;
       } else {
         state.projectDir = ans;
+        if (state.projectDir && fs.existsSync(state.projectDir)) {
+          hydrateStateFromWorkspaceDir(state.projectDir, state);
+        }
         state.mprPath = '';
         const found = findMpr(state.projectDir);
         if (found) {
@@ -1223,7 +1329,7 @@ async function run(options = {}) {
           console.log('Warning: No .mpr file found in directory.');
         }
 
-        if (state.workspaceChoice === '2' && !state.detectedVersion) {
+        if (state.workspaceChoice === '3' && !state.detectedVersion) {
           nextStep = 'version_check';
         } else {
           nextStep = 'model_source';
@@ -1553,8 +1659,13 @@ async function run(options = {}) {
       }
     } else if (currentStep === 'summary_review') {
       const mcpSource = state.modelSource === '2' ? 'studiopro' : 'mxcli';
-      const workspaceType = state.workspaceChoice === '2' ? 'mendix_project' : 'clone_root';
-      const resolvedWorkspaceDir = workspaceType === 'clone_root' ? path.resolve(toolsRootDir, '..') : (state.projectDir || process.cwd());
+      const workspaceType = state.workspaceChoice === '3' ? 'mendix_project' : (state.workspaceChoice === '2' ? 'clone_root' : 'custom');
+      const resolvedWorkspaceDir = workspaceType === 'custom'
+        ? path.resolve(state.customWorkspaceDir || path.resolve(toolsRootDir, '..'))
+        : (workspaceType === 'clone_root' ? path.resolve(toolsRootDir, '..') : (state.projectDir || process.cwd()));
+      const workspaceLabel = workspaceType === 'custom'
+        ? 'Central Tools Hub (Shared Engine)'
+        : (workspaceType === 'clone_root' ? 'Standalone Subfolder Workspace' : 'Direct Mendix Project Workspace');
       const mtaTokenPreview = state.rawMtaToken ? 'Set (Configured)' : '(skipped - local exploratory testing)';
       const pluginTokenPreview = state.rawPluginToken ? 'Set (Configured)' : '(none)';
       const instanceSummary = state.appInstances.length
@@ -1567,7 +1678,7 @@ async function run(options = {}) {
       console.log('\n================================================================================');
       console.log(' CONFIGURATION SUMMARY & REVIEW');
       console.log('================================================================================');
-      console.log(` [1] Workspace Setup:    ${workspaceType === 'clone_root' ? 'Dedicated Tools Workspace' : 'Direct Mendix Project Workspace'} (${resolvedWorkspaceDir})`);
+      console.log(` [1] Workspace Setup:    ${workspaceLabel} (${resolvedWorkspaceDir})`);
       console.log(` [2] Mendix App Path:    ${state.projectDir || '(none)'}${state.detectedVersion ? ` (Mendix v${state.detectedVersion})` : ''}`);
       console.log(` [3] Model Source:       ${modelSourceSummary}`);
       console.log(` [4] MTA Server URL:     ${state.mtaUrl || '(none)'} (App: ${state.appName || 'MyApp'})`);
@@ -1622,7 +1733,9 @@ async function run(options = {}) {
       }
     } else if (nextStep) {
       if (editingSingleSetting) {
-        if (currentStep === 'model_source' && nextStep === 'studiopro_url') {
+        if (currentStep === 'workspace' && nextStep === 'workspace_dir') {
+          currentStep = 'workspace_dir';
+        } else if (currentStep === 'model_source' && nextStep === 'studiopro_url') {
           currentStep = 'studiopro_url';
         } else if (currentStep === 'app_name') {
           currentStep = 'mta_url';
@@ -1639,12 +1752,28 @@ async function run(options = {}) {
 
   // --- SAVING AND CONFIGURATION PERSISTENCE ---
   const mcpSource = state.modelSource === '2' ? 'studiopro' : 'mxcli';
-  const workspaceType = state.workspaceChoice === '2' ? 'mendix_project' : 'clone_root';
-  const workspaceDir = workspaceType === 'clone_root' ? path.resolve(toolsRootDir, '..') : state.projectDir;
+  const workspaceType = state.workspaceChoice === '3' ? 'mendix_project' : (state.workspaceChoice === '2' ? 'clone_root' : 'custom');
+  const workspaceDir = workspaceType === 'custom'
+    ? path.resolve(state.customWorkspaceDir || path.resolve(toolsRootDir, '..'))
+    : (workspaceType === 'clone_root' ? path.resolve(toolsRootDir, '..') : path.resolve(state.projectDir || process.cwd()));
+
+  if (!fs.existsSync(workspaceDir)) {
+    fs.mkdirSync(workspaceDir, { recursive: true });
+  }
+
   let skillsDir = path.join(workspaceDir, 'skills');
+  let toolsDir = null;
   let skillsStyle = 'standard';
 
-  if (workspaceType === 'clone_root') {
+  if (workspaceType === 'custom') {
+    skillsDir = path.join(toolsRootDir, 'skills');
+    toolsDir = path.join(toolsRootDir, 'tools');
+    skillsStyle = 'standard';
+    console.log(`\nWorkspace: App Workspace Directory (${workspaceDir})`);
+    console.log(`Central Tools Hub: ${toolsRootDir}`);
+    console.log(`Central Skills:    ${skillsDir} (shared, zero-copy)`);
+    console.log(`Central Tools:     ${toolsDir} (shared, zero-copy)`);
+  } else if (workspaceType === 'clone_root') {
     skillsDir = path.join(workspaceDir, 'skills');
     skillsStyle = 'standard';
     console.log(`\nWorkspace: Parent Workspace Directory (${workspaceDir})`);
@@ -1676,6 +1805,78 @@ async function run(options = {}) {
   }
 
   const { menditectOutputDir, plansDir } = ensureExecutionPlanFolders(workspaceDir);
+
+  // --- AUTOMATED MODEL-SWITCHING MIGRATION & CLEANUP ---
+  // 1. Switching from Standalone Subfolder [2] -> Central Tools Hub [1]: offer to remove local skills/ & tools/ copies
+  if (workspaceType === 'custom' && path.resolve(workspaceDir) !== path.resolve(toolsRootDir)) {
+    const localSkillsCopy = path.join(workspaceDir, 'skills');
+    const localToolsCopy = path.join(workspaceDir, 'tools');
+    const localBinCopy = path.join(workspaceDir, 'bin');
+    const hasLocalSkills = fs.existsSync(localSkillsCopy);
+    const hasLocalTools = fs.existsSync(localToolsCopy);
+    if (hasLocalSkills || hasLocalTools) {
+      console.log(`\n[MIGRATION] Detected local ${[hasLocalSkills ? 'skills/' : null, hasLocalTools ? 'tools/' : null].filter(Boolean).join(' and ')} inside ${workspaceDir} from a previous Standalone setup.`);
+      const cleanAns = await ask('Remove these redundant local copies so this workspace uses the Central Tools Hub exclusively? (y/n)', 'y', { allowBack: false });
+      if (cleanAns.toLowerCase().startsWith('y')) {
+        try {
+          if (hasLocalSkills) fs.rmSync(localSkillsCopy, { recursive: true, force: true });
+          if (hasLocalTools) fs.rmSync(localToolsCopy, { recursive: true, force: true });
+          if (fs.existsSync(localBinCopy)) fs.rmSync(localBinCopy, { recursive: true, force: true });
+          console.log(`${PASS} Removed redundant local skills/tools copies from ${workspaceDir}.`);
+        } catch (e) {
+          console.warn(`${WARN} Could not remove all local copies: ${e.message}`);
+        }
+      }
+    }
+  }
+
+  // 2. Switching from Direct Mendix Project [3] -> Central Hub [1] or Standalone [2]
+  if ((workspaceType === 'custom' || workspaceType === 'clone_root') && state.projectDir && fs.existsSync(state.projectDir) && path.resolve(state.projectDir) !== path.resolve(workspaceDir)) {
+    const mendixCfgPath = path.join(state.projectDir, 'mta_config.json');
+    const mendixOutputDir = path.join(state.projectDir, 'menditect-output');
+    if (fs.existsSync(mendixCfgPath) || fs.existsSync(mendixOutputDir)) {
+      console.log(`\n[MIGRATION] Detected an existing Direct Mendix Project setup in ${state.projectDir}.`);
+      const migAns = await ask(`Migrate execution plans to ${workspaceDir} and clean up MTA config files from the Mendix project folder? (y/n)`, 'y', { allowBack: false });
+      if (migAns.toLowerCase().startsWith('y')) {
+        try {
+          if (fs.existsSync(mendixOutputDir)) {
+            fs.cpSync(mendixOutputDir, menditectOutputDir, { recursive: true, force: false });
+            fs.rmSync(mendixOutputDir, { recursive: true, force: true });
+          }
+          const filesToClean = ['mta_config.json', 'mta_config.schema.json', '.env', 'mxcli.bat', 'mxcli', 'verify.bat', 'verify'];
+          for (const f of filesToClean) {
+            const fp = path.join(state.projectDir, f);
+            if (fs.existsSync(fp)) fs.unlinkSync(fp);
+          }
+          const localMendixSkills = path.join(state.projectDir, 'skills');
+          if (fs.existsSync(localMendixSkills)) {
+            fs.rmSync(localMendixSkills, { recursive: true, force: true });
+          }
+          console.log(`${PASS} Migrated execution plans to ${workspaceDir} and cleaned up ${state.projectDir}.`);
+        } catch (e) {
+          console.warn(`${WARN} Partial migration warning: ${e.message}`);
+        }
+      }
+    }
+  }
+
+  // 3. Switching from External Workspace [1]/[2] -> Direct Mendix Project [3]
+  if (workspaceType === 'mendix_project' && existingConfig.workspace_dir && fs.existsSync(existingConfig.workspace_dir) && path.resolve(existingConfig.workspace_dir) !== path.resolve(workspaceDir)) {
+    const prevOutputDir = path.join(existingConfig.workspace_dir, 'menditect-output');
+    if (fs.existsSync(prevOutputDir)) {
+      console.log(`\n[MIGRATION] Detected existing execution plans in previous workspace (${prevOutputDir}).`);
+      const copyAns = await ask(`Copy existing menditect-output/ execution plans into ${workspaceDir}? (y/n)`, 'y', { allowBack: false });
+      if (copyAns.toLowerCase().startsWith('y')) {
+        try {
+          fs.cpSync(prevOutputDir, menditectOutputDir, { recursive: true, force: false });
+          console.log(`${PASS} Copied execution plans into ${menditectOutputDir}.`);
+        } catch (e) {
+          console.warn(`${WARN} Could not copy execution plans: ${e.message}`);
+        }
+      }
+    }
+  }
+
   const mtaAuthHeader = state.rawMtaToken.trim() ? formatAuthHeader(state.rawMtaToken) : '';
   const pluginToken = formatBearerToken(state.rawPluginToken);
   const mtaUrl = state.mtaUrl;
@@ -1706,6 +1907,7 @@ async function run(options = {}) {
     workspace_dir: workspaceDir,
     skills_dir: skillsDir,
     skills_style: skillsStyle,
+    ...(toolsDir ? { tools_root_dir: toolsRootDir, tools_dir: toolsDir } : {}),
     mta_output_path: menditectOutputDir,
     execution_plans_dir: plansDir,
     exploratory_execution_mode: state.exploratoryMode || 'auto_execute',
@@ -1799,9 +2001,9 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
   }
 
   // Scaffolding
-  if (state.workspaceChoice === '1') {
+  if (state.workspaceChoice === '1' || state.workspaceChoice === '2') {
     initializeMxcli(workspaceDir, state.mprPath, null, { isMendixProject: false });
-  } else if (state.workspaceChoice === '2') {
+  } else if (state.workspaceChoice === '3') {
     initializeMxcli(workspaceDir, state.mprPath, null, { isMendixProject: true });
   }
 
@@ -1817,12 +2019,15 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
   }
 
   // Update Agent Directives
-  updateAgentDirectives(workspaceDir, state.appName, mtaUrl, skillsStyle, state.appInstances, state.defaultInstanceName, skillsDir);
+  updateAgentDirectives(workspaceDir, state.appName, mtaUrl, skillsStyle, state.appInstances, state.defaultInstanceName, skillsDir, toolsDir);
 
   console.log('\n======================================================');
   console.log(' Setup completed successfully!');
   console.log(` Workspace configured at: ${workspaceDir}`);
   console.log(` Skills destination:      ${skillsDir}`);
+  if (toolsDir) {
+    console.log(` Central Tools location:  ${toolsDir}`);
+  }
   if (!skipSkills) {
     console.log(` Skills status:           ${skillsSyncSuccess ? 'Synchronized from agentic-test-skills' : 'Pending (run npm run update:skills)'}`);
   }
@@ -1840,7 +2045,10 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
     console.log('\nRunning verification...\n');
     try {
       const verifyScript = path.join(__dirname, 'verify-setup.js');
-      execSync(`node "${verifyScript}"`, { stdio: 'inherit' });
+      execSync(`node "${verifyScript}"`, {
+        stdio: 'inherit',
+        env: { ...process.env, MTA_CONFIG_PATH: path.join(workspaceDir, 'mta_config.json') }
+      });
     } catch (e) {
       console.warn(`\n${NOTICE} Verification completed with warnings or errors. You can rerun anytime via "npm run verify".`);
     }
@@ -1912,8 +2120,9 @@ function runDirectivesOnly() {
   const defaultInstanceName = config.default_app_instance || '';
 
   const skillsDir = config.skills_dir || path.join(workspaceDir, 'skills');
+  const toolsDir = config.tools_dir || (config.workspace_type === 'custom' ? path.join(toolsRootDir, 'tools') : null);
   console.log(`${RESTORE} Restoring Menditect Architecture Setup directives in ${workspaceDir}...`);
-  updateAgentDirectives(workspaceDir, appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsDir);
+  updateAgentDirectives(workspaceDir, appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsDir, toolsDir);
   console.log(`${PASS} Agent directives successfully restored across AGENTS.md, CLAUDE.md, and GEMINI.md.`);
 }
 
