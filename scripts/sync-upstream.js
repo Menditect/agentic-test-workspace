@@ -15,19 +15,21 @@ try {
 } catch (e) {}
 
 function loadConfig() {
-  const possiblePaths = [
-    process.env.MTA_CONFIG_PATH,
-    path.join(rootDir, 'mta_config.json'),
-    path.join(process.cwd(), 'mta_config.json'),
-    path.join(rootDir, '..', 'mta_config.json')
-  ].filter(Boolean);
+  const { normalizeConfigAliases, discoverWorkspaceConfigCandidates } = require('./setup');
+  const possiblePaths = discoverWorkspaceConfigCandidates
+    ? discoverWorkspaceConfigCandidates()
+    : [
+        process.env.MTA_CONFIG_PATH,
+        path.join(process.cwd(), 'mta_config.json'),
+        path.join(rootDir, '..', 'mta_config.json'),
+        path.join(rootDir, 'mta_config.json')
+      ].filter(Boolean);
 
   let config = {};
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) {
       try {
         const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
-        const { normalizeConfigAliases } = require('./setup');
         config = normalizeConfigAliases ? normalizeConfigAliases(raw) : raw;
         break;
       } catch (e) {}

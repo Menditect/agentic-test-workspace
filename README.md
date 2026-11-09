@@ -246,12 +246,80 @@ npm run update -- --yes    # Auto-approve available updates (non-interactive / C
 npm run update -- --force  # Force re-download/re-sync even if up to date
 
 # Verification & Diagnostics
-npm run verify             # Verify MCP connectivity, catalog, and agent directives
+npm run verify             # Verify active workspace MCP connectivity, catalog, and agent directives
+npm run verify -- <path>   # Verify a specific linked app workspace (e.g. npm run verify -- ../app-alpha)
 
 # Running from Workspace Root (when agentic-test-workspace is in a subdirectory)
 npm run --prefix ./agentic-test-workspace update
 npm run --prefix ./agentic-test-workspace verify
 ```
+
+## Workspace Verification & Diagnostics
+
+The workspace includes a built-in diagnostic and health-check engine (`scripts/verify-setup.js`) that validates your environment configuration, schema compliance, security hygiene, and live MCP connectivity to MTA and the MTA Plugin.
+
+### Running Verification from the Central Tools Hub (`agentic-test-workspace`)
+
+When working in the **`[1] Central Tools Hub`** architecture, the verification engine is multi-workspace aware:
+
+1. **Verify Default / Active Workspace:**
+   ```bash
+   npm run verify
+   ```
+   If a single linked workspace is detected, it is verified immediately. In non-interactive environments (CI/scripts) with multiple workspaces, it automatically verifies the primary active workspace.
+
+2. **Interactive Workspace Selection:**
+   When multiple app workspaces are linked in the central hub's registry (`.mxcli/workspaces.json`), IDE configs, or sibling folders, running `npm run verify` in an interactive terminal (TTY) displays a numbered menu:
+   ```text
+   --- Menditect Workspace Verification ---
+
+   Discovered 2 configured workspaces:
+     [1] C:\projects\menditect\app-alpha-workspace — App: AppAlpha [Active / Default]
+     [2] C:\projects\menditect\app-beta-workspace — App: AppBeta
+
+   Select workspace to verify (1-2) [1]:
+   ```
+
+3. **Verify a Specific Workspace via CLI Argument:**
+   You can verify any target app workspace directly by passing its path:
+   ```bash
+   npm run verify -- ../app-alpha-workspace
+   # or absolute path:
+   npm run verify -- C:\projects\menditect\app-beta-workspace
+   # or invoking the script directly:
+   node scripts/verify-setup.js ../app-alpha-workspace
+   ```
+
+### Running Verification from Inside an App Workspace
+
+When you set up an app workspace using Option **`[1]`** or **`[2]`**, local runner scripts are deployed directly into your app workspace folder:
+
+- **Windows:** `verify.bat`
+- **macOS / Linux:** `./verify`
+
+You can run these scripts directly from the root of your app workspace terminal without switching directories or passing arguments:
+
+```bash
+# Inside your app workspace folder:
+./verify           # macOS / Linux
+verify.bat         # Windows Command Prompt / PowerShell
+```
+
+These local runners automatically export `MTA_CONFIG_PATH` pointing to the workspace's local `mta_config.json` and invoke the central verification engine.
+
+### Diagnostics Performed by `verify`
+
+| Category | Checks Performed |
+| :--- | :--- |
+| **Workspace Architecture** | Resolves `workspace_type` (`custom`, `clone_root`, or `mendix_project`), active configuration path, and location of shared/local `skills/` and `tools/`. |
+| **Schema Compliance** | Validates `mta_config.json` against `mta_config.schema.json` contract (required endpoints, valid URLs, UUID formats). |
+| **Tooling & Binaries** | Verifies existence of `mxcli` binary, checks its version against the project Mendix Studio Pro version, and verifies the `mta-lint.mjs` test plan validation engine. |
+| **Security Hygiene** | Confirms sensitive tokens (`MTA_MCP_AUTH_HEADER`, `PLUGIN_MCP_TOKEN`, `MTA_APP_INSTANCE_TOKEN`) are securely maintained in `.env` and never checked into `mta_config.json`. |
+| **Agent Directives** | Checks that `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` are present and correctly reference the central hub or local skills. |
+| **Application Instances** | Verifies configured MTA application runtime instances, tokens, and active ports. |
+| **Live MTA Server MCP** | Connects to the MTA primitive tools server (`mcp_endpoint`), tests JSON-RPC handshake, and validates Bearer token authentication. |
+| **Live MTA Plugin MCP** | Connects to the local Mendix runtime plugin (`plugin_mcp_url`), checks handshake response, and verifies authorization. |
+| **Live Studio Pro MCP** | *(If `model_source: "studiopro"`)* Verifies live connection to the Mendix Studio Pro MCP server (`studiopro_mcp_url`). |
 
 <!-- BEGIN_SHARED_MTA_CONFIG_CONTRACT -->
 ## Configuration Contract (`mta_config.json`) & Resolution Hierarchy

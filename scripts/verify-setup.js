@@ -28,7 +28,7 @@ const NOTICE = `${colors.orange}[NOTICE]${colors.reset}`;
 const INFO = `${colors.cyan}[INFO]${colors.reset}`;
 const TIP = `${colors.cyan}[TIP]${colors.reset}`;
 
-function loadEnvFile(filePath) {
+function loadEnvFile(filePath, override = false) {
   if (!filePath || !fs.existsSync(filePath)) return;
   try {
     const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
@@ -42,7 +42,7 @@ function loadEnvFile(filePath) {
         if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
           val = val.slice(1, -1);
         }
-        if (!process.env[key]) {
+        if (override || !process.env[key]) {
           process.env[key] = val;
         }
       }
@@ -50,58 +50,90 @@ function loadEnvFile(filePath) {
   } catch (e) {}
 }
 
-const candidateConfigPaths = [
-  process.env.MTA_CONFIG_PATH,
-  path.join(process.cwd(), 'mta_config.json'),
-  path.join(rootDir, 'mta_config.json'),
-  path.join(rootDir, '..', 'mta_config.json')
-].filter(Boolean);
+const { normalizeConfigAliases, discoverWorkspaceConfigCandidates } = require('./setup');
+
+const cliArg = process.argv.slice(2).find(a => !a.startsWith('-'));
+const candidateConfigPaths = discoverWorkspaceConfigCandidates
+  ? discoverWorkspaceConfigCandidates(cliArg)
+  : [
+      process.env.MTA_CONFIG_PATH,
+      path.join(process.cwd(), 'mta_config.json'),
+      path.join(rootDir, '..', 'mta_config.json'),
+      path.join(rootDir, 'mta_config.json')
+    ].filter(Boolean);
 
 let rawConfig = {};
 let activeConfigPath = null;
-for (const cp of candidateConfigPaths) {
-  if (fs.existsSync(cp)) {
-    try {
-      rawConfig = JSON.parse(fs.readFileSync(cp, 'utf8'));
-      activeConfigPath = cp;
-      break;
-    } catch (e) {}
-  }
-}
+let config = {};
+let activeWorkspaceDir = rootDir;
+let activeSkillsDir = path.join(rootDir, 'skills');
+let activeToolsDir = path.join(rootDir, 'tools');
 
-const { normalizeConfigAliases } = require('./setup');
-let config = normalizeConfigAliases ? normalizeConfigAliases(rawConfig) : rawConfig;
+function applySelectedConfig(cp) {
+  if (!cp || !fs.existsSync(cp)) return false;
+  try {
+    rawConfig = JSON.parse(fs.readFileSync(cp, 'utf8'));
+    activeConfigPath = path.resolve(cp);
+    config = normalizeConfigAliases ? normalizeConfigAliases(rawConfig) : rawConfig;
 
-// If config points to a workspace_dir with its own mta_config.json, merge it
-if (config.workspace_dir && fs.existsSync(path.join(config.workspace_dir, 'mta_config.json'))) {
-  const wsConfigPath = path.join(config.workspace_dir, 'mta_config.json');
-  if (path.resolve(wsConfigPath) !== path.resolve(activeConfigPath || '')) {
-    try {
-      const wsCfg = JSON.parse(fs.readFileSync(wsConfigPath, 'utf8'));
-      const normalizedWs = normalizeConfigAliases ? normalizeConfigAliases(wsCfg) : wsCfg;
-      rawConfig = { ...rawConfig, ...wsCfg };
-      config = { ...config, ...normalizedWs };
-      if (!activeConfigPath) activeConfigPath = wsConfigPath;
-    } catch (e) {}
-  }
-}
+    // If config points to a workspace_dir with its own mta_config.json, merge it and prefer that path
+    if (config.workspace_dir && fs.existsSync(path.join(config.workspace_dir, 'mta_config.json'))) {
+      const wsConfigPath = path.resolve(config.workspace_dir, 'mta_config.json');
+      if (wsConfigPath !== activeConfigPath) {
+        try {
+          const wsCfg = JSON.parse(fs.readFileSync(wsConfigPath, 'utf8'));
+          const normalizedWs = normalizeConfigAliases ? normalizeConfigAliases(wsCfg) : wsCfg;
+          rawConfig = { ...rawConfig, ...wsCfg };
+          config = { ...config, ...normalizedWs };
+          activeConfigPath = wsConfigPath;
+        } catch (e) {}
+      }
+    }
 
-// Load env files in priority order (workspace_dir, cwd, rootDir, parent, mendix_project_dir)
-const candidateEnvDirs = [
-  config.workspace_dir,
-  process.cwd(),
-  rootDir,
-  path.join(rootDir, '..'),
-  config.mendix_project_dir
-].filter(Boolean);
+    activeWorkspaceDir = config.workspace_dir
+      ? path.resolve(config.workspace_dir)
+      : path.dirname(activeConfigPath);
 
-const seenDirs = new Set();
-for (const dir of candidateEnvDirs) {
-  const resolved = path.resolve(dir);
-  if (!seenDirs.has(resolved)) {
-    seenDirs.add(resolved);
-    loadEnvFile(path.join(resolved, '.env.local'));
-    loadEnvFile(path.join(resolved, '.env'));
+    activeSkillsDir = config.skills_dir
+      ? path.resolve(config.skills_dir)
+      : (config.workspace_type === 'custom'
+          ? path.join(config.tools_root_dir || rootDir, 'skills')
+          : path.join(activeWorkspaceDir, 'skills'));
+
+    activeToolsDir = config.tools_dir
+      ? path.resolve(config.tools_dir)
+      : (config.workspace_type === 'clone_root' && fs.existsSync(path.join(activeWorkspaceDir, 'tools', 'mta-lint.mjs'))
+          ? path.join(activeWorkspaceDir, 'tools')
+          : path.join(config.tools_root_dir || rootDir, 'tools'));
+
+    // Clear any stale ambient tokens before loading the selected workspace's .env
+    delete process.env.MTA_MCP_AUTH_HEADER;
+    delete process.env.MTA_MCP_TOKEN;
+    delete process.env.PLUGIN_MCP_TOKEN;
+    delete process.env.PLUGIN_MCP_URL;
+    delete process.env.MTA_MCP_ENDPOINT;
+    delete process.env.MTA_APP_INSTANCE_TOKEN;
+
+    // Load .env files exclusively from the target workspace (and mendix_project_dir fallback), never from a clean toolsRootDir
+    const envDirs = [
+      activeWorkspaceDir,
+      path.dirname(activeConfigPath),
+      config.mendix_project_dir
+    ].filter(Boolean);
+
+    const seenEnvDirs = new Set();
+    for (const dir of envDirs) {
+      const resolved = path.resolve(dir);
+      if (!seenEnvDirs.has(resolved)) {
+        seenEnvDirs.add(resolved);
+        const isPrimaryWs = resolved === path.resolve(activeWorkspaceDir) || resolved === path.resolve(path.dirname(activeConfigPath));
+        loadEnvFile(path.join(resolved, '.env'), isPrimaryWs);
+        loadEnvFile(path.join(resolved, '.env.local'), isPrimaryWs);
+      }
+    }
+    return true;
+  } catch (e) {
+    return false;
   }
 }
 
@@ -160,7 +192,8 @@ function validateConfigAgainstSchema(cfg) {
 }
 
 function checkSchemaContractAlignment() {
-  const localSchemaPath = path.join(rootDir, 'mta_config.schema.json');
+  const wsSchemaPath = path.join(activeWorkspaceDir, 'mta_config.schema.json');
+  const localSchemaPath = fs.existsSync(wsSchemaPath) ? wsSchemaPath : path.join(rootDir, 'mta_config.schema.json');
   if (!fs.existsSync(localSchemaPath)) return true;
   let localSchema;
   try {
@@ -171,7 +204,8 @@ function checkSchemaContractAlignment() {
   const localVersion = localSchema.version;
 
   const candidateUpstreams = [
-    { name: 'agentic-test-skills (local skills/mta-build)', path: path.join(rootDir, 'skills', 'mta-build', 'references', 'mta_config.schema.json') },
+    { name: `agentic-test-skills (${activeSkillsDir})`, path: path.join(activeSkillsDir, 'mta-build', 'references', 'mta_config.schema.json') },
+    { name: 'agentic-test-skills (central skills/mta-build)', path: path.join(rootDir, 'skills', 'mta-build', 'references', 'mta_config.schema.json') },
     { name: 'agentic-test-skills repository', path: path.join(rootDir, '..', 'agentic-test-skills', 'AgenticTestSkills', 'mta-build', 'references', 'mta_config.schema.json') }
   ];
 
@@ -195,8 +229,7 @@ function checkSchemaContractAlignment() {
 }
 
 function checkSkillsPresence() {
-  const wsDir = config.workspace_dir || rootDir;
-  const skillsDir = config.skills_dir || path.join(wsDir, 'skills');
+  const skillsDir = activeSkillsDir;
   console.log('Checking MTA skills presence...');
 
   if (!fs.existsSync(skillsDir)) {
@@ -239,7 +272,7 @@ function checkMxcliBinary() {
     console.log(`${PASS} mxcli binary is ready (${versionOut}).`);
 
     // Check if mxcli AI scaffolding (.ai-context) is initialized
-    const targetDir = config.workspace_dir || toolsRootDir;
+    const targetDir = activeWorkspaceDir;
     const aiContextPath = path.join(targetDir, '.ai-context');
     const dotMxcliPath = path.join(targetDir, '.mxcli');
     if (fs.existsSync(aiContextPath)) {
@@ -287,8 +320,7 @@ function checkMxcliBinary() {
 }
 
 function checkLinterTooling() {
-  const toolsBaseDir = config.tools_dir || path.join(config.tools_root_dir || rootDir, 'tools');
-  const linterPath = path.join(toolsBaseDir, 'mta-lint.mjs');
+  const linterPath = path.join(activeToolsDir, 'mta-lint.mjs');
   if (!fs.existsSync(linterPath)) {
     console.warn(`${WARN} MTA linter tool not found at ${linterPath}. Run "npm run update" to install it.`);
     return false;
@@ -337,7 +369,7 @@ function checkTokenPreflight(mode) {
 
 function checkSecurityHygiene() {
   console.log('Checking secret storage and security hygiene...');
-  const wsDir = config.workspace_dir || rootDir;
+  const wsDir = activeWorkspaceDir;
 
   // 1. Check .vscode/settings.json
   const settingsPath = path.join(wsDir, '.vscode', 'settings.json');
@@ -399,13 +431,15 @@ function checkSecurityHygiene() {
       const lines = gitIgnoreContent.split(/\r?\n/).map(l => l.trim());
       const hasEnv = lines.some(l => l === '.env' || l === '*.env' || l.startsWith('.env'));
       if (hasEnv) {
-        console.log(`  ${PASS} .env is properly protected by .gitignore.`);
+        console.log(`  ${PASS} .env is present in ${wsDir} and properly protected by .gitignore.`);
       } else {
-        console.warn(`  ${WARN} .env exists in workspace but is NOT ignored in .gitignore! Add .env to .gitignore to prevent accidental commit.`);
+        console.warn(`  ${WARN} .env exists in ${wsDir} but is NOT ignored in .gitignore! Add .env to .gitignore to prevent accidental commit.`);
       }
     } else {
-      console.warn(`  ${WARN} .env exists in workspace but no .gitignore found! Ensure credentials are not committed.`);
+      console.warn(`  ${WARN} .env exists in ${wsDir} but no .gitignore found! Ensure credentials are not committed.`);
     }
+  } else {
+    console.warn(`  ${WARN} No .env file found in workspace (${wsDir}). Run "npm run setup" to generate .env.`);
   }
 
   // 4. Check mta_config.json legacy tokens
@@ -416,15 +450,15 @@ function checkSecurityHygiene() {
   }
 
   // 5. Cloned Repository Immutability Rule: Verify toolsRootDir is not polluted
-  if (config.workspace_dir && path.resolve(config.workspace_dir) !== path.resolve(rootDir)) {
+  if (path.resolve(wsDir) !== path.resolve(rootDir)) {
     const dirtyFiles = [];
     if (fs.existsSync(path.join(rootDir, 'mta_config.json'))) dirtyFiles.push('mta_config.json');
     if (fs.existsSync(path.join(rootDir, '.env'))) dirtyFiles.push('.env');
     if (fs.existsSync(path.join(rootDir, '.env.local'))) dirtyFiles.push('.env.local');
 
     if (dirtyFiles.length > 0) {
-      console.warn(`  ${WARN} Cloned repository contains local workspace files (${dirtyFiles.join(', ')}).`);
-      console.warn(`         To ensure clean git pulls, workspace configuration should live exclusively in ${config.workspace_dir}.`);
+      console.warn(`  ${WARN} Cloned repository (${rootDir}) contains local workspace files (${dirtyFiles.join(', ')}).`);
+      console.warn(`         To ensure clean git pulls, workspace configuration should live exclusively in ${wsDir}.`);
     } else {
       console.log(`  ${PASS} Cloned agentic-test-workspace repository is clean (tools isolation verified).`);
     }
@@ -432,8 +466,8 @@ function checkSecurityHygiene() {
 }
 
 function checkAgentDirectives() {
-  console.log('Checking agent directives integrity...');
-  const wsDir = config.workspace_dir || rootDir;
+  console.log(`Checking agent directives integrity in ${activeWorkspaceDir}...`);
+  const wsDir = activeWorkspaceDir;
   const targetFiles = [
     { name: 'AGENTS.md', path: path.join(wsDir, 'AGENTS.md') },
     { name: 'CLAUDE.md', path: path.join(wsDir, 'CLAUDE.md') },
@@ -441,8 +475,10 @@ function checkAgentDirectives() {
   ];
 
   let allIntact = true;
+  let foundCount = 0;
   for (const item of targetFiles) {
     if (fs.existsSync(item.path)) {
+      foundCount++;
       try {
         const content = fs.readFileSync(item.path, 'utf8');
         const hasSetup = content.includes('# Menditect Architecture Setup');
@@ -459,6 +495,11 @@ function checkAgentDirectives() {
         console.warn(`  ${WARN} Could not read ${item.name}: ${e.message}`);
       }
     }
+  }
+  if (foundCount === 0) {
+    allIntact = false;
+    console.warn(`  ${WARN} No agent directive files (AGENTS.md, CLAUDE.md, GEMINI.md) found in ${wsDir}!`);
+    console.warn(`         Run "npm run setup:directives" or "npm run setup" to generate them.`);
   }
   return allIntact;
 }
@@ -604,8 +645,14 @@ function verifyMode(mode) {
     }
 
     const proc = spawn('node', [proxyPath, mode], {
+      cwd: fs.existsSync(activeWorkspaceDir) ? activeWorkspaceDir : rootDir,
       stdio: ['pipe', 'pipe', 'inherit'],
-      env: { ...process.env, MCP_VERIFY_MODE: 'true' }
+      env: {
+        ...process.env,
+        MCP_VERIFY_MODE: 'true',
+        ...(activeConfigPath ? { MTA_CONFIG_PATH: activeConfigPath } : {}),
+        MTA_WORKSPACE_DIR: activeWorkspaceDir
+      }
     });
     
     let responseData = '';
@@ -695,19 +742,63 @@ function verifyMode(mode) {
   });
 }
 
+function promptWorkspaceSelection(candidates) {
+  return new Promise((resolve) => {
+    const readline = require('readline');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    console.log('Discovered multiple workspaces linked to this Central Tools Hub:');
+    candidates.forEach((cp, idx) => {
+      let appLabel = '';
+      let wsDirLabel = path.dirname(cp);
+      try {
+        const parsed = JSON.parse(fs.readFileSync(cp, 'utf8'));
+        if (parsed.workspace_dir) wsDirLabel = parsed.workspace_dir;
+        if (parsed.application_name) appLabel = ` — App: ${parsed.application_name}`;
+      } catch (e) {}
+      const defaultTag = idx === 0 ? ' [Active / Default]' : '';
+      console.log(`  [${idx + 1}] ${wsDirLabel}${appLabel}${defaultTag}`);
+    });
+    rl.question(`\nSelect workspace to verify (1-${candidates.length}) [1]: `, (ans) => {
+      rl.close();
+      const num = parseInt((ans || '1').trim(), 10);
+      if (!isNaN(num) && num >= 1 && num <= candidates.length) {
+        console.log();
+        resolve(candidates[num - 1]);
+      } else {
+        console.log();
+        resolve(candidates[0]);
+      }
+    });
+  });
+}
+
 async function run() {
   console.log(`--- Menditect Workspace Verification${scriptVersion} ---\n`);
+
+  const hasExplicitTarget = Boolean(cliArg || process.env.MTA_CONFIG_PATH || path.resolve(process.cwd()) !== path.resolve(rootDir));
+  if (candidateConfigPaths.length > 1 && !hasExplicitTarget && process.stdin.isTTY) {
+    const chosen = await promptWorkspaceSelection(candidateConfigPaths);
+    applySelectedConfig(chosen);
+  } else if (candidateConfigPaths.length > 0) {
+    applySelectedConfig(candidateConfigPaths[0]);
+    if (candidateConfigPaths.length > 1 && !hasExplicitTarget) {
+      console.log(`${INFO} Multiple workspaces detected; verifying active workspace: ${activeWorkspaceDir}`);
+      console.log(`       (Tip: Run "npm run verify -- <workspace-path>" to verify a specific workspace)\n`);
+    }
+  }
+
   const wsType = config.workspace_type || 'clone_root';
   const wsTypeLabel = wsType === 'custom'
     ? 'custom (Central Tools Hub)'
     : wsType === 'mendix_project'
       ? 'mendix_project (Direct Mendix Project)'
       : 'clone_root (Standalone Subfolder)';
-  const wsDir = config.workspace_dir || path.join(__dirname, '..');
-  const skillsDir = config.skills_dir || path.join(wsDir, 'skills');
-  const toolsDir = config.tools_dir || path.join(config.tools_root_dir || rootDir, 'tools');
+  const wsDir = activeWorkspaceDir;
+  const skillsDir = activeSkillsDir;
+  const toolsDir = activeToolsDir;
   console.log(`Workspace Type:     ${wsTypeLabel}`);
   console.log(`Workspace Dir:      ${wsDir}`);
+  console.log(`Config File:        ${activeConfigPath || '(not found)'}`);
   if (wsType === 'custom') {
     console.log(`Central Tools Hub:  ${config.tools_root_dir || rootDir}`);
   }

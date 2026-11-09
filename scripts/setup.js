@@ -98,7 +98,7 @@ function normalizeConfigAliases(cfg) {
   return normalized;
 }
 
-function loadEnvFile(filePath) {
+function loadEnvFile(filePath, override = false) {
   if (!filePath || !fs.existsSync(filePath)) return;
   try {
     const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
@@ -112,12 +112,173 @@ function loadEnvFile(filePath) {
         if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
           val = val.slice(1, -1);
         }
-        if (!process.env[key]) {
+        if (override || !process.env[key]) {
           process.env[key] = val;
         }
       }
     }
   } catch (e) {}
+}
+
+const hubRegistryPath = path.join(toolsRootDir, '.mxcli', 'workspaces.json');
+
+function registerWorkspaceInHub(workspaceDir) {
+  if (!workspaceDir) return;
+  try {
+    const resolvedWs = path.resolve(workspaceDir);
+    const mxcliDir = path.dirname(hubRegistryPath);
+    if (!fs.existsSync(mxcliDir)) {
+      fs.mkdirSync(mxcliDir, { recursive: true });
+    }
+    let registry = { active_workspace_dir: resolvedWs, workspaces: [] };
+    if (fs.existsSync(hubRegistryPath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(hubRegistryPath, 'utf8'));
+        if (parsed && Array.isArray(parsed.workspaces)) {
+          registry.workspaces = parsed.workspaces;
+        }
+      } catch (e) {}
+    }
+    registry.active_workspace_dir = resolvedWs;
+    registry.workspaces = [
+      resolvedWs,
+      ...registry.workspaces.filter(w => {
+        try {
+          return path.resolve(w) !== resolvedWs && fs.existsSync(path.join(w, 'mta_config.json'));
+        } catch (e) {
+          return false;
+        }
+      })
+    ];
+    fs.writeFileSync(hubRegistryPath, JSON.stringify(registry, null, 2), 'utf8');
+  } catch (e) {}
+}
+
+function discoverWorkspaceConfigCandidates(explicitArgPath = null) {
+  const rawCandidates = [];
+
+  // 1. Explicit CLI argument (folder or mta_config.json path)
+  if (explicitArgPath) {
+    const resolvedArg = path.resolve(explicitArgPath);
+    if (resolvedArg.endsWith('.json')) {
+      rawCandidates.push(resolvedArg);
+    } else {
+      rawCandidates.push(path.join(resolvedArg, 'mta_config.json'));
+    }
+  }
+
+  // 2. Explicit MTA_CONFIG_PATH env var
+  if (process.env.MTA_CONFIG_PATH) {
+    rawCandidates.push(path.resolve(process.env.MTA_CONFIG_PATH));
+  }
+
+  // 3. Current working directory (if running inside an external workspace)
+  if (path.resolve(process.cwd()) !== path.resolve(toolsRootDir)) {
+    rawCandidates.push(path.join(process.cwd(), 'mta_config.json'));
+  }
+
+  // 4. Central Tools Hub registry (.mxcli/workspaces.json)
+  if (fs.existsSync(hubRegistryPath)) {
+    try {
+      const reg = JSON.parse(fs.readFileSync(hubRegistryPath, 'utf8'));
+      if (reg.active_workspace_dir) {
+        rawCandidates.push(path.join(reg.active_workspace_dir, 'mta_config.json'));
+      }
+      if (Array.isArray(reg.workspaces)) {
+        for (const ws of reg.workspaces) {
+          rawCandidates.push(path.join(ws, 'mta_config.json'));
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 5. Global Antigravity mcp_config.json (set by setup.js on every run)
+  const homeDir = process.env.USERPROFILE || process.env.HOME || '';
+  const globalMcpPaths = [
+    path.join(homeDir, '.gemini', 'config', 'mcp_config.json'),
+    path.join(homeDir, '.gemini', 'antigravity', 'mcp_config.json')
+  ];
+  for (const gPath of globalMcpPaths) {
+    if (fs.existsSync(gPath)) {
+      try {
+        const gCfg = JSON.parse(fs.readFileSync(gPath, 'utf8'));
+        const servers = gCfg.mcpServers || {};
+        for (const srv of Object.values(servers)) {
+          if (srv && srv.env && srv.env.MTA_CONFIG_PATH) {
+            rawCandidates.push(path.resolve(srv.env.MTA_CONFIG_PATH));
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  // 6. Parent directory (Option 2 Standalone Subfolder)
+  const parentDir = path.resolve(toolsRootDir, '..');
+  rawCandidates.push(path.join(parentDir, 'mta_config.json'));
+
+  // 7. Sibling workspace directories in parentDir (Option 1 Central Tools Hub siblings)
+  try {
+    const excludedFolders = new Set([path.basename(toolsRootDir).toLowerCase(), 'mta-ai-assistant', 'agentic-test-skills']);
+    const entries = fs.readdirSync(parentDir, { withFileTypes: true });
+    const siblingConfigs = [];
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.') && !excludedFolders.has(entry.name.toLowerCase())) {
+        const candidateCfg = path.join(parentDir, entry.name, 'mta_config.json');
+        if (fs.existsSync(candidateCfg)) {
+          try {
+            const stat = fs.statSync(candidateCfg);
+            siblingConfigs.push({ path: candidateCfg, mtimeMs: stat.mtimeMs });
+          } catch (e) {}
+        }
+      }
+    }
+    siblingConfigs.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    for (const sc of siblingConfigs) {
+      rawCandidates.push(sc.path);
+    }
+  } catch (e) {}
+
+  // 8. Fallback: toolsRootDir/mta_config.json (only if valid)
+  rawCandidates.push(path.join(toolsRootDir, 'mta_config.json'));
+
+  // Deduplicate and validate that workspace_dir exists
+  const validPaths = [];
+  const seen = new Set();
+  for (const cp of rawCandidates) {
+    if (!cp) continue;
+    const resolved = path.resolve(cp);
+    const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    if (!fs.existsSync(resolved)) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+      if (!parsed || typeof parsed !== 'object') continue;
+      if (parsed.workspace_dir) {
+        const resolvedWsDir = path.resolve(parsed.workspace_dir);
+        // If mta_config.json is inside toolsRootDir but points to a non-existent external folder, skip it as stale
+        if (!fs.existsSync(resolvedWsDir)) continue;
+        // If mta_config.json in toolsRootDir redirects to another folder that has its own mta_config.json, prefer that folder's mta_config.json
+        const targetWsConfig = path.join(resolvedWsDir, 'mta_config.json');
+        if (path.resolve( path.dirname(resolved) ) === path.resolve(toolsRootDir) && resolvedWsDir !== path.resolve(toolsRootDir)) {
+          if (fs.existsSync(targetWsConfig)) {
+            const targetKey = process.platform === 'win32' ? targetWsConfig.toLowerCase() : targetWsConfig;
+            if (!seen.has(targetKey)) {
+              seen.add(targetKey);
+              validPaths.push(targetWsConfig);
+            }
+            continue;
+          } else {
+            continue;
+          }
+        }
+      }
+      validPaths.push(resolved);
+    } catch (e) {}
+  }
+
+  return validPaths;
 }
 
 function ensureGitIgnoreEntries(dirPath, entries) {
@@ -148,10 +309,6 @@ function ensureGitIgnoreEntries(dirPath, entries) {
     }
   }
 }
-
-// Pre-load ambient secrets from tools root if available
-loadEnvFile(path.join(toolsRootDir, '.env.local'));
-loadEnvFile(path.join(toolsRootDir, '.env'));
 
 function findMpr(dir) {
   try {
@@ -966,11 +1123,13 @@ fi
 
   const verifyBatContent = `@echo off
 set SCRIPT_DIR=%~dp0
+set "MTA_CONFIG_PATH=%SCRIPT_DIR%mta_config.json"
 node ${verifyBatScript} %*
 `;
 
   const verifyShContent = `#!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+export MTA_CONFIG_PATH="$SCRIPT_DIR/mta_config.json"
 node ${verifyShScript} "$@"
 `;
 
@@ -1138,17 +1297,13 @@ async function run(options = {}) {
   console.log('');
 
   let existingConfig = {};
-  const candidateInitConfigs = [
-    path.join(process.cwd(), 'mta_config.json'),
-    path.join(toolsRootDir, '..', 'mta_config.json'),
-    path.join(toolsRootDir, 'mta_config.json')
-  ];
+  const candidateInitConfigs = discoverWorkspaceConfigCandidates();
   for (const cfgCandidate of candidateInitConfigs) {
     try {
       if (fs.existsSync(cfgCandidate)) {
         existingConfig = normalizeConfigAliases(JSON.parse(fs.readFileSync(cfgCandidate, 'utf8')));
-        loadEnvFile(path.join(path.dirname(cfgCandidate), '.env.local'));
-        loadEnvFile(path.join(path.dirname(cfgCandidate), '.env'));
+        loadEnvFile(path.join(path.dirname(cfgCandidate), '.env.local'), true);
+        loadEnvFile(path.join(path.dirname(cfgCandidate), '.env'), true);
         break;
       }
     } catch (e) {}
@@ -1157,8 +1312,8 @@ async function run(options = {}) {
   function hydrateStateFromWorkspaceDir(dir, st) {
     if (!dir || !fs.existsSync(dir)) return;
     const cfgPath = path.join(dir, 'mta_config.json');
-    loadEnvFile(path.join(dir, '.env.local'));
-    loadEnvFile(path.join(dir, '.env'));
+    loadEnvFile(path.join(dir, '.env.local'), true);
+    loadEnvFile(path.join(dir, '.env'), true);
     if (fs.existsSync(cfgPath)) {
       try {
         const loaded = normalizeConfigAliases(JSON.parse(fs.readFileSync(cfgPath, 'utf8')));
@@ -1939,10 +2094,19 @@ async function run(options = {}) {
       if (fs.existsSync(schemaSource)) {
         fs.copyFileSync(schemaSource, path.join(workspaceDir, 'mta_config.schema.json'));
       }
+      // Clean up any stale mta_config.json or .env left in toolsRootDir so it stays 100% clean
+      for (const staleFile of ['mta_config.json', '.env', '.env.local']) {
+        const stalePath = path.join(toolsRootDir, staleFile);
+        if (fs.existsSync(stalePath)) {
+          try { fs.unlinkSync(stalePath); } catch (e) {}
+        }
+      }
     } catch (e) {}
+    registerWorkspaceInHub(workspaceDir);
     console.log(`\nCreated / updated mta_config.json in workspace (${workspaceDir}) (toolsRootDir kept clean)`);
   } else {
     fs.writeFileSync(path.join(toolsRootDir, 'mta_config.json'), JSON.stringify(config, null, 2));
+    registerWorkspaceInHub(toolsRootDir);
     console.log('\nCreated / updated mta_config.json (secrets decoupled to .env)');
   }
 
@@ -2092,11 +2256,7 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
 }
 
 function runDirectivesOnly() {
-  const candidateConfigPaths = [
-    process.env.MTA_CONFIG_PATH,
-    path.join(process.cwd(), 'mta_config.json'),
-    path.join(toolsRootDir, 'mta_config.json')
-  ].filter(Boolean);
+  const candidateConfigPaths = discoverWorkspaceConfigCandidates(process.argv[3]);
 
   let config = {};
   for (const cfgPath of candidateConfigPaths) {
@@ -2150,6 +2310,8 @@ if (require.main === module) {
     isVersion1112OrHigher,
     normalizeConfigAliases,
     ensureExecutionPlanFolders,
+    registerWorkspaceInHub,
+    discoverWorkspaceConfigCandidates,
     runDirectivesOnly,
     run
   };

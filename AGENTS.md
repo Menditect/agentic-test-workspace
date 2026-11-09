@@ -28,6 +28,7 @@ Begin every response on all operating modes with the single-line State Header:
 | **`STATE_CONSTRUCTION`** | `mta-build` | `SKELETON_PROVISIONING`, `BATCH_INCLUSION`, `BATCH_BINDING`, `VARIATION_ALLOCATION`, `VARIATION_POPULATION`, `STATE_QA_ASSISTANCE` | Persistent MTA container creation, forward-chained step creation, concurrent batch setters |
 | **`STATE_SMOKE_AUDIT`** | `mta-build` | `AUDIT_VERIFICATION`, `STATE_QA_ASSISTANCE` | Post-construction 4-phase CLI diff against plan, Section 6 receipt population |
 | **`STATE_RUN_ANALYZE`** | `mta-run-analyze` | `STATE_EXPLORATORY_EXECUTION`, `STATE_LIVE_DATA_PROVISIONING`, `STATE_EXECUTION_VERIFY`, `BUGFIX_REPRODUCE_RED`, `CODE_REPAIR_INTERMISSION`, `BUGFIX_VERIFY_GREEN`, `STATE_SELF_REPAIR`, `STATE_QA_ASSISTANCE` | Exploratory/server test execution, log analysis, 4-phase TDBF lifecycle, click-to-repair |
+| **`STATE_BUG_HUNT`** | `mta-bug-hunter` | `HUNT_SCAN_AND_TRIAGE`, `HUNT_DYNAMIC_VERIFY`, `HUNT_REPORT_AND_LOCK`, `STATE_QA_ASSISTANCE` | Bug hunting, flaw scanning, RBAC/security audit, adversarial & data-quality verification *(Always uses `node tools/mta-bughunter.mjs hunt` + `mxcli` `.mxcli/catalog.db` regardless of `StudioPro` MCP; exempt from `ANTI-75`)* |
 
 * **Topic Interrupts (`PAT-51`):** On out-of-state QA/architecture questions, set `Temp State: STATE_QA_ASSISTANCE (Paused: <PRIOR_TEMP_STATE>)`, load the relevant skill, answer concisely, and prompt to resume `<PRIOR_TEMP_STATE>`.
 
