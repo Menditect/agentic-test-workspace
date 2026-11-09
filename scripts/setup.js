@@ -1476,12 +1476,11 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
     'END;'
   ];
 
-  if (needsDefaultConfigCreate) {
-    mdlLines.push("CREATE OR MODIFY CONFIGURATION 'Default' HttpPortNumber = 8081, ApplicationRootUrl = 'http://localhost:8081/';");
-  }
-
   for (const cfgName of targetConfigs) {
     const safeCfg = escapeMdlStr(cfgName);
+    if (!existingConfigs.includes(cfgName)) {
+      mdlLines.push(`CREATE OR MODIFY CONFIGURATION '${safeCfg}' HttpPortNumber = 8081, ApplicationRootUrl = 'http://localhost:8081/';`);
+    }
     mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.ApplicationInstanceToken' VALUE '${appInstanceToken}' IN CONFIGURATION '${safeCfg}';`);
     mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.ConnectionMethod' VALUE '${connectionMethod}' IN CONFIGURATION '${safeCfg}';`);
     mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.MTAConnectionPassword' VALUE '${connectionPassword}' IN CONFIGURATION '${safeCfg}';`);
@@ -2258,29 +2257,124 @@ async function run(options = {}) {
 
         let stepSubBack = false;
 
-        if (!isPluginPresent || !isPluginConfigured) {
-          if (!isPluginPresent) {
-            console.log(`\n${NOTICE} No MTA Plugin module (MtaPluginModule.mxmodule) detected in ${state.projectDir}.`);
-            console.log(`         Downloading and installing MtaPluginModule (Marketplace ID 214717) for Mendix ${mxVer}...`);
-          } else {
-            console.log(`\n${NOTICE} MTA Plugin module detected (${pluginModInfo.version ? `v${pluginModInfo.version}` : 'installed'}), but its constants are not configured.`);
-            console.log(`         Overwriting MtaPluginModule with the latest compatible version for Mendix ${mxVer} and configuring constants...`);
-          }
-
-          if (mxcliBin) {
-            const authed = await ensureMxcliAuth(mxcliBin, ask);
-            if (authed) {
-              await installMxModuleFromMarketplace(
-                MENDITECT_MARKETPLACE_MODULES.MtaPluginModule,
-                state.projectDir,
-                mxVer,
-                mxcliBin
+        // 1. Automated Module Sync / Upgrade
+        if (mxcliBin) {
+          const authed = await ensureMxcliAuth(mxcliBin, ask);
+          if (authed) {
+            console.log(`Checking Menditect Marketplace module versions for Mendix ${mxVer}...`);
+            const modsToCheck = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
+            const effectiveMtaUrl = state.mtaUrl
+              || (state.discoveredMta?.instances && state.discoveredMta.instances[0]?.mtaUrl)
+              || state.discoveredMta?.globalMtaUrl
+              || existingConfig.mta_base_url
+              || '';
+            const isPaid = isPaidMtaServerUrl(effectiveMtaUrl);
+            if (isPaid || installedInfo.modules.MenditectMxFrontendTestKit?.installed || installedInfo.modules.MenditectPlaywrightConnector?.installed || installedInfo.modules.MenditectMtaCommons?.installed) {
+              modsToCheck.push(
+                MENDITECT_MARKETPLACE_MODULES.MenditectMxFrontendTestKit,
+                MENDITECT_MARKETPLACE_MODULES.MenditectPlaywrightConnector,
+                MENDITECT_MARKETPLACE_MODULES.MenditectMtaCommons
               );
-            } else if (!isPluginPresent) {
-              console.warn(`  ${WARN} Skipping MtaPluginModule download because Mendix Marketplace PAT was not provided.`);
-              console.warn(`         You can download it manually from https://marketplace.mendix.com/link/component/214717 or run "npm run update:modules" later.`);
+            }
+
+            let playwrightReleaseNotes = '';
+            for (const spec of modsToCheck) {
+              const locInfo = installedInfo.modules[spec.moduleName] || {};
+              const resolvedRemote = resolveCompatibleModuleVersion(spec.id, mxVer, mxcliBin);
+              if (!resolvedRemote || !resolvedRemote.version) continue;
+              if (spec.hasDriverBundle && resolvedRemote.releaseNotes) {
+                playwrightReleaseNotes = resolvedRemote.releaseNotes;
+              }
+              const isOutdated = !locInfo.installed || locInfo.version !== resolvedRemote.version;
+              if (isOutdated) {
+                const actionLabel = !locInfo.installed ? 'Installing missing' : `Updating ${locInfo.version ? `v${locInfo.version}` : 'installed'} -> v${resolvedRemote.version} for`;
+                console.log(`  ${INFO} ${actionLabel} ${spec.displayName} (${spec.fileName})...`);
+                await installMxModuleFromMarketplace(spec, state.projectDir, mxVer, mxcliBin, { resolvedVersion: resolvedRemote });
+              } else {
+                console.log(`  ${PASS} ${spec.fileName} is up to date (v${locInfo.version}).`);
+              }
+            }
+
+            // Ensure Playwright Driver Bundle in userlib/
+            const refreshedAfterSync = inspectInstalledMarketplaceModules(state.projectDir);
+            if (modsToCheck.some(m => m.hasDriverBundle) || refreshedAfterSync.modules.MenditectPlaywrightConnector?.installed) {
+              const connectorPath = refreshedAfterSync.modules.MenditectPlaywrightConnector?.mxmodulePath || '';
+              const bundleRes = await ensurePlaywrightDriverBundle(state.projectDir, playwrightReleaseNotes, connectorPath);
+              if (bundleRes.success && bundleRes.alreadyInstalled) {
+                console.log(`  ${PASS} Playwright Driver Bundle (driver-bundle-${bundleRes.version}.jar) is up to date in userlib/.`);
+              }
+            }
+          } else {
+            console.warn(`  ${WARN} Skipping automated module updates from Mendix Marketplace (PAT not provided).`);
+          }
+        }
+
+        // 2. Configuration Selection / Creation (Always Prompt)
+        console.log('\n--- MTA Plugin & Runtime Configuration Selection ---');
+        // Refresh discovered settings from .mpr
+        if (mxcliBin) {
+          state.discoveredMta = inspectMendixMtaSettings(state.mprPath, mxcliBin);
+        }
+        const currentConfigs = (state.discoveredMta && Array.isArray(state.discoveredMta.configurationNames) && state.discoveredMta.configurationNames.length > 0)
+          ? state.discoveredMta.configurationNames
+          : (state.appInstances && state.appInstances.length > 0 ? state.appInstances.map(x => x.name) : []);
+
+        let targetConfigName = '';
+        let isNewConfig = false;
+
+        if (currentConfigs.length > 0) {
+          console.log(`Discovered ${currentConfigs.length} configuration(s) in Mendix project:`);
+          currentConfigs.forEach((cName, idx) => {
+            const matchInst = state.appInstances?.find(x => x.name.toLowerCase() === cName.toLowerCase())
+              || state.discoveredMta?.instances?.find(x => x.name.toLowerCase() === cName.toLowerCase());
+            const instTok = matchInst?.token ? (matchInst.token.length > 10 ? `${matchInst.token.slice(0, 6)}...` : matchInst.token) : '';
+            console.log(`  [${idx + 1}] ${cName}${instTok ? ` (Token: ${instTok})` : ''}`);
+          });
+          console.log(`  [${currentConfigs.length + 1}] + Create New Configuration`);
+
+          const configChoice = await ask(`Select a configuration to use/update (1-${currentConfigs.length + 1})`, '1');
+          if (isBack(configChoice)) {
+            stepSubBack = true;
+          } else {
+            const parsed = parseInt(configChoice, 10);
+            if (parsed === currentConfigs.length + 1) {
+              isNewConfig = true;
+              while (!targetConfigName) {
+                const newNameAns = await ask('Enter new configuration name (e.g. MTA_Testing, LocalTest)');
+                if (isBack(newNameAns)) { stepSubBack = true; break; }
+                targetConfigName = newNameAns.trim();
+                if (!targetConfigName) {
+                  console.log(`${ERROR} Configuration name cannot be empty.`);
+                }
+              }
+            } else if (!isNaN(parsed) && parsed >= 1 && parsed <= currentConfigs.length) {
+              targetConfigName = currentConfigs[parsed - 1];
+            } else {
+              targetConfigName = currentConfigs[0];
             }
           }
+        } else {
+          isNewConfig = true;
+          const newNameAns = await ask('Enter name for initial project configuration', 'Default');
+          if (isBack(newNameAns)) {
+            stepSubBack = true;
+          } else {
+            targetConfigName = newNameAns.trim() || 'Default';
+          }
+        }
+
+        const currentlyHasConfiguredConstants = Boolean(state.discoveredMta && state.discoveredMta.isPluginConfigured);
+        let shouldConfigureConstants = !currentlyHasConfiguredConstants || isNewConfig;
+        if (!stepSubBack && currentlyHasConfiguredConstants && !isNewConfig) {
+          const reconfigAns = await ask(`Update/reconfigure MTA constants for configuration '${targetConfigName}'? (y/n)`, 'n');
+          if (isBack(reconfigAns)) {
+            stepSubBack = true;
+          } else {
+            shouldConfigureConstants = reconfigAns.toLowerCase().startsWith('y');
+          }
+        }
+
+        if (!stepSubBack && shouldConfigureConstants) {
 
           console.log('\n--- Configure MTA Plugin Constants & AfterStartup ---');
           console.log('Select your Menditect Test Automation (MTA) License / Connection Type:\n');
@@ -2383,6 +2477,7 @@ async function run(options = {}) {
               console.log(`  • AfterStartupMicroflow:  MtaPluginModule.ASU_Setup_Connection_MTA`);
 
               const cfgRes = configureMtaPluginInMpr(state.mprPath, mxcliBin, {
+                configurationName: targetConfigName,
                 applicationInstanceToken: appInstanceToken,
                 mtaConnectionUrl: rawMtaConnectionUrl,
                 connectionMethod: 'AfterStartup',
@@ -2409,11 +2504,18 @@ async function run(options = {}) {
               state.rawPluginToken = formatBearerToken(mcpServerAccessToken);
               if (state.discoveredMta && state.discoveredMta.instances && state.discoveredMta.instances.length > 0) {
                 state.appInstances = state.discoveredMta.instances;
-                state.defaultInstanceName = state.appInstances[0].name;
-                state.defaultInstanceToken = state.appInstances[0].token;
-                state.activeConfig = state.appInstances[0];
+                const matchedInstance = state.appInstances.find(inst => inst.name === targetConfigName);
+                if (matchedInstance) {
+                  state.defaultInstanceName = matchedInstance.name;
+                  state.defaultInstanceToken = matchedInstance.token;
+                  state.activeConfig = matchedInstance;
+                } else {
+                  state.defaultInstanceName = state.appInstances[0].name;
+                  state.defaultInstanceToken = state.appInstances[0].token;
+                  state.activeConfig = state.appInstances[0];
+                }
               } else {
-                const cfgName = (cfgRes.configuredConfigurations && cfgRes.configuredConfigurations[0]) || 'Default';
+                const cfgName = (cfgRes.configuredConfigurations && cfgRes.configuredConfigurations[0]) || targetConfigName || 'Default';
                 state.appInstances = [{
                   name: cfgName,
                   token: appInstanceToken,
@@ -2430,7 +2532,16 @@ async function run(options = {}) {
             }
           }
         } else {
-          console.log(`${PASS} MTA Plugin module (${pluginModInfo.version ? `v${pluginModInfo.version}` : 'MtaPluginModule.mxmodule'}) is already installed and configured.`);
+          console.log(`${PASS} Selected configuration '${targetConfigName}' for MTA Plugin.`);
+          if (targetConfigName && state.discoveredMta && state.discoveredMta.instances) {
+            const matchedInstance = state.discoveredMta.instances.find(inst => inst.name === targetConfigName);
+            if (matchedInstance) {
+              state.appInstances = state.discoveredMta.instances;
+              state.defaultInstanceName = matchedInstance.name;
+              state.defaultInstanceToken = matchedInstance.token;
+              state.activeConfig = matchedInstance;
+            }
+          }
         }
 
         // Check Paid MTA Server Add-on Modules (Frontend TestKit, Playwright Connector, MTA Commons + Playwright Driver Bundle)
