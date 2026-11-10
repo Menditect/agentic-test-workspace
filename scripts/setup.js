@@ -1631,10 +1631,10 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
   const appInstanceToken = escapeMdlStr(pluginConfig.applicationInstanceToken || '');
   const mtaConnectionUrl = escapeMdlStr(pluginConfig.mtaConnectionUrl || 'wss://services.menditect.com');
   const connectionMethod = escapeMdlStr(pluginConfig.connectionMethod || 'AfterStartup');
-  const connectionUsername = escapeMdlStr(pluginConfig.connectionUsername || 'MTAConnectionUser');
-  const connectionPassword = escapeMdlStr(pluginConfig.connectionPassword || 'c0Nn3cT-mTa-PlUg1n!');
+  const connectionUsername = escapeMdlStr(pluginConfig.connectionUsername || '');
+  const connectionPassword = escapeMdlStr(pluginConfig.connectionPassword || '');
   const enableMcpServer = escapeMdlStr(pluginConfig.enableMcpServer || 'True');
-  const mcpServerAccessToken = escapeMdlStr(pluginConfig.mcpServerAccessToken || '1');
+  const mcpServerAccessToken = escapeMdlStr(pluginConfig.mcpServerAccessToken || '');
 
   // Detect whether MtaPluginModule is an add-on module (.mxmodule in modules/) or already an internal module in .mpr
   const projectDir = path.dirname(mprPath);
@@ -1657,7 +1657,7 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
     "CREATE CONSTANT MtaPluginModule.ConnectionMethod TYPE String DEFAULT 'AfterStartup';",
     "CREATE CONSTANT MtaPluginModule.MTAConnectionPassword TYPE String DEFAULT '';",
     "CREATE CONSTANT MtaPluginModule.MTAConnectionUrl TYPE String DEFAULT 'wss://services.menditect.com';",
-    "CREATE CONSTANT MtaPluginModule.MTAConnectionUsername TYPE String DEFAULT 'MTAConnectionUser';",
+    "CREATE CONSTANT MtaPluginModule.MTAConnectionUsername TYPE String DEFAULT '';",
     "CREATE CONSTANT MtaPluginModule.EnableMcpServer TYPE Boolean DEFAULT true;",
     "CREATE CONSTANT MtaPluginModule.McpServerAccessToken TYPE String DEFAULT '';",
     'CREATE MICROFLOW MtaPluginModule.ASU_Setup_Connection_MTA () RETURNS Boolean',
@@ -2331,12 +2331,16 @@ async function run(options = {}) {
   console.log('│    • Free Exploratory: Personal license token from Menditect welcome email.  │');
   console.log('│    • Paid MTA: Portal > Applications > Application Instances > Token.        │');
   console.log('│                                                                              │');
-  console.log('│ 4. Plugin Runtime Port & MCP Token:                                          │');
+  console.log('│ 4. MTA Connection Credentials (Username & Password):                         │');
+  console.log('│    • Found together with the App Instance Token under:                       │');
+  console.log('│      App > Instances > Details (in MTA Portal or welcome email).             │');
+  console.log('│                                                                              │');
+  console.log('│ 5. Plugin Runtime Port & MCP Token:                                          │');
   console.log('│    • Port: Runtime port (default: 8081).                                     │');
   console.log('│    • Token: Secret token for /plugin/mcp (no default; for local short runs   │');
   console.log('│      "1" can be used, but for remote/cloud slots a secure token is advised). │');
   console.log('│                                                                              │');
-  console.log('│ 5. Optional / Advanced:                                                      │');
+  console.log('│ 6. Optional / Advanced:                                                      │');
   console.log('│    • Studio Pro MCP Port: Default 7782 (if using Studio Pro live MCP).       │');
   console.log('│    • MTA Cloud Service Account Token: Leave blank for Free Exploratory.      │');
   console.log('└──────────────────────────────────────────────────────────────────────────────┘\n');
@@ -2848,6 +2852,48 @@ async function run(options = {}) {
               }
             }
 
+            let connectionUsername = '';
+            if (!stepSubBack) {
+              const existingUser = state.discoveredMta?.instances?.find(i => i.name.toLowerCase() === targetConfigName.toLowerCase())?.connectionUsername
+                || state.discoveredMta?.globalConnectionUsername
+                || '';
+              console.log('\n  • MTA Connection Username:');
+              console.log('    Username used by the MTA plugin to authenticate with the MTA connection gateway.');
+              console.log('    Found together with the Application Instance Token under: App > Instances > Details in MTA.');
+              while (!connectionUsername) {
+                const userAns = await ask('MtaPluginModule.MTAConnectionUsername', existingUser);
+                if (isBack(userAns)) {
+                  stepSubBack = true;
+                  break;
+                }
+                connectionUsername = userAns.trim();
+                if (!connectionUsername) {
+                  console.log(`${ERROR} MTAConnectionUsername cannot be empty. Please enter the username from App > Instances > Details.`);
+                }
+              }
+            }
+
+            let connectionPassword = '';
+            if (!stepSubBack) {
+              const existingPass = state.discoveredMta?.instances?.find(i => i.name.toLowerCase() === targetConfigName.toLowerCase())?.connectionPassword
+                || state.discoveredMta?.globalConnectionPassword
+                || '';
+              console.log('\n  • MTA Connection Password:');
+              console.log('    Password used by the MTA plugin to authenticate with the MTA connection gateway.');
+              console.log('    Found together with the Application Instance Token under: App > Instances > Details in MTA.');
+              while (!connectionPassword) {
+                const passAns = await ask('MtaPluginModule.MTAConnectionPassword', existingPass);
+                if (isBack(passAns)) {
+                  stepSubBack = true;
+                  break;
+                }
+                connectionPassword = passAns.trim();
+                if (!connectionPassword) {
+                  console.log(`${ERROR} MTAConnectionPassword cannot be empty. Please enter the password from App > Instances > Details.`);
+                }
+              }
+            }
+
             let enableMcpServer = 'True';
             if (!stepSubBack) {
               const defaultEnableMcp = (state.discoveredMta?.globalEnableMcpServer || 'True').toLowerCase() === 'false' ? 'n' : 'y';
@@ -2884,8 +2930,8 @@ async function run(options = {}) {
             if (!stepSubBack && !skipMprConfigWrite && mxcliBin) {
               console.log('\nApplying MTA Plugin constants and AfterStartup microflow to Mendix project (.mpr)...');
               console.log('  • ConnectionMethod:       AfterStartup');
-              console.log('  • MTAConnectionUsername:  MTAConnectionUser');
-              console.log('  • MTAConnectionPassword:  c0Nn3cT-mTa-PlUg1n!');
+              console.log(`  • MTAConnectionUsername:  ${connectionUsername}`);
+              console.log(`  • MTAConnectionPassword:  ${connectionPassword ? '********' : '(not set)'}`);
               console.log(`  • MTAConnectionUrl:       ${rawMtaConnectionUrl}`);
               console.log(`  • EnableMcpServer:        ${enableMcpServer}`);
               console.log(`  • AfterStartupMicroflow:  MtaPluginModule.ASU_Setup_Connection_MTA`);
@@ -2895,8 +2941,8 @@ async function run(options = {}) {
                 applicationInstanceToken: appInstanceToken,
                 mtaConnectionUrl: rawMtaConnectionUrl,
                 connectionMethod: 'AfterStartup',
-                connectionUsername: 'MTAConnectionUser',
-                connectionPassword: 'c0Nn3cT-mTa-PlUg1n!',
+                connectionUsername,
+                connectionPassword,
                 enableMcpServer,
                 mcpServerAccessToken
               });
