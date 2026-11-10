@@ -1283,7 +1283,7 @@ async function ensureMxcliAuth(mxcliBin, askFn = null) {
   console.log('  • Why this is needed: Studio Pro uses desktop browser SSO which standalone CLI tools cannot access.');
   console.log('    mxcli needs a Personal Access Token to query version compatibility and download .mxmodule files.');
   console.log('  • How to create: Go to https://user-settings.mendix.com/ -> Personal Access Tokens');
-  console.log('    (Scope required: mx:marketplace:WaitingRoom or Marketplace read access).');
+  console.log('    (Scope required: mx:marketplace-content:read or Marketplace read access).');
   console.log('  • 🔒 Where it is saved:');
   console.log('    - Global CLI credential store: ~/.mxcli/auth.json (mode 0600, user-only permissions)');
   console.log('    - Workspace configuration: .env (MENDIX_PAT=...)');
@@ -2324,7 +2324,7 @@ async function run(options = {}) {
   console.log('│ 2. Mendix Personal Access Token (PAT):                                       │');
   console.log('│    Used by mxcli to check & download Marketplace modules (MtaPluginModule).   │');
   console.log('│    Create at: https://user-settings.mendix.com/ -> Personal Access Tokens    │');
-  console.log('│    Required scope: mx:marketplace:WaitingRoom (Marketplace read access).     │');
+  console.log('│    Required scope: mx:marketplace-content:read (Marketplace read access).    │');
   console.log('│    (Optional: can be skipped if you download modules manually in Studio Pro) │');
   console.log('│                                                                              │');
   console.log('│ 3. Application Instance Token (UUID):                                        │');
