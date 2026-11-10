@@ -340,7 +340,7 @@ async function makeRequest(payloadString, requestId, retryCount = 0) {
         result: {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'mta-exploratory-mode', version: '1.12.1' }
+          serverInfo: { name: 'mta-exploratory-mode', version: '1.12.2' }
         }
       };
       process.stdout.write(JSON.stringify(resp) + '\n');

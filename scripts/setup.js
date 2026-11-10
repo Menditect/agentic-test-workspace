@@ -97,9 +97,9 @@ function normalizeConfigAliases(cfg) {
   normalized.studiopro_mcp_url = cfg.studiopro_mcp_url || cfg.studioproMcpUrl || cfg.studio_pro_mcp_url || '';
   normalized.documentation_url = cfg.documentation_url || cfg.documentationUrl || 'https://documentation.menditect.com';
   normalized.llms_txt_url = cfg.llms_txt_url || cfg.llmsTxtUrl || '';
-  let rawTier = cfg.mta_license_tier || cfg.license_tier || cfg.licenseTier || 'auto';
-  if (rawTier === 'exploratory_free') rawTier = 'free_exploratory';
-  if (rawTier === 'paid') rawTier = 'paid_enterprise';
+  let rawTier = (cfg.mta_license_tier || cfg.license_tier || cfg.licenseTier || 'auto').toLowerCase();
+  if (rawTier === 'exploratory_free' || rawTier === 'free') rawTier = 'free_exploratory';
+  if (rawTier === 'paid' || rawTier === 'enterprise') rawTier = 'paid_enterprise';
   normalized.mta_license_tier = rawTier;
   return normalized;
 }
@@ -3444,6 +3444,9 @@ async function run(options = {}) {
     if (inst.tracefileUrl && typeof inst.tracefileUrl === 'string') item.tracefileUrl = inst.tracefileUrl;
     return item;
   });
+
+  const isPaidServer = Boolean(state.rawMtaToken.trim() || state.defaultInstanceToken.trim());
+  state.licenseTier = isPaidServer ? 'paid_enterprise' : 'free_exploratory';
 
   const config = {
     $schema: './mta_config.schema.json',
