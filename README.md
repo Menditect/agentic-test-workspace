@@ -52,6 +52,15 @@ Before starting, ensure you have:
 - A local Mendix application under test
 - For exploratory testing **[MTA Plugin](https://documentation.menditect.com/installation/import-plugin)** must be installed and connected with MTA.
 
+> [!IMPORTANT]
+> **Close Mendix Studio Pro Before Adding or Updating Modules:**
+> Ensure your target Mendix project is **closed in Mendix Studio Pro** before running `npm run setup`, `npm run update`, or `npm run update:modules`. When the project is open:
+> 1. **File Locks:** Studio Pro and the Java Virtual Machine hold active locks on `.mpr`, `userlib/*.jar` (e.g. `mta-plugin-*.jar`), and `deployment/`, which can cause downloads or directory cleanup to fail with permission errors (`EBUSY`/`EPERM`).
+> 2. **In-Memory Cache Overwrite & Data Loss:** Studio Pro caches the project model in memory. If `mxcli` injects constants or updates settings in `.mpr` while Studio Pro is open, saving in Studio Pro (`Ctrl+S` or running the app) will overwrite `.mpr` from its in-memory cache, silently erasing all newly configured MTA constants and configurations!
+> 3. **No Hot-Reload:** Studio Pro does not detect updated `.mxmodule` packages on disk until the project is closed and re-opened.
+>
+> The setup script and update tooling actively detect open Studio Pro sessions (via `<project>.mpr.lock` and active process inspection) and offer interactive options to re-check after closing, proceed with risk, or skip module operations.
+
 ## Setup of workspace
 
 > [!TIP]
