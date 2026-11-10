@@ -1626,11 +1626,44 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
     'END;'
   ];
 
+  let effectiveConfigs = [];
+  let createdConfigs = [];
   for (const cfgName of targetConfigs) {
     const safeCfg = escapeMdlStr(cfgName);
     if (!existingConfigs.includes(cfgName)) {
-      mdlLines.push(`CREATE OR MODIFY CONFIGURATION '${safeCfg}' HttpPortNumber = 8081, ApplicationRootUrl = 'http://localhost:8081/';`);
+      // Attempt to create new configuration in .mpr
+      const createCfgMdl = path.join(os.tmpdir(), `mta-create-cfg-${Date.now()}.mdl`);
+      try {
+        fs.writeFileSync(createCfgMdl, `CREATE OR MODIFY CONFIGURATION '${safeCfg}' HttpPortNumber = 8081, ApplicationRootUrl = 'http://localhost:8081/';\n`, 'utf8');
+        execSync(`"${mxcliBin}" exec "${createCfgMdl}" -p "${mprPath}"`, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 30000
+        });
+        createdConfigs.push(cfgName);
+      } catch (cfgErr) {
+        // If mxcli fails to create new configuration due to duplicate GUIDs in project settings unit (common in Mendix 11),
+        // fall back to using existing configuration (e.g. 'default')
+        console.warn(`  [WARNING] Could not create new configuration '${cfgName}' via mxcli: ${cfgErr.message.split('\n')[0]}`);
+        const fallbackCfg = existingConfigs[0] || 'default';
+        console.warn(`  [INFO] Falling back to existing configuration '${fallbackCfg}' for MTA Plugin constants.`);
+        effectiveConfigs.push(fallbackCfg);
+      } finally {
+        try { if (fs.existsSync(createCfgMdl)) fs.unlinkSync(createCfgMdl); } catch (e) {}
+      }
+    } else {
+      effectiveConfigs.push(cfgName);
     }
+  }
+  if (createdConfigs.length > 0) {
+    effectiveConfigs.push(...createdConfigs);
+  }
+  effectiveConfigs = Array.from(new Set(effectiveConfigs.filter(Boolean)));
+  if (effectiveConfigs.length === 0) {
+    effectiveConfigs = [existingConfigs[0] || 'default'];
+  }
+
+  for (const cfgName of effectiveConfigs) {
+    const safeCfg = escapeMdlStr(cfgName);
     mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.ApplicationInstanceToken' VALUE '${appInstanceToken}' IN CONFIGURATION '${safeCfg}';`);
     mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.ConnectionMethod' VALUE '${connectionMethod}' IN CONFIGURATION '${safeCfg}';`);
     mdlLines.push(`ALTER SETTINGS CONSTANT 'MtaPluginModule.MTAConnectionPassword' VALUE '${connectionPassword}' IN CONFIGURATION '${safeCfg}';`);
@@ -1646,8 +1679,6 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
     mdlLines.push(`ALTER SETTINGS MODEL AfterStartupMicroflow = '${escapeMdlStr(targetAfterStartupMicroflow)}';`);
   }
 
-  mdlLines.push('DROP MODULE MtaPluginModule;');
-
   const tmpMdlPath = path.join(os.tmpdir(), `mta-plugin-config-${Date.now()}.mdl`);
   try {
     // Write UTF-8 without BOM
@@ -1658,7 +1689,7 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
     });
     return {
       success: true,
-      configuredConfigurations: targetConfigs,
+      configuredConfigurations: effectiveConfigs,
       afterStartupMicroflow: targetAfterStartupMicroflow,
       chainedIntoExistingAfterStartup: Boolean(customAfterStartupMdl)
     };
@@ -2785,10 +2816,9 @@ async function run(options = {}) {
             || existingConfig.mta_base_url
             || '';
           const refreshedInstalled = inspectInstalledMarketplaceModules(state.projectDir);
-          const hasValidPlugin = Boolean(refreshedInstalled.modules.MtaPluginModule?.installed && state.discoveredMta?.isPluginConfigured);
           const hasPaidServer = isPaidMtaServerUrl(effectiveMtaUrl);
 
-          if (hasValidPlugin && hasPaidServer && mxcliBin) {
+          if (hasPaidServer && mxcliBin) {
             const paidSpecs = [
               MENDITECT_MARKETPLACE_MODULES.MenditectMxFrontendTestKit,
               MENDITECT_MARKETPLACE_MODULES.MenditectPlaywrightConnector,
