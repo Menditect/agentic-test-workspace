@@ -128,6 +128,8 @@ function refreshConfigAndEnv() {
 
   if (config.workspace_dir && fs.existsSync(config.workspace_dir)) {
     process.env.MTA_WORKSPACE_DIR = config.workspace_dir;
+    loadEnvFile(path.join(config.workspace_dir, '.env'), true);
+    loadEnvFile(path.join(config.workspace_dir, '.env.local'), true);
     const wsConfigPath = path.join(config.workspace_dir, 'mta_config.json');
     if (fs.existsSync(wsConfigPath)) {
       try {
@@ -326,6 +328,34 @@ async function makeRequest(payloadString, requestId, retryCount = 0) {
   // Update cached initialize parameters if received from client
   if (parsedReq && parsedReq.method === 'initialize' && parsedReq.params) {
     cachedInitParams = parsedReq.params;
+  }
+
+  // For free exploratory testing without MTA platform token, return an empty tool list for mta proxy
+  // so IDE MCP initialization succeeds without crashing or raising 401 errors.
+  const isExploratoryOnly = mode === 'mta' && !AUTH_HEADER;
+  if (isExploratoryOnly) {
+    if (parsedReq && parsedReq.method === 'tools/list' && requestId !== null) {
+      const resp = JSON.stringify({
+        jsonrpc: '2.0',
+        result: { tools: [] },
+        id: requestId
+      });
+      process.stdout.write(resp + '\n');
+      return;
+    }
+    if (parsedReq && parsedReq.method === 'initialize' && requestId !== null) {
+      const resp = JSON.stringify({
+        jsonrpc: '2.0',
+        result: {
+          protocolVersion: '2024-11-05',
+          capabilities: { tools: {} },
+          serverInfo: { name: 'mta-exploratory-stub', version: '1.0.0' }
+        },
+        id: requestId
+      });
+      process.stdout.write(resp + '\n');
+      return;
+    }
   }
 
   // Wire-level state machine gatekeeper for tools/call (PAT-43, ANTI-46, ANTI-56)
