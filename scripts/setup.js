@@ -2332,8 +2332,8 @@ async function run(options = {}) {
   console.log('│    • Paid MTA: Portal > Applications > Application Instances > Token.        │');
   console.log('│                                                                              │');
   console.log('│ 4. MTA Connection Credentials (Username & Password):                         │');
-  console.log('│    • Found together with the App Instance Token under:                       │');
-  console.log('│      App > Instances > Details (in MTA Portal or welcome email).             │');
+  console.log('│    • Free Exploratory: Provided in your Menditect welcome email.             │');
+  console.log('│    • Paid MTA: Portal > Applications > Instances > Details (with token).     │');
   console.log('│                                                                              │');
   console.log('│ 5. Plugin Runtime Port & MCP Token:                                          │');
   console.log('│    • Port: Runtime port (default: 8081).                                     │');
@@ -2857,9 +2857,12 @@ async function run(options = {}) {
               const existingUser = state.discoveredMta?.instances?.find(i => i.name.toLowerCase() === targetConfigName.toLowerCase())?.connectionUsername
                 || state.discoveredMta?.globalConnectionUsername
                 || '';
+              const userPromptHint = isPaidServer
+                ? 'Found together with the Application Instance Token under: App > Instances > Details in MTA.'
+                : 'Provided in your Menditect welcome email (together with your license key).';
               console.log('\n  • MTA Connection Username:');
               console.log('    Username used by the MTA plugin to authenticate with the MTA connection gateway.');
-              console.log('    Found together with the Application Instance Token under: App > Instances > Details in MTA.');
+              console.log(`    ${userPromptHint}`);
               while (!connectionUsername) {
                 const userAns = await ask('MtaPluginModule.MTAConnectionUsername', existingUser);
                 if (isBack(userAns)) {
@@ -2868,7 +2871,8 @@ async function run(options = {}) {
                 }
                 connectionUsername = userAns.trim();
                 if (!connectionUsername) {
-                  console.log(`${ERROR} MTAConnectionUsername cannot be empty. Please enter the username from App > Instances > Details.`);
+                  const errorHint = isPaidServer ? 'App > Instances > Details in MTA' : 'your Menditect welcome email';
+                  console.log(`${ERROR} MTAConnectionUsername cannot be empty. Please enter the username from ${errorHint}.`);
                 }
               }
             }
@@ -2878,9 +2882,12 @@ async function run(options = {}) {
               const existingPass = state.discoveredMta?.instances?.find(i => i.name.toLowerCase() === targetConfigName.toLowerCase())?.connectionPassword
                 || state.discoveredMta?.globalConnectionPassword
                 || '';
+              const passPromptHint = isPaidServer
+                ? 'Found together with the Application Instance Token under: App > Instances > Details in MTA.'
+                : 'Provided in your Menditect welcome email (together with your license key).';
               console.log('\n  • MTA Connection Password:');
               console.log('    Password used by the MTA plugin to authenticate with the MTA connection gateway.');
-              console.log('    Found together with the Application Instance Token under: App > Instances > Details in MTA.');
+              console.log(`    ${passPromptHint}`);
               while (!connectionPassword) {
                 const passAns = await ask('MtaPluginModule.MTAConnectionPassword', existingPass);
                 if (isBack(passAns)) {
@@ -2889,7 +2896,8 @@ async function run(options = {}) {
                 }
                 connectionPassword = passAns.trim();
                 if (!connectionPassword) {
-                  console.log(`${ERROR} MTAConnectionPassword cannot be empty. Please enter the password from App > Instances > Details.`);
+                  const errorHint = isPaidServer ? 'App > Instances > Details in MTA' : 'your Menditect welcome email';
+                  console.log(`${ERROR} MTAConnectionPassword cannot be empty. Please enter the password from ${errorHint}.`);
                 }
               }
             }
