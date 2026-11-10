@@ -56,14 +56,15 @@ Before starting, ensure you have:
 
 Gather the following details before running `npm run setup`:
 
-| Data Item | Description & Default Value | Required For | Where to Find It |
+| Data Item | Description & Recommended Value | Required For | Where to Find It |
 | :--- | :--- | :--- | :--- |
 | **Mendix Project Path** | Absolute folder path to your target Mendix application containing `<ProjectName>.mpr` (e.g. `C:\Users\Username\Mendix\MyApp`). | **All Users** | Open Mendix Studio Pro > App Explorer or File Explorer. |
+| **Mendix PAT (Personal Access Token)** | Mendix PAT with Marketplace read rights (`mx:marketplace:WaitingRoom`). Used by `mxcli` to download and update `MtaPluginModule.mxmodule` and companion modules. *(Optional: can be skipped if you download modules manually in Studio Pro).* | **Automated Module Downloads** | [Mendix User Settings](https://user-settings.mendix.com/) > Personal Access Tokens. |
 | **MTA License Tier** | `[1] Free Exploratory License` or `[2] Paid MTA Server / Enterprise`. | **All Users** | Based on your Menditect subscription. |
 | **MTA Server / Gateway URL** | • Free Exploratory: `https://services.menditect.com` (WS: `wss://services.menditect.com`)<br>• Paid / Enterprise: `https://<tenant>.mendixcloud.com` or custom server URL. | **All Users** | Menditect invitation email or your MTA Cloud web portal URL. |
 | **Application Instance Token** | Unique UUID token identifying your running Mendix instance (e.g. `841fc1da-14e2-4e75-b293-c3f653b81c64`). In Free Exploratory mode, this is your personal exploratory license key. | **All Users** | • Free: Menditect welcome email.<br>• Paid: MTA Portal > Applications > Application Instances > Token. |
 | **MTA Plugin Runtime Port / URL** | Local HTTP port where your Mendix app runs locally (default: `8081` $\rightarrow$ `http://localhost:8081/plugin/mcp`). | **All Users** | Studio Pro > App > Settings > Configurations > Edit > Server Tab (`Application root URL` / `Port`). |
-| **Plugin MCP Access Token** | Shared secret token protecting the local `/plugin/mcp` endpoint (e.g. `1` or your custom secret string). The setup script automatically configures this in `MtaPluginModule.McpServerAccessToken`. | **All Users** | Configured in your Mendix project constants or entered during setup. |
+| **Plugin MCP Access Token** | Secret token protecting the `/plugin/mcp` endpoint (stored in `MtaPluginModule.McpServerAccessToken`).<br>• *Local short runs on localhost:* A short token like `"1"` can be used.<br>• *Non-local / cloud slots:* A strong, secure secret token is strongly advised (no default value). | **All Users** | Configured in Mendix project constants or entered during setup. |
 | **Studio Pro MCP Port** *(Optional)* | Port configured in Studio Pro for live in-memory model inspection (default: `7782`, standard range: `7782-7789`). | **Studio Pro MCP Users** (Mendix 11.12+) | Studio Pro > Edit > Preferences > MCP Server > Port. |
 | **MTA Service Account Token** *(Optional)* | Long-lived identification token for a service account (e.g. `Bearer eyJ...` or raw token). | **Paid Platform Only** (Cloud test authoring & CI/CD) | MTA Portal > User Profile > Service Accounts > Generate Token (ensure *Call MCP primitive tools* is enabled). *Skip (press Enter) for Free Exploratory mode.* |
 

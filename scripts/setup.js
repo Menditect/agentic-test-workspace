@@ -2321,15 +2321,22 @@ async function run(options = {}) {
   console.log('│ 1. Mendix Project Path:                                                      │');
   console.log('│    Local directory of your app (e.g. C:\\Users\\...\\Mendix\\MyApp).           │');
   console.log('│                                                                              │');
-  console.log('│ 2. Application Instance Token (UUID):                                        │');
+  console.log('│ 2. Mendix Personal Access Token (PAT):                                       │');
+  console.log('│    Used by mxcli to check & download Marketplace modules (MtaPluginModule).   │');
+  console.log('│    Create at: https://user-settings.mendix.com/ -> Personal Access Tokens    │');
+  console.log('│    Required scope: mx:marketplace:WaitingRoom (Marketplace read access).     │');
+  console.log('│    (Optional: can be skipped if you download modules manually in Studio Pro) │');
+  console.log('│                                                                              │');
+  console.log('│ 3. Application Instance Token (UUID):                                        │');
   console.log('│    • Free Exploratory: Personal license token from Menditect welcome email.  │');
   console.log('│    • Paid MTA: Portal > Applications > Application Instances > Token.        │');
   console.log('│                                                                              │');
-  console.log('│ 3. Plugin Runtime Port / Access Token:                                       │');
-  console.log('│    • Default Port: 8081 (Studio Pro > App > Settings > Configurations).      │');
-  console.log('│    • Access Token: Secret token for /plugin/mcp (default: "1").              │');
+  console.log('│ 4. Plugin Runtime Port & MCP Token:                                          │');
+  console.log('│    • Port: Runtime port (default: 8081).                                     │');
+  console.log('│    • Token: Secret token for /plugin/mcp (no default; for local short runs   │');
+  console.log('│      "1" can be used, but for remote/cloud slots a secure token is advised). │');
   console.log('│                                                                              │');
-  console.log('│ 4. Optional / Advanced:                                                      │');
+  console.log('│ 5. Optional / Advanced:                                                      │');
   console.log('│    • Studio Pro MCP Port: Default 7782 (if using Studio Pro live MCP).       │');
   console.log('│    • MTA Cloud Service Account Token: Leave blank for Free Exploratory.      │');
   console.log('└──────────────────────────────────────────────────────────────────────────────┘\n');
@@ -2852,14 +2859,25 @@ async function run(options = {}) {
               }
             }
 
-            let mcpServerAccessToken = '1';
+            let mcpServerAccessToken = '';
             if (!stepSubBack) {
-              const existingRawPluginTok = (state.rawPluginToken || state.discoveredMta?.globalRawMcpServerAccessToken || '1').replace(/^Bearer\s+/i, '').trim() || '1';
-              const mcpTokAns = await ask('MtaPluginModule.McpServerAccessToken (token for local MCP endpoint)', existingRawPluginTok);
-              if (isBack(mcpTokAns)) {
-                stepSubBack = true;
-              } else {
-                mcpServerAccessToken = (mcpTokAns.trim() || '1').replace(/^Bearer\s+/i, '').trim() || '1';
+              const existingRawPluginTok = (state.rawPluginToken || state.discoveredMta?.globalRawMcpServerAccessToken || '').replace(/^Bearer\s+/i, '').trim();
+              console.log('\n  • MTA Plugin MCP Server Access Token:');
+              console.log('    A secret token protecting the embedded /plugin/mcp endpoint in your running Mendix app.');
+              console.log('    - For quick local testing on localhost, you can enter "1".');
+              console.log('    - For apps running on shared networks or cloud slots, a strong secret token is strongly advised.');
+              while (!mcpServerAccessToken) {
+                const mcpTokAns = await ask('MtaPluginModule.McpServerAccessToken (secret token for plugin MCP endpoint)', existingRawPluginTok);
+                if (isBack(mcpTokAns)) {
+                  stepSubBack = true;
+                  break;
+                }
+                const cleaned = (mcpTokAns.trim()).replace(/^Bearer\s+/i, '').trim();
+                if (!cleaned) {
+                  console.log(`${ERROR} McpServerAccessToken cannot be empty. Enter a secret token (e.g. "1" for local testing or a secure passphrase).`);
+                  continue;
+                }
+                mcpServerAccessToken = cleaned;
               }
             }
 
@@ -3391,6 +3409,9 @@ async function run(options = {}) {
       console.log('\n--- App Under Test Plugin Token ---');
       console.log('  • Purpose: Security token protecting the MtaPluginModule MCP endpoint in your running app.');
       console.log('    Configured in Studio Pro via constant MtaPluginModule.McpServerAccessToken.');
+      console.log('  • Security Guideline:');
+      console.log('    - For short exploratory test runs on localhost, entering "1" or "Bearer 1" is acceptable.');
+      console.log('    - For apps running on non-local networks or cloud slots, a strong secret token is strongly advised.');
       console.log('  • 🔒 Where it is saved:');
       console.log('    Stored exclusively in your workspace local .env file as:');
       console.log('      PLUGIN_MCP_TOKEN="<token>" (with restricted 0600 file permissions).');
@@ -3400,12 +3421,21 @@ async function run(options = {}) {
         || state.activeConfig?.pluginToken
         || state.discoveredMta?.globalPluginToken
         || existingConfig.plugin_mcp_token
-        || 'Bearer 1';
-      const ans = await ask('App under test Plugin Token (Bearer token recommended)', defaultPluginToken);
-      if (isBack(ans)) {
-        goBack = true;
-      } else {
-        state.rawPluginToken = ans;
+        || '';
+      let enteredToken = '';
+      while (!enteredToken && !goBack) {
+        const ans = await ask('App under test Plugin Token (Bearer token recommended, e.g. "Bearer 1" or secure secret)', defaultPluginToken);
+        if (isBack(ans)) {
+          goBack = true;
+          break;
+        }
+        const cleaned = ans.trim();
+        if (!cleaned) {
+          console.log(`${ERROR} Plugin token cannot be empty. Please enter your secret token (e.g. "Bearer 1" for local testing or a secure token).`);
+          continue;
+        }
+        enteredToken = cleaned.startsWith('Bearer ') ? cleaned : `Bearer ${cleaned}`;
+        state.rawPluginToken = enteredToken;
         nextStep = 'exploratory_mode';
       }
     } else if (currentStep === 'exploratory_mode') {
