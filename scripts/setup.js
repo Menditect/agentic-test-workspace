@@ -2622,6 +2622,9 @@ async function run(options = {}) {
                 state.defaultInstanceToken = appInstanceToken;
                 state.activeConfig = state.appInstances[0];
               }
+              if (state.activeConfig?.pluginUrl) state.pluginUrl = state.activeConfig.pluginUrl;
+              if (state.activeConfig?.pluginToken) state.rawPluginToken = state.activeConfig.pluginToken;
+              if (state.activeConfig?.mtaUrl) state.mtaUrl = state.activeConfig.mtaUrl;
             }
           }
         } else {
@@ -2633,7 +2636,27 @@ async function run(options = {}) {
               state.defaultInstanceName = matchedInstance.name;
               state.defaultInstanceToken = matchedInstance.token;
               state.activeConfig = matchedInstance;
+              if (matchedInstance.mtaUrl) state.mtaUrl = matchedInstance.mtaUrl;
+              if (matchedInstance.pluginUrl) state.pluginUrl = matchedInstance.pluginUrl;
+              if (matchedInstance.pluginToken) state.rawPluginToken = matchedInstance.pluginToken;
+            } else {
+              state.defaultInstanceName = targetConfigName;
+              if (state.discoveredMta.instances.length > 0) {
+                state.appInstances = state.discoveredMta.instances;
+              }
             }
+          }
+        }
+
+        if (state.activeConfig) {
+          if (state.activeConfig.pluginUrl && !state.pluginUrl) {
+            state.pluginUrl = state.activeConfig.pluginUrl;
+          }
+          if (state.activeConfig.mtaUrl && !state.mtaUrl) {
+            state.mtaUrl = state.activeConfig.mtaUrl;
+          }
+          if (state.activeConfig.pluginToken && !state.rawPluginToken) {
+            state.rawPluginToken = state.activeConfig.pluginToken;
           }
         }
 
@@ -2723,12 +2746,13 @@ async function run(options = {}) {
         goBack = true;
       } else {
         state.modelSource = ans;
+        const hasConfiguredInstance = Boolean(state.appInstances?.length && state.defaultInstanceName);
         if (state.modelSource === '2') {
           nextStep = 'studiopro_url';
         } else if (state.mprPath && fs.existsSync(state.mprPath)) {
           nextStep = 'catalog_index';
         } else {
-          nextStep = 'mta_instances';
+          nextStep = hasConfiguredInstance ? 'app_name' : 'mta_instances';
         }
       }
     } else if (currentStep === 'studiopro_url') {
@@ -2749,7 +2773,8 @@ async function run(options = {}) {
         console.log(`  ${INFO} Note: The setup wizard will continue using mxcli in the background to inspect`);
         console.log('       project configurations, discover MTA settings, and prepare workspace scaffolding.');
         state.catalogChoice = 'skip';
-        nextStep = 'mta_instances';
+        const hasConfiguredInstance = Boolean(state.appInstances?.length && state.defaultInstanceName);
+        nextStep = hasConfiguredInstance ? 'app_name' : 'mta_instances';
       }
     } else if (currentStep === 'catalog_index') {
       console.log('\n--- Mendix Project Search Index (.mxcli/catalog.db) ---');
@@ -2781,134 +2806,145 @@ async function run(options = {}) {
         } else {
           state.catalogChoice = 'fast';
         }
-        nextStep = 'mta_instances';
+        const hasConfiguredInstance = Boolean(state.appInstances?.length && state.defaultInstanceName);
+        nextStep = hasConfiguredInstance ? 'app_name' : 'mta_instances';
       }
     } else if (currentStep === 'mta_instances') {
-      console.log('\n--- MTA Connection & Application Instances ---');
-      let stepSubBack = false;
+      const knownInstances = (state.appInstances && state.appInstances.length > 0)
+        ? state.appInstances
+        : (state.discoveredMta?.instances && state.discoveredMta.instances.length > 0)
+          ? state.discoveredMta.instances
+          : (existingConfig.app_instances || []);
 
-      if ((!state.discoveredMta || !state.discoveredMta.instances || state.discoveredMta.instances.length === 0) && state.mprPath) {
-        const mxcliBin = await getOrDownloadMxcli(state.mprPath);
-        if (mxcliBin) {
-          state.discoveredMta = inspectMendixMtaSettings(state.mprPath, mxcliBin);
-        }
-      }
-
-      if (state.discoveredMta && state.discoveredMta.instances && state.discoveredMta.instances.length > 0) {
-        state.appInstances = state.discoveredMta.instances;
-        console.log(`\n${FOUND} Discovered ${state.appInstances.length} App Instance Token(s) across Mendix project configurations:`);
-        state.appInstances.forEach((inst, idx) => {
-          const previewToken = inst.token.length > 12 ? `${inst.token.slice(0, 8)}...${inst.token.slice(-4)}` : inst.token;
-          const urlInfo = inst.mtaUrl ? ` -> MTA: ${inst.mtaUrl}` : '';
-          console.log(`  [${idx + 1}] ${inst.name.padEnd(25)} (Token: ${previewToken})${urlInfo}`);
-        });
-
-        if (state.appInstances.length === 1) {
-          state.defaultInstanceName = state.appInstances[0].name;
-          state.defaultInstanceToken = state.appInstances[0].token;
-          state.activeConfig = state.appInstances[0];
-          console.log(`\nDefault instance: [${state.defaultInstanceName}]`);
-          console.log(`*(Note: The selected instance must be running and connected to MTA when you execute tests)*`);
-        } else {
-          let defaultIdx = 1;
-          if (state.defaultInstanceName) {
-            const foundIdx = state.appInstances.findIndex(x => x.name.toLowerCase() === state.defaultInstanceName.toLowerCase());
-            if (foundIdx >= 0) defaultIdx = foundIdx + 1;
-          }
-          let selIdx = defaultIdx;
-          console.log(`\n*(Note: The selected instance must be running and connected to MTA when you execute tests)*`);
-          const choice = await ask(`Select default instance for ExecuteTest (1-${state.appInstances.length})`, String(defaultIdx));
-          if (isBack(choice)) {
-            stepSubBack = true;
-          } else {
-            const parsed = parseInt(choice, 10);
-            if (!isNaN(parsed) && parsed >= 1 && parsed <= state.appInstances.length) {
-              selIdx = parsed;
-            }
-            state.defaultInstanceName = state.appInstances[selIdx - 1].name;
-            state.defaultInstanceToken = state.appInstances[selIdx - 1].token;
-            state.activeConfig = state.appInstances[selIdx - 1];
-            console.log(`Default instance: [${state.defaultInstanceName}]`);
-          }
-        }
+      if (!editingSingleSetting && knownInstances.length > 0 && state.defaultInstanceName) {
+        state.appInstances = knownInstances;
+        const active = state.appInstances.find(x => x.name.toLowerCase() === state.defaultInstanceName.toLowerCase()) || state.appInstances[0];
+        state.defaultInstanceName = active.name;
+        state.defaultInstanceToken = active.token || state.defaultInstanceToken;
+        state.activeConfig = active;
+        console.log(`\n${PASS} MTA App Instance: [${state.defaultInstanceName}] (from configuration '${state.defaultInstanceName}')`);
+        nextStep = 'app_name';
       } else {
-        const existingInstances = state.appInstances.length ? state.appInstances : (existingConfig.app_instances || []);
-        console.log('\n--- MTA Application Instances (Automated Cloud Execution) ---');
-        console.log('MTA Application Instances connect automated test suites in the MTA Cloud to your running app.');
-        console.log('(Note: Only required if you have an MTA license and run automated tests.');
-        console.log(' Free exploratory testing uses the local App Under Test Plugin below and does not need MTA instances.)\n');
+        console.log('\n--- MTA Connection & Application Instances ---');
+        let stepSubBack = false;
 
-        const defaultHasInst = existingInstances.length ? 'y' : state.hasInstancesManual;
-        const hasInstancesAns = await ask('Do you have an MTA Application Instance to configure? (y/n)', defaultHasInst);
-        if (isBack(hasInstancesAns)) {
-          stepSubBack = true;
-        } else {
-          state.hasInstancesManual = hasInstancesAns.toLowerCase().startsWith('y') ? 'y' : 'n';
-          if (state.hasInstancesManual === 'y') {
-            const defaultCount = existingInstances.length ? String(existingInstances.length) : '1';
-            const rawCount = await ask('How many MTA application instances do you have?', defaultCount);
-            if (isBack(rawCount)) {
+        if (knownInstances.length > 0) {
+          state.appInstances = knownInstances;
+          console.log(`\n${FOUND} Discovered ${state.appInstances.length} App Instance Token(s) across Mendix project configurations:`);
+          state.appInstances.forEach((inst, idx) => {
+            const isDef = inst.name.toLowerCase() === (state.defaultInstanceName || '').toLowerCase();
+            const previewToken = inst.token ? (inst.token.length > 12 ? `${inst.token.slice(0, 8)}...${inst.token.slice(-4)}` : inst.token) : '(none)';
+            const urlInfo = inst.mtaUrl ? ` -> MTA: ${inst.mtaUrl}` : '';
+            console.log(`  [${idx + 1}] ${inst.name.padEnd(25)} (Token: ${previewToken})${urlInfo}${isDef ? ' <-- Default' : ''}`);
+          });
+
+          if (state.appInstances.length === 1 && !editingSingleSetting) {
+            state.defaultInstanceName = state.appInstances[0].name;
+            state.defaultInstanceToken = state.appInstances[0].token;
+            state.activeConfig = state.appInstances[0];
+            console.log(`\nDefault instance: [${state.defaultInstanceName}]`);
+          } else {
+            let defaultIdx = 1;
+            if (state.defaultInstanceName) {
+              const foundIdx = state.appInstances.findIndex(x => x.name.toLowerCase() === state.defaultInstanceName.toLowerCase());
+              if (foundIdx >= 0) defaultIdx = foundIdx + 1;
+            }
+            console.log(`\n*(Note: The selected instance must be running and connected to MTA when you execute tests)*`);
+            const choice = await ask(`Select default instance for ExecuteTest (1-${state.appInstances.length})`, String(defaultIdx));
+            if (isBack(choice)) {
               stepSubBack = true;
             } else {
-              const count = Math.max(1, parseInt(rawCount, 10) || 1);
-              const newInstances = [];
-              for (let i = 1; i <= count; i++) {
-                const existingInst = existingInstances[i - 1];
-                const defaultName = existingInst ? existingInst.name : (i === 1 ? 'local' : (i === 2 ? 'test' : `instance-${i}`));
-                const instName = await ask(`Instance #${i} name (e.g. local, test)`, defaultName);
-                if (isBack(instName)) { stepSubBack = true; break; }
-
-                let token = '';
-                const defaultToken = existingInst ? existingInst.token : (i === 1 ? (state.defaultInstanceToken || '') : '');
-                while (!token) {
-                  token = await ask(`Instance #${i} token (from MTA Portal > Application > Application Instances)`, defaultToken);
-                  if (isBack(token)) { stepSubBack = true; break; }
-                  token = token.trim();
-                  if (!token) {
-                    console.log(`${ERROR} Application instance token cannot be empty.`);
-                  }
-                }
-                if (stepSubBack) break;
-                if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
-                  console.log(`${NOTICE} Token does not match standard UUID format, but will be used as entered.`);
-                }
-                newInstances.push({ name: instName, token });
+              const parsed = parseInt(choice, 10);
+              let selIdx = defaultIdx;
+              if (!isNaN(parsed) && parsed >= 1 && parsed <= state.appInstances.length) {
+                selIdx = parsed;
               }
-              if (!stepSubBack) {
-                state.appInstances = newInstances;
-                let selIdx = 1;
-                if (state.appInstances.length > 1) {
-                  const defaultSel = state.defaultInstanceName
-                    ? String(state.appInstances.findIndex(x => x.name === state.defaultInstanceName) + 1 || 1)
-                    : '1';
-                  console.log(`\n*(Note: The selected instance must be running and connected to MTA when you execute tests)*`);
-                  const choice = await ask(`Select default instance for ExecuteTest (1-${state.appInstances.length})`, defaultSel);
-                  if (!isBack(choice)) {
-                    const parsed = parseInt(choice, 10);
-                    if (!isNaN(parsed) && parsed >= 1 && parsed <= state.appInstances.length) {
-                      selIdx = parsed;
+              state.defaultInstanceName = state.appInstances[selIdx - 1].name;
+              state.defaultInstanceToken = state.appInstances[selIdx - 1].token;
+              state.activeConfig = state.appInstances[selIdx - 1];
+              console.log(`Default instance: [${state.defaultInstanceName}]`);
+            }
+          }
+        } else {
+          const existingInstances = state.appInstances.length ? state.appInstances : (existingConfig.app_instances || []);
+          console.log('\n--- MTA Application Instances (Automated Cloud Execution) ---');
+          console.log('MTA Application Instances connect automated test suites in the MTA Cloud to your running app.');
+          console.log('(Note: Only required if you have an MTA license and run automated tests.');
+          console.log(' Free exploratory testing uses the local App Under Test Plugin below and does not need MTA instances.)\n');
+
+          const defaultHasInst = existingInstances.length ? 'y' : state.hasInstancesManual;
+          const hasInstancesAns = await ask('Do you have an MTA Application Instance to configure? (y/n)', defaultHasInst);
+          if (isBack(hasInstancesAns)) {
+            stepSubBack = true;
+          } else {
+            state.hasInstancesManual = hasInstancesAns.toLowerCase().startsWith('y') ? 'y' : 'n';
+            if (state.hasInstancesManual === 'y') {
+              const defaultCount = existingInstances.length ? String(existingInstances.length) : '1';
+              const rawCount = await ask('How many MTA application instances do you have?', defaultCount);
+              if (isBack(rawCount)) {
+                stepSubBack = true;
+              } else {
+                const count = Math.max(1, parseInt(rawCount, 10) || 1);
+                const newInstances = [];
+                for (let i = 1; i <= count; i++) {
+                  const existingInst = existingInstances[i - 1];
+                  const defaultName = existingInst ? existingInst.name : (i === 1 ? 'local' : (i === 2 ? 'test' : `instance-${i}`));
+                  const instName = await ask(`Instance #${i} name (e.g. local, test)`, defaultName);
+                  if (isBack(instName)) { stepSubBack = true; break; }
+
+                  let token = '';
+                  const defaultToken = existingInst ? existingInst.token : (i === 1 ? (state.defaultInstanceToken || '') : '');
+                  while (!token) {
+                    token = await ask(`Instance #${i} token (from MTA Portal > Application > Application Instances)`, defaultToken);
+                    if (isBack(token)) { stepSubBack = true; break; }
+                    token = token.trim();
+                    if (!token) {
+                      console.log(`${ERROR} Application instance token cannot be empty.`);
                     }
                   }
+                  if (stepSubBack) break;
+                  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
+                    console.log(`${NOTICE} Token does not match standard UUID format, but will be used as entered.`);
+                  }
+                  newInstances.push({ name: instName, token });
                 }
-                state.defaultInstanceName = state.appInstances[selIdx - 1].name;
-                state.defaultInstanceToken = state.appInstances[selIdx - 1].token;
-                console.log(`Default instance: [${state.defaultInstanceName}]`);
+                if (!stepSubBack && newInstances.length > 0) {
+                  state.appInstances = newInstances;
+                  let selIdx = 1;
+                  if (state.appInstances.length > 1) {
+                    const defaultSel = state.defaultInstanceName
+                      ? String(state.appInstances.findIndex(x => x.name === state.defaultInstanceName) + 1 || 1)
+                      : '1';
+                    console.log(`\n*(Note: The selected instance must be running and connected to MTA when you execute tests)*`);
+                    const choice = await ask(`Select default instance for ExecuteTest (1-${state.appInstances.length})`, defaultSel);
+                    if (!isBack(choice)) {
+                      const parsed = parseInt(choice, 10);
+                      if (!isNaN(parsed) && parsed >= 1 && parsed <= state.appInstances.length) {
+                        selIdx = parsed;
+                      }
+                    }
+                  }
+                  state.defaultInstanceName = state.appInstances[selIdx - 1].name;
+                  state.defaultInstanceToken = state.appInstances[selIdx - 1].token;
+                  state.activeConfig = state.appInstances[selIdx - 1];
+                  console.log(`Default instance: [${state.defaultInstanceName}]`);
+                }
               }
+            } else {
+              state.appInstances = [];
+              state.defaultInstanceName = '';
+              state.defaultInstanceToken = '';
+              console.log(`${INFO} Skipped. Automated cloud test execution (ExecuteTest) is inactive.`);
+              console.log('       Local exploratory testing remains fully available via the runtime plugin below.');
             }
-          } else {
-            state.appInstances = [];
-            state.defaultInstanceName = '';
-            state.defaultInstanceToken = '';
-            console.log(`${INFO} Skipped. Automated cloud test execution (ExecuteTest) is inactive.`);
-            console.log('       Local exploratory testing remains fully available via the runtime plugin below.');
           }
         }
-      }
 
-      if (stepSubBack) {
-        goBack = true;
-      } else {
-        nextStep = 'app_name';
+        if (stepSubBack) {
+          goBack = true;
+        } else {
+          nextStep = 'app_name';
+        }
       }
     } else if (currentStep === 'app_name') {
       console.log('\n--- MTA Connection Settings ---');
@@ -2919,7 +2955,11 @@ async function run(options = {}) {
         goBack = true;
       } else {
         state.appName = ans;
-        nextStep = 'mta_url';
+        if (!editingSingleSetting && state.mtaUrl) {
+          nextStep = 'mta_token';
+        } else {
+          nextStep = 'mta_url';
+        }
       }
     } else if (currentStep === 'mta_url') {
       console.log('\n--- MTA URL ---');
@@ -2957,7 +2997,16 @@ async function run(options = {}) {
         if (!state.rawMtaToken.trim()) {
           console.log(`${INFO} Identification token for a service account skipped. Cloud authoring tools will remain inactive.`);
         }
-        nextStep = 'plugin_url';
+        if (!editingSingleSetting && state.pluginUrl && state.rawPluginToken) {
+          console.log(`\n${INFO} App Under Test Plugin already configured:`);
+          console.log(`  • Plugin MCP URL:   ${state.pluginUrl}`);
+          console.log(`  • Plugin Token:     Configured`);
+          nextStep = 'exploratory_mode';
+        } else if (!editingSingleSetting && state.pluginUrl) {
+          nextStep = 'plugin_token';
+        } else {
+          nextStep = 'plugin_url';
+        }
       }
     } else if (currentStep === 'plugin_url') {
       console.log('\n--- App Under Test Plugin (Local Exploratory Testing) ---');
@@ -2975,7 +3024,11 @@ async function run(options = {}) {
         goBack = true;
       } else {
         state.pluginUrl = ans;
-        nextStep = 'plugin_token';
+        if (!editingSingleSetting && state.rawPluginToken) {
+          nextStep = 'exploratory_mode';
+        } else {
+          nextStep = 'plugin_token';
+        }
       }
     } else if (currentStep === 'plugin_token') {
       console.log('\n--- App Under Test Plugin Token ---');
@@ -3051,7 +3104,7 @@ async function run(options = {}) {
       console.log(` [1] Workspace Setup:    ${workspaceLabel} (${resolvedWorkspaceDir})`);
       console.log(` [2] Mendix App Path:    ${state.projectDir || '(none)'}${state.detectedVersion ? ` (Mendix v${state.detectedVersion})` : ''}`);
       console.log(` [3] Model Source:       ${modelSourceSummary}`);
-      console.log(` [4] MTA Server URL:     ${state.mtaUrl || '(none)'} (App: ${state.appName || 'MyApp'})`);
+      console.log(` [4] MTA Server & App:   ${state.mtaUrl || '(none)'} (App: ${state.appName || 'MyApp'})`);
       console.log(` [5] Service Token:      ${mtaTokenPreview}`);
       console.log(` [6] App Instances:      ${instanceSummary}`);
       console.log(` [7] Plugin MCP URL:     ${state.pluginUrl || '(none)'}`);
@@ -3109,7 +3162,9 @@ async function run(options = {}) {
           currentStep = 'mta_plugin_setup';
         } else if (currentStep === 'model_source' && nextStep === 'studiopro_url') {
           currentStep = 'studiopro_url';
-        } else if (currentStep === 'app_name') {
+        } else if (currentStep === 'model_source' && nextStep === 'catalog_index') {
+          currentStep = 'catalog_index';
+        } else if (currentStep === 'app_name' && nextStep === 'mta_url') {
           currentStep = 'mta_url';
         } else {
           editingSingleSetting = null;
