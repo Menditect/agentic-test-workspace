@@ -1558,6 +1558,27 @@ async function installMxModuleFromMarketplace(modSpec, projectDir, mendixVersion
   }
 }
 
+function tryCreateConfigurationInMpr(mprPath, mxcliBin, configName, httpPort = 8081) {
+  if (!mprPath || !fs.existsSync(mprPath) || !mxcliBin || !configName) {
+    return { success: false, error: 'Missing parameters' };
+  }
+  const escapeMdlStr = (val) => String(val ?? '').replace(/'/g, "''");
+  const safeCfg = escapeMdlStr(configName.trim());
+  const tmpMdl = path.join(os.tmpdir(), `mta-create-cfg-${Date.now()}.mdl`);
+  try {
+    fs.writeFileSync(tmpMdl, `CREATE OR MODIFY CONFIGURATION '${safeCfg}' HttpPortNumber = ${httpPort}, ApplicationRootUrl = 'http://localhost:${httpPort}/';\n`, 'utf8');
+    execSync(`"${mxcliBin}" exec "${tmpMdl}" -p "${mprPath}"`, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30000
+    });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    try { if (fs.existsSync(tmpMdl)) fs.unlinkSync(tmpMdl); } catch (e) {}
+  }
+}
+
 function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
   if (!mprPath || !fs.existsSync(mprPath) || !mxcliBin) {
     return { success: false, error: 'Missing .mpr path or mxcli binary' };
@@ -1572,7 +1593,6 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
   const targetConfigs = pluginConfig.configurationName
     ? [pluginConfig.configurationName]
     : (existingConfigs.length > 0 ? existingConfigs : ['Default']);
-  const needsDefaultConfigCreate = existingConfigs.length === 0;
 
   const currentAfterStartup = currentSettings && currentSettings.afterStartupMicroflow
     ? currentSettings.afterStartupMicroflow.trim()
@@ -1611,8 +1631,23 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
   const enableMcpServer = escapeMdlStr(pluginConfig.enableMcpServer || 'True');
   const mcpServerAccessToken = escapeMdlStr(pluginConfig.mcpServerAccessToken || '1');
 
+  // Detect whether MtaPluginModule is an add-on module (.mxmodule in modules/) or already an internal module in .mpr
+  const projectDir = path.dirname(mprPath);
+  const addonMxmodulePath = path.join(projectDir, 'modules', 'MtaPluginModule.mxmodule');
+  const isAddonModule = fs.existsSync(addonMxmodulePath);
+
+  let existingInternalModule = false;
+  try {
+    const modulesOutput = execSync(`"${mxcliBin}" -c "SHOW MODULES;" -p "${mprPath}"`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 25000
+    });
+    existingInternalModule = /\|\s*MtaPluginModule\s*\|/i.test(modulesOutput);
+  } catch (e) {}
+
   const mdlLines = [
-    'CREATE MODULE MtaPluginModule;',
+    'CREATE OR REPLACE MODULE MtaPluginModule;',
     "CREATE CONSTANT MtaPluginModule.ApplicationInstanceToken TYPE String DEFAULT '';",
     "CREATE CONSTANT MtaPluginModule.ConnectionMethod TYPE String DEFAULT 'AfterStartup';",
     "CREATE CONSTANT MtaPluginModule.MTAConnectionPassword TYPE String DEFAULT '';",
@@ -1630,28 +1665,22 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
   let createdConfigs = [];
   for (const cfgName of targetConfigs) {
     const safeCfg = escapeMdlStr(cfgName);
-    if (!existingConfigs.includes(cfgName)) {
+    const configExists = existingConfigs.some(c => c.toLowerCase() === cfgName.toLowerCase());
+    if (!configExists) {
       // Attempt to create new configuration in .mpr
-      const createCfgMdl = path.join(os.tmpdir(), `mta-create-cfg-${Date.now()}.mdl`);
-      try {
-        fs.writeFileSync(createCfgMdl, `CREATE OR MODIFY CONFIGURATION '${safeCfg}' HttpPortNumber = 8081, ApplicationRootUrl = 'http://localhost:8081/';\n`, 'utf8');
-        execSync(`"${mxcliBin}" exec "${createCfgMdl}" -p "${mprPath}"`, {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: 30000
-        });
+      const createRes = tryCreateConfigurationInMpr(mprPath, mxcliBin, cfgName);
+      if (createRes.success) {
         createdConfigs.push(cfgName);
-      } catch (cfgErr) {
-        // If mxcli fails to create new configuration due to duplicate GUIDs in project settings unit (common in Mendix 11),
-        // fall back to using existing configuration (e.g. 'default')
-        console.warn(`  [WARNING] Could not create new configuration '${cfgName}' via mxcli: ${cfgErr.message.split('\n')[0]}`);
-        const fallbackCfg = existingConfigs[0] || 'default';
-        console.warn(`  [INFO] Falling back to existing configuration '${fallbackCfg}' for MTA Plugin constants.`);
-        effectiveConfigs.push(fallbackCfg);
-      } finally {
-        try { if (fs.existsSync(createCfgMdl)) fs.unlinkSync(createCfgMdl); } catch (e) {}
+      } else {
+        // DO NOT silently fall back to default! Return error so caller knows mxcli cannot create this configuration.
+        return {
+          success: false,
+          error: `Configuration '${cfgName}' does not exist in .mpr and could not be created automatically via mxcli: ${createRes.error?.split('\n')[0]}`
+        };
       }
     } else {
-      effectiveConfigs.push(cfgName);
+      const actualName = existingConfigs.find(c => c.toLowerCase() === cfgName.toLowerCase()) || cfgName;
+      effectiveConfigs.push(actualName);
     }
   }
   if (createdConfigs.length > 0) {
@@ -1659,7 +1688,10 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
   }
   effectiveConfigs = Array.from(new Set(effectiveConfigs.filter(Boolean)));
   if (effectiveConfigs.length === 0) {
-    effectiveConfigs = [existingConfigs[0] || 'default'];
+    return {
+      success: false,
+      error: 'No target configuration found or created in project settings'
+    };
   }
 
   for (const cfgName of effectiveConfigs) {
@@ -1677,6 +1709,13 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
     mdlLines.push(customAfterStartupMdl);
   } else if (!currentAfterStartup || currentAfterStartup === 'MtaPluginModule.ASU_Setup_Connection_MTA') {
     mdlLines.push(`ALTER SETTINGS MODEL AfterStartupMicroflow = '${escapeMdlStr(targetAfterStartupMicroflow)}';`);
+  }
+
+  // If MtaPluginModule is an add-on module (.mxmodule in modules/) or was not a pre-existing project module,
+  // drop the temporary stub module so it never creates/leaves a duplicate internal project module in .mpr.
+  // The constant overrides and AfterStartup setting remain permanently stored in the Settings unit.
+  if (isAddonModule || !existingInternalModule) {
+    mdlLines.push('DROP MODULE MtaPluginModule;');
   }
 
   const tmpMdlPath = path.join(os.tmpdir(), `mta-plugin-config-${Date.now()}.mdl`);
@@ -2562,6 +2601,7 @@ async function run(options = {}) {
 
         let targetConfigName = '';
         let isNewConfig = false;
+        let skipMprConfigWrite = false;
 
         if (currentConfigs.length > 0) {
           console.log(`Discovered ${currentConfigs.length} configuration(s) in Mendix project:`);
@@ -2580,12 +2620,89 @@ async function run(options = {}) {
             const parsed = parseInt(configChoice, 10);
             if (parsed === currentConfigs.length + 1) {
               isNewConfig = true;
-              while (!targetConfigName) {
-                const newNameAns = await ask('Enter new configuration name (e.g. MTA_Testing, LocalTest)');
+              while (!targetConfigName && !stepSubBack) {
+                const newNameAns = await ask('Enter new configuration name (e.g. MTA_Testing, MTA_demo)');
                 if (isBack(newNameAns)) { stepSubBack = true; break; }
-                targetConfigName = newNameAns.trim();
-                if (!targetConfigName) {
+                const candidateName = newNameAns.trim();
+                if (!candidateName) {
                   console.log(`${ERROR} Configuration name cannot be empty.`);
+                  continue;
+                }
+                const alreadyExists = currentConfigs.find(c => c.toLowerCase() === candidateName.toLowerCase());
+                if (alreadyExists) {
+                  console.log(`${WARN} Configuration '${candidateName}' already exists in project. Using '${alreadyExists}'.`);
+                  targetConfigName = alreadyExists;
+                  isNewConfig = false;
+                  break;
+                }
+
+                // Attempt to create new configuration in .mpr via mxcli
+                console.log(`Attempting to create configuration '${candidateName}' in .mpr...`);
+                const createRes = tryCreateConfigurationInMpr(state.mprPath, mxcliBin, candidateName);
+                if (createRes.success) {
+                  console.log(`${PASS} Successfully created configuration '${candidateName}' in Mendix project.`);
+                  targetConfigName = candidateName;
+                  state.discoveredMta = inspectMendixMtaSettings(state.mprPath, mxcliBin);
+                  break;
+                }
+
+                // mxcli failed to create configuration (e.g. Mendix 11 duplicate OpenTelemetry GUIDs limitation)
+                console.log('\n┌──────────────────────────────────────────────────────────────────────────────┐');
+                console.log('│ ⚠️  Cannot Auto-Create Configuration in .mpr (Mendix 11 Limitation)          │');
+                console.log('├──────────────────────────────────────────────────────────────────────────────┤');
+                console.log(`│ mxcli cannot generate a brand-new Configuration in this Mendix project due   │`);
+                console.log(`│ to duplicate OpenTelemetry GUIDs in Project Settings.                        │`);
+                console.log('│                                                                              │');
+                console.log(`│ To use '${candidateName}', you can add it in Studio Pro:                     │`);
+                console.log('│   1. In Studio Pro: App Explorer > App > Settings > Configurations tab       │');
+                console.log(`│   2. Click 'Add', enter name '${candidateName}', set Port 8081 / http://...  │`);
+                console.log('│   3. Save the project in Studio Pro and return here                          │');
+                console.log('└──────────────────────────────────────────────────────────────────────────────┘\n');
+
+                let resolvedChoice = false;
+                while (!resolvedChoice && !stepSubBack) {
+                  console.log('Options:');
+                  console.log(`  [1] I created '${candidateName}' in Studio Pro — Verify and proceed (Recommended)`);
+                  console.log(`  [2] Select an existing configuration instead (${currentConfigs.join(', ')})`);
+                  console.log(`  [3] Save '${candidateName}' to mta_config.json only (skip writing constants to .mpr for now)`);
+
+                  const optAns = await ask('Select option (1-3)', '1');
+                  if (isBack(optAns)) { stepSubBack = true; break; }
+                  const optChoice = optAns.trim();
+
+                  if (optChoice === '1') {
+                    const refreshed = inspectMendixMtaSettings(state.mprPath, mxcliBin);
+                    const foundCfg = refreshed?.configurationNames?.find(c => c.toLowerCase() === candidateName.toLowerCase());
+                    if (foundCfg) {
+                      console.log(`\n${PASS} Found configuration '${foundCfg}' in Mendix project!\n`);
+                      targetConfigName = foundCfg;
+                      state.discoveredMta = refreshed;
+                      isNewConfig = false;
+                      resolvedChoice = true;
+                    } else {
+                      console.log(`\n${WARN} Configuration '${candidateName}' was not found in project configurations.`);
+                      console.log('       Please ensure you clicked OK, saved the project in Studio Pro, and try again.\n');
+                    }
+                  } else if (optChoice === '2') {
+                    console.log('Available configurations:');
+                    currentConfigs.forEach((cn, i) => console.log(`  [${i + 1}] ${cn}`));
+                    const selAns = await ask(`Select configuration (1-${currentConfigs.length})`, '1');
+                    if (isBack(selAns)) { stepSubBack = true; break; }
+                    const selIdx = parseInt(selAns, 10);
+                    if (!isNaN(selIdx) && selIdx >= 1 && selIdx <= currentConfigs.length) {
+                      targetConfigName = currentConfigs[selIdx - 1];
+                    } else {
+                      targetConfigName = currentConfigs[0];
+                    }
+                    isNewConfig = false;
+                    console.log(`${INFO} Using existing configuration '${targetConfigName}'.`);
+                    resolvedChoice = true;
+                  } else if (optChoice === '3') {
+                    targetConfigName = candidateName;
+                    skipMprConfigWrite = true;
+                    console.log(`${INFO} Selected '${targetConfigName}'. Constants will be saved to mta_config.json only.`);
+                    resolvedChoice = true;
+                  }
                 }
               }
             } else if (!isNaN(parsed) && parsed >= 1 && parsed <= currentConfigs.length) {
@@ -2708,7 +2825,7 @@ async function run(options = {}) {
               }
             }
 
-            if (!stepSubBack && mxcliBin) {
+            if (!stepSubBack && !skipMprConfigWrite && mxcliBin) {
               console.log('\nApplying MTA Plugin constants and AfterStartup microflow to Mendix project (.mpr)...');
               console.log('  • ConnectionMethod:       AfterStartup');
               console.log('  • MTAConnectionUsername:  MTAConnectionUser');
@@ -2745,15 +2862,26 @@ async function run(options = {}) {
               state.rawPluginToken = formatBearerToken(mcpServerAccessToken);
               if (state.discoveredMta && state.discoveredMta.instances && state.discoveredMta.instances.length > 0) {
                 state.appInstances = state.discoveredMta.instances;
-                const matchedInstance = state.appInstances.find(inst => inst.name === targetConfigName);
+                const matchedInstance = state.appInstances.find(inst => inst.name.toLowerCase() === targetConfigName.toLowerCase());
                 if (matchedInstance) {
                   state.defaultInstanceName = matchedInstance.name;
-                  state.defaultInstanceToken = matchedInstance.token;
+                  state.defaultInstanceToken = matchedInstance.token || appInstanceToken;
                   state.activeConfig = matchedInstance;
                 } else {
-                  state.defaultInstanceName = state.appInstances[0].name;
-                  state.defaultInstanceToken = state.appInstances[0].token;
-                  state.activeConfig = state.appInstances[0];
+                  // Keep targetConfigName as default instance rather than silently falling back to instances[0]
+                  const newInst = {
+                    name: targetConfigName,
+                    token: appInstanceToken,
+                    mtaUrl: httpMtaUrl,
+                    runtimeUrl: 'http://localhost:8081/',
+                    pluginUrl: 'http://localhost:8081/plugin/mcp',
+                    pluginToken: formatBearerToken(mcpServerAccessToken),
+                    pluginPort: '8081'
+                  };
+                  state.appInstances.push(newInst);
+                  state.defaultInstanceName = targetConfigName;
+                  state.defaultInstanceToken = appInstanceToken;
+                  state.activeConfig = newInst;
                 }
               } else {
                 const cfgName = (cfgRes.configuredConfigurations && cfgRes.configuredConfigurations[0]) || targetConfigName || 'Default';
@@ -2773,12 +2901,36 @@ async function run(options = {}) {
               if (state.activeConfig?.pluginUrl) state.pluginUrl = state.activeConfig.pluginUrl;
               if (state.activeConfig?.pluginToken) state.rawPluginToken = state.activeConfig.pluginToken;
               if (state.activeConfig?.mtaUrl) state.mtaUrl = state.activeConfig.mtaUrl;
+            } else if (!stepSubBack && skipMprConfigWrite) {
+              const newInst = {
+                name: targetConfigName,
+                token: appInstanceToken,
+                mtaUrl: httpMtaUrl,
+                runtimeUrl: 'http://localhost:8081/',
+                pluginUrl: 'http://localhost:8081/plugin/mcp',
+                pluginToken: formatBearerToken(mcpServerAccessToken),
+                pluginPort: '8081'
+              };
+              if (!state.appInstances) state.appInstances = [];
+              const existingIdx = state.appInstances.findIndex(inst => inst.name.toLowerCase() === targetConfigName.toLowerCase());
+              if (existingIdx >= 0) {
+                state.appInstances[existingIdx] = newInst;
+              } else {
+                state.appInstances.push(newInst);
+              }
+              state.defaultInstanceName = targetConfigName;
+              state.defaultInstanceToken = appInstanceToken;
+              state.activeConfig = newInst;
+              state.mtaUrl = httpMtaUrl;
+              state.pluginUrl = newInst.pluginUrl;
+              state.rawPluginToken = newInst.pluginToken;
+              console.log(`${PASS} Registered configuration '${targetConfigName}' in workspace settings.`);
             }
           }
         } else {
           console.log(`${PASS} Selected configuration '${targetConfigName}' for MTA Plugin.`);
           if (targetConfigName && state.discoveredMta && state.discoveredMta.instances) {
-            const matchedInstance = state.discoveredMta.instances.find(inst => inst.name === targetConfigName);
+            const matchedInstance = state.discoveredMta.instances.find(inst => inst.name.toLowerCase() === targetConfigName.toLowerCase());
             if (matchedInstance) {
               state.appInstances = state.discoveredMta.instances;
               state.defaultInstanceName = matchedInstance.name;
@@ -3733,6 +3885,7 @@ if (require.main === module) {
     extractPlaywrightDriverVersion,
     ensurePlaywrightDriverBundle,
     installMxModuleFromMarketplace,
+    tryCreateConfigurationInMpr,
     configureMtaPluginInMpr,
     getOrDownloadMxcli,
     parseInstanceSelection,
