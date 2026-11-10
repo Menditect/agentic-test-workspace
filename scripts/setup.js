@@ -394,6 +394,64 @@ function prepareMendixGitRepo(projectDir) {
   return { isGit: true, success: true };
 }
 
+function isMendixProjectOpenInStudioPro(mprPath, projectDir) {
+  if (!mprPath && !projectDir) return { isOpen: false };
+  const targetMpr = mprPath ? path.resolve(mprPath).toLowerCase() : '';
+  const targetDir = projectDir ? path.resolve(projectDir).toLowerCase() : (targetMpr ? path.dirname(targetMpr) : '');
+
+  // 1. Direct .mpr.lock file inspection (Mendix Studio Pro creates <project>.mpr.lock with {"ProcessId": <pid>})
+  if (mprPath) {
+    const lockPath = mprPath + '.lock';
+    if (fs.existsSync(lockPath)) {
+      try {
+        const raw = fs.readFileSync(lockPath, 'utf8');
+        const data = JSON.parse(raw);
+        if (data && data.ProcessId) {
+          try {
+            process.kill(data.ProcessId, 0); // Check if process with PID is alive
+            return {
+              isOpen: true,
+              pid: data.ProcessId,
+              source: 'lock_file',
+              lockPath
+            };
+          } catch (e) {
+            // Process not alive; stale lock file
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  // 2. Windows process table inspection fallback (detect running studiopro.exe holding this project)
+  if (process.platform === 'win32') {
+    try {
+      const out = execSync('powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter \\"Name like \'%studiopro%\'\\" | Select-Object ProcessId, CommandLine | ConvertTo-Json"', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 5000
+      });
+      if (out && out.trim()) {
+        const parsed = JSON.parse(out.trim());
+        const procs = Array.isArray(parsed) ? parsed : [parsed];
+        for (const proc of procs) {
+          const cmd = (proc.CommandLine || '').toLowerCase();
+          if ((targetMpr && cmd.includes(targetMpr)) || (targetDir && cmd.includes(targetDir))) {
+            return {
+              isOpen: true,
+              pid: proc.ProcessId,
+              source: 'process_cli',
+              commandLine: proc.CommandLine
+            };
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  return { isOpen: false };
+}
+
 function findMpr(dir) {
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -2347,8 +2405,64 @@ async function run(options = {}) {
         let stepSubBack = false;
         let modulesUpdatedCount = 0;
 
-        // 1. Automated Module Sync / Upgrade
-        if (mxcliBin) {
+        // Check if Studio Pro has the project open before downloading modules or modifying .mpr
+        let studioProCheck = isMendixProjectOpenInStudioPro(state.mprPath, state.projectDir);
+        let skipModuleOpsDueToStudioPro = false;
+
+        if (studioProCheck.isOpen) {
+          console.log('\n┌──────────────────────────────────────────────────────────────────────────────┐');
+          console.log('│ ⚠️  WARNING: MENDIX STUDIO PRO HAS THIS PROJECT OPEN                         │');
+          console.log('├──────────────────────────────────────────────────────────────────────────────┤');
+          console.log(`│ Active Studio Pro session detected (Process ID: ${String(studioProCheck.pid).padEnd(28)}) │`);
+          console.log(`│ Project: ${path.basename(state.mprPath).padEnd(67)} │`);
+          console.log('│                                                                              │');
+          console.log('│ Adding/updating modules or configuring constants while open in Studio Pro:   │');
+          console.log('│   1. File Lock Errors: Studio Pro or the JVM lock .mpr, userlib/*.jar,      │');
+          console.log('│      and deployment/ folders, causing downloads or cleanup to fail.          │');
+          console.log('│   2. Cache Overwrite Risk: Studio Pro holds an in-memory model cache. When   │');
+          console.log('│      you save in Studio Pro, it will overwrite the .mpr on disk and ERADICATE│');
+          console.log('│      the newly configured MTA settings and constants!                        │');
+          console.log('│   3. Desynchronization: Studio Pro will not reload updated .mxmodule files   │');
+          console.log('│      from disk until the project is closed and re-opened.                    │');
+          console.log('│                                                                              │');
+          console.log('│ RECOMMENDED ACTION: Close Studio Pro (or close this project in Studio Pro)   │');
+          console.log('│ before continuing.                                                           │');
+          console.log('└──────────────────────────────────────────────────────────────────────────────┘\n');
+
+          while (!stepSubBack) {
+            console.log('Options:');
+            console.log('  [1] I have closed Studio Pro — Re-check and proceed (Recommended)');
+            console.log('  [2] Continue anyway (Proceed with risk — do NOT save in Studio Pro, reload after setup)');
+            console.log('  [3] Skip module download and constant configuration for now');
+            const studioChoice = await ask('Select option: [1] Re-check (recommended), [2] Continue anyway, [3] Skip', '1');
+            if (isBack(studioChoice)) {
+              stepSubBack = true;
+              break;
+            }
+            const trimmedChoice = studioChoice.trim();
+            if (trimmedChoice === '1') {
+              studioProCheck = isMendixProjectOpenInStudioPro(state.mprPath, state.projectDir);
+              if (!studioProCheck.isOpen) {
+                console.log(`\n${PASS} Studio Pro closed. Safe to proceed with module installation and configuration.\n`);
+                break;
+              } else {
+                console.log(`\n${WARN} Studio Pro is still detected holding this project (PID: ${studioProCheck.pid}).`);
+                console.log('       Please save your work, close Studio Pro or the project, and try again.\n');
+              }
+            } else if (trimmedChoice === '2') {
+              console.log(`\n${WARN} Continuing with Studio Pro open. CAUTION: Do NOT save in Studio Pro! Reload the project immediately after setup.\n`);
+              break;
+            } else if (trimmedChoice === '3') {
+              console.log(`\n${INFO} Skipping module downloads and configuration. You can run 'npm run update:modules' anytime after closing Studio Pro.\n`);
+              skipModuleOpsDueToStudioPro = true;
+              break;
+            }
+          }
+        }
+
+        if (!stepSubBack && !skipModuleOpsDueToStudioPro) {
+          // 1. Automated Module Sync / Upgrade
+          if (mxcliBin) {
           const authed = await ensureMxcliAuth(mxcliBin, ask);
           if (authed) {
             console.log(`Checking Menditect Marketplace module versions for Mendix ${mxVer}...`);
@@ -2713,8 +2827,9 @@ async function run(options = {}) {
             }
           }
         }
+      }
 
-        if (stepSubBack) {
+      if (stepSubBack) {
           goBack = true;
         } else {
           if (modulesUpdatedCount > 0) {
@@ -3602,6 +3717,7 @@ if (require.main === module) {
     discoverWorkspaceConfigCandidates,
     cleanDeploymentDirectory,
     prepareMendixGitRepo,
+    isMendixProjectOpenInStudioPro,
     runDirectivesOnly,
     run
   };

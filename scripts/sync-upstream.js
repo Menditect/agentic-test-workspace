@@ -1099,6 +1099,7 @@ async function syncMarketplaceModules(options = {}) {
     prepareMendixGitRepo,
     findMxcliBinary,
     detectMendixVersion,
+    isMendixProjectOpenInStudioPro,
     findMpr
   } = require('./setup');
 
@@ -1114,6 +1115,24 @@ async function syncMarketplaceModules(options = {}) {
   if (!mxcliBin) {
     console.warn('[WARN] mxcli binary not found. Cannot download Marketplace modules.');
     return false;
+  }
+
+  if (isMendixProjectOpenInStudioPro) {
+    const openCheck = isMendixProjectOpenInStudioPro(mprPath, projectDir);
+    if (openCheck.isOpen) {
+      console.warn('\n┌──────────────────────────────────────────────────────────────────────────────┐');
+      console.warn('│ ⚠️  WARNING: MENDIX STUDIO PRO HAS THIS PROJECT OPEN                         │');
+      console.warn('├──────────────────────────────────────────────────────────────────────────────┤');
+      console.warn(`│ Detected active Studio Pro process (PID: ${String(openCheck.pid).padEnd(36)}) │`);
+      console.warn(`│ Project: ${path.basename(mprPath || projectDir).padEnd(67)} │`);
+      console.warn('│                                                                              │');
+      console.warn('│ Updating modules while open in Studio Pro can cause file locks on            │');
+      console.warn('│ userlib/*.jar and deployment/ directories, and Studio Pro will not reload     │');
+      console.warn('│ updated .mxmodule files until the project is closed and re-opened.           │');
+      console.warn('│                                                                              │');
+      console.warn('│ RECOMMENDED: Close Studio Pro and re-run "npm run update:modules".           │');
+      console.warn('└──────────────────────────────────────────────────────────────────────────────┘\n');
+    }
   }
 
   console.log(`Syncing Menditect Marketplace modules for Mendix ${mendixVersion} in ${projectDir}...`);
