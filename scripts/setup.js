@@ -1214,9 +1214,17 @@ async function ensureMxcliAuth(mxcliBin, askFn = null) {
     return false;
   }
 
-  console.log(`\n${NOTICE} Mendix Marketplace authentication is required to download or check .mxmodule packages via mxcli.`);
-  console.log('         Create a Personal Access Token (PAT) at: https://user-settings.mendix.com/');
-  console.log('         (Required scope: mx:marketplace:WaitingRoom or Marketplace read access)\n');
+  console.log(`\n${NOTICE} Mendix Marketplace Authentication (PAT):`);
+  console.log('  • Why this is needed: Studio Pro uses desktop browser SSO which standalone CLI tools cannot access.');
+  console.log('    mxcli needs a Personal Access Token to query version compatibility and download .mxmodule files.');
+  console.log('  • How to create: Go to https://user-settings.mendix.com/ -> Personal Access Tokens');
+  console.log('    (Scope required: mx:marketplace:WaitingRoom or Marketplace read access).');
+  console.log('  • 🔒 Where it is saved:');
+  console.log('    - Global CLI credential store: ~/.mxcli/auth.json (mode 0600, user-only permissions)');
+  console.log('    - Workspace configuration: .env (MENDIX_PAT=...)');
+  console.log('    Once provided, you will not be asked again on this machine.');
+  console.log('  • Optional / Manual Alternative: Press Enter to SKIP.');
+  console.log('    If skipped, you can download the module directly in Studio Pro using its Marketplace tab.\n');
 
   const promptFunc = askFn || ((q, def) => ask(q, def, { allowBack: false }));
   const pat = await promptFunc('Enter your Mendix Personal Access Token (PAT) (or press Enter to skip Marketplace download)', '');
@@ -1230,7 +1238,7 @@ async function ensureMxcliAuth(mxcliBin, askFn = null) {
       timeout: 15000
     });
     process.env.MENDIX_PAT = pat.trim();
-    console.log(`${PASS} Authenticated mxcli with Mendix Marketplace.`);
+    console.log(`${PASS} Authenticated mxcli with Mendix Marketplace (stored in ~/.mxcli/auth.json and .env).`);
     return true;
   } catch (err) {
     console.warn(`${WARN} Failed to authenticate mxcli with provided PAT: ${err.message}`);
@@ -2927,12 +2935,19 @@ async function run(options = {}) {
         nextStep = 'mta_token';
       }
     } else if (currentStep === 'mta_token') {
-      console.log('\n--- Identification Token for a Service Account ---');
-      console.log('Press Enter to SKIP (leave blank).');
-      console.log('*(Note: You do not need an MTA Cloud license or service account token for exploratory testing.');
-      console.log(' Required only to author test cases/suites and store test results in the MTA Cloud Portal.');
-      console.log(' In the MTA Portal as ServiceAccountManager, go to Service account overview, create a ServiceAccount,');
-      console.log(' and ensure "Call MCP primitive tools = Enabled" is checked.)*\n');
+      console.log('\n--- Identification Token for a Service Account (MTA Bearer Token) ---');
+      console.log('Press Enter to SKIP (leave blank if doing local exploratory testing).\n');
+      console.log('  • Purpose:');
+      console.log('    Required ONLY for cloud test authoring (creating/updating persistent test suites in MTA Cloud)');
+      console.log('    and storing test results in the MTA Cloud Portal. NOT needed for local exploratory testing.');
+      console.log('  • How to obtain:');
+      console.log('    In the MTA Portal as ServiceAccountManager: go to Service account overview, create a ServiceAccount,');
+      console.log('    and ensure "Call MCP primitive tools = Enabled" is checked.');
+      console.log('  • 🔒 Where it is saved:');
+      console.log('    Stored exclusively in your workspace local .env file as:');
+      console.log('      MTA_MCP_AUTH_HEADER="Bearer <token>" (with restricted 0600 file permissions).');
+      console.log('    It is git-ignored and NEVER written to mta_config.json, keeping your credentials safe from Git commits.');
+      console.log('    The built-in proxy (scripts/mta-proxy.js) reads it from .env dynamically on every Cloud MCP call.\n');
       const defaultMtaToken = state.rawMtaToken || process.env.MTA_MCP_AUTH_HEADER || existingConfig.mta_auth_header || '';
       const ans = await ask('Identification token for a service account (Press Enter to skip / leave blank)', defaultMtaToken);
       if (isBack(ans)) {
@@ -2963,8 +2978,13 @@ async function run(options = {}) {
         nextStep = 'plugin_token';
       }
     } else if (currentStep === 'plugin_token') {
-      console.log('\n(App under test Plugin Token: Security token protecting the MtaPluginModule MCP endpoint in your running app.');
-      console.log(' Configured in Studio Pro via constant MtaPluginModule.McpServerAccessToken.)');
+      console.log('\n--- App Under Test Plugin Token ---');
+      console.log('  • Purpose: Security token protecting the MtaPluginModule MCP endpoint in your running app.');
+      console.log('    Configured in Studio Pro via constant MtaPluginModule.McpServerAccessToken.');
+      console.log('  • 🔒 Where it is saved:');
+      console.log('    Stored exclusively in your workspace local .env file as:');
+      console.log('      PLUGIN_MCP_TOKEN="<token>" (with restricted 0600 file permissions).');
+      console.log('    It is git-ignored and NEVER written to mta_config.json.\n');
       const defaultPluginToken = state.rawPluginToken
         || process.env.PLUGIN_MCP_TOKEN
         || state.activeConfig?.pluginToken
@@ -3332,6 +3352,11 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
   for (const inst of state.appInstances) {
     const safeEnvName = inst.name.replace(/[^a-zA-Z0-9_]/g, '_').toUpperCase();
     envContent += `MTA_APP_INSTANCE_${safeEnvName}="${inst.token}"\n`;
+  }
+
+  const mendixPat = process.env.MENDIX_PAT || process.env.MXCLI_PAT || '';
+  if (mendixPat) {
+    envContent += `MENDIX_PAT="${mendixPat}"\n`;
   }
 
   try {
