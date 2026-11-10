@@ -14,8 +14,26 @@ try {
   if (pkg.version) scriptVersion = ` (v${pkg.version})`;
 } catch (e) {}
 
-function loadConfig() {
+function loadConfig(specificPath = null) {
   const { normalizeConfigAliases, discoverWorkspaceConfigCandidates } = require('./setup');
+  
+  if (specificPath) {
+    let resolved = path.resolve(specificPath);
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+      if (fs.existsSync(path.join(resolved, 'mta_config.json'))) {
+        resolved = path.join(resolved, 'mta_config.json');
+      }
+    }
+    if (fs.existsSync(resolved) && !fs.statSync(resolved).isDirectory()) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+        const config = normalizeConfigAliases ? normalizeConfigAliases(raw) : raw;
+        if (!config.config_file_path) config.config_file_path = resolved;
+        return config;
+      } catch (e) {}
+    }
+  }
+
   const possiblePaths = discoverWorkspaceConfigCandidates
     ? discoverWorkspaceConfigCandidates()
     : [
@@ -31,6 +49,7 @@ function loadConfig() {
       try {
         const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
         config = normalizeConfigAliases ? normalizeConfigAliases(raw) : raw;
+        if (!config.config_file_path) config.config_file_path = p;
         break;
       } catch (e) {}
     }
@@ -44,11 +63,84 @@ function loadConfig() {
         const { normalizeConfigAliases } = require('./setup');
         const normalizedWs = normalizeConfigAliases ? normalizeConfigAliases(wsRaw) : wsRaw;
         config = { ...config, ...normalizedWs };
+        config.config_file_path = wsPath;
       } catch (e) {}
     }
   }
 
   return config;
+}
+
+function resolveWorkspaceConfigs(options = {}) {
+  const { normalizeConfigAliases, discoverWorkspaceConfigCandidates, findMpr } = require('./setup');
+  const targetPaths = options.targetPaths || [];
+  const isAll = Boolean(options.isAll);
+
+  const configs = [];
+  const seenProjects = new Set();
+
+  function addCandidate(candidatePath) {
+    if (!candidatePath) return;
+    let resolved = path.resolve(candidatePath);
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+      if (fs.existsSync(path.join(resolved, 'mta_config.json'))) {
+        resolved = path.join(resolved, 'mta_config.json');
+      } else {
+        // Maybe the directory itself is a Mendix project directory
+        const maybeMpr = findMpr(resolved);
+        if (maybeMpr) {
+          const cfg = {
+            mendix_project_dir: resolved,
+            mendix_mpr_path: maybeMpr,
+            app_name: path.basename(resolved),
+            config_file_path: null
+          };
+          const projKey = path.resolve(resolved).toLowerCase();
+          if (!seenProjects.has(projKey)) {
+            seenProjects.add(projKey);
+            configs.push(cfg);
+          }
+          return;
+        }
+      }
+    }
+
+    if (fs.existsSync(resolved) && !fs.statSync(resolved).isDirectory()) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+        const cfg = normalizeConfigAliases ? normalizeConfigAliases(raw) : raw;
+        if (!cfg.config_file_path) cfg.config_file_path = resolved;
+        const projectDir = cfg.mendix_project_dir ? path.resolve(cfg.mendix_project_dir).toLowerCase() : null;
+        if (projectDir) {
+          if (!seenProjects.has(projectDir)) {
+            seenProjects.add(projectDir);
+            configs.push(cfg);
+          }
+        } else {
+          configs.push(cfg);
+        }
+      } catch (e) {}
+    }
+  }
+
+  if (isAll) {
+    const candidates = discoverWorkspaceConfigCandidates ? discoverWorkspaceConfigCandidates() : [];
+    for (const c of candidates) {
+      addCandidate(c);
+    }
+  } else if (targetPaths.length > 0) {
+    for (const tp of targetPaths) {
+      addCandidate(tp);
+    }
+  } else {
+    // Default: active single workspace
+    const primary = loadConfig();
+    if (primary && (primary.mendix_project_dir || primary.workspace_dir || primary.config_file_path)) {
+      configs.push(primary);
+    }
+  }
+
+  return configs;
 }
 
 function saveConfig(config) {
@@ -493,15 +585,31 @@ async function checkVersions(options = {}) {
       findMpr
     } = require('./setup');
 
-    const projectDir = config.mendix_project_dir || '';
-    const mprPath = config.mendix_mpr_path || (projectDir ? findMpr(projectDir) : '');
-    const mendixVersion = config.mendix_version || (mprPath ? detectMendixVersion(mprPath) : '') || '11.0.0';
-    const mxcliBin = findMxcliBinary(mprPath);
-    const isAuthed = checkMxcliAuthStatus ? checkMxcliAuthStatus(mxcliBin) : false;
+    const targetConfigs = resolveWorkspaceConfigs({
+      targetPaths: options.targetPaths || [],
+      isAll: options.isAll
+    });
 
-    if (projectDir && fs.existsSync(projectDir)) {
+    function inspectSingleProject(projConfig) {
+      const projectDir = projConfig.mendix_project_dir || '';
+      const mprPath = projConfig.mendix_mpr_path || (projectDir ? findMpr(projectDir) : '');
+      const mendixVersion = projConfig.mendix_version || (mprPath ? detectMendixVersion(mprPath) : '') || '11.0.0';
+      const mxcliBin = findMxcliBinary(mprPath);
+      const isAuthed = checkMxcliAuthStatus ? checkMxcliAuthStatus(mxcliBin) : false;
+
+      if (!projectDir || !fs.existsSync(projectDir)) {
+        return {
+          appName: projConfig.app_name || (projConfig.config_file_path ? path.basename(path.dirname(projConfig.config_file_path)) : 'Unknown'),
+          projectDir: projectDir || '(not configured)',
+          mendixVersion: '',
+          isAuthed: false,
+          items: [],
+          updateAvailable: false
+        };
+      }
+
       const installed = inspectInstalledMarketplaceModules(projectDir);
-      const isPaid = config.mta_license_tier === 'paid_enterprise' || config.mta_license_tier === 'paid' || isPaidMtaServerUrl(config.mta_base_url);
+      const isPaid = projConfig.mta_license_tier === 'paid_enterprise' || projConfig.mta_license_tier === 'paid' || isPaidMtaServerUrl(projConfig.mta_base_url);
       const moduleRows = [];
       let modulesUpdateAvailable = false;
 
@@ -600,15 +708,28 @@ async function checkVersions(options = {}) {
         });
       }
 
-      report.modules = {
+      return {
+        appName: projConfig.app_name || (projConfig.config_file_path ? path.basename(path.dirname(projConfig.config_file_path)) : path.basename(projectDir)),
         projectDir,
         mendixVersion,
         isAuthed,
         items: moduleRows,
         updateAvailable: modulesUpdateAvailable
       };
+    }
 
-      if (modulesUpdateAvailable) report.hasUpdates = true;
+    if (targetConfigs.length > 1) {
+      const workspaceReports = targetConfigs.map(c => inspectSingleProject(c));
+      const anyUpdate = workspaceReports.some(r => r.updateAvailable);
+      report.modules = {
+        isMultiWorkspace: true,
+        workspaces: workspaceReports,
+        updateAvailable: anyUpdate
+      };
+      if (anyUpdate) report.hasUpdates = true;
+    } else if (targetConfigs.length === 1) {
+      report.modules = inspectSingleProject(targetConfigs[0]);
+      if (report.modules.updateAvailable) report.hasUpdates = true;
     } else if (target === 'modules') {
       report.modules = {
         projectDir: '(not configured)',
@@ -677,24 +798,48 @@ function printVersionTable(report) {
   }
 
   if (report.modules) {
-    const mxLabel = report.modules.mendixVersion ? ` (Mendix ${report.modules.mendixVersion})` : '';
-    console.log(`--- Menditect Mendix Marketplace Modules${mxLabel} ---`);
-    console.log(`Mendix Project: ${report.modules.projectDir}`);
-    if (report.modules.items.length === 0) {
-      console.log('No Mendix project directory configured in mta_config.json. Run "npm run setup" first.');
-    } else {
-      console.log(`${pad('Module / Artifact', 35)} | ${pad('Local Version', 16)} | ${pad('Remote Version', 20)} | Status`);
-      console.log('-'.repeat(88));
-      for (const item of report.modules.items) {
-        console.log(
-          `${pad(item.name, 35)} | ` +
-          `${pad(item.localVersion, 16)} | ` +
-          `${pad(item.remoteVersion, 20)} | ` +
-          `${item.status}`
-        );
+    if (report.modules.isMultiWorkspace && Array.isArray(report.modules.workspaces)) {
+      console.log(`--- Menditect Mendix Marketplace Modules (Multi-Workspace: ${report.modules.workspaces.length} projects) ---`);
+      for (const wsReport of report.modules.workspaces) {
+        const mxLabel = wsReport.mendixVersion ? ` (Mendix ${wsReport.mendixVersion})` : '';
+        console.log(`\nWorkspace / Project: ${wsReport.appName}${mxLabel}`);
+        console.log(`Path: ${wsReport.projectDir}`);
+        if (!wsReport.items || wsReport.items.length === 0) {
+          console.log('No Mendix project directory configured or project directory does not exist.');
+        } else {
+          console.log(`${pad('Module / Artifact', 35)} | ${pad('Local Version', 16)} | ${pad('Remote Version', 20)} | Status`);
+          console.log('-'.repeat(88));
+          for (const item of wsReport.items) {
+            console.log(
+              `${pad(item.name, 35)} | ` +
+              `${pad(item.localVersion, 16)} | ` +
+              `${pad(item.remoteVersion, 20)} | ` +
+              `${item.status}`
+            );
+          }
+        }
       }
+      console.log();
+    } else {
+      const mxLabel = report.modules.mendixVersion ? ` (Mendix ${report.modules.mendixVersion})` : '';
+      console.log(`--- Menditect Mendix Marketplace Modules${mxLabel} ---`);
+      console.log(`Mendix Project: ${report.modules.projectDir}`);
+      if (report.modules.items.length === 0) {
+        console.log('No Mendix project directory configured in mta_config.json. Run "npm run setup" first.');
+      } else {
+        console.log(`${pad('Module / Artifact', 35)} | ${pad('Local Version', 16)} | ${pad('Remote Version', 20)} | Status`);
+        console.log('-'.repeat(88));
+        for (const item of report.modules.items) {
+          console.log(
+            `${pad(item.name, 35)} | ` +
+            `${pad(item.localVersion, 16)} | ` +
+            `${pad(item.remoteVersion, 20)} | ` +
+            `${item.status}`
+          );
+        }
+      }
+      console.log();
     }
-    console.log();
   }
 
   console.log('--------------------------------------------------------------------------------');
@@ -705,9 +850,24 @@ function printVersionTable(report) {
     const updatedCount = report.skills.items.filter(i => i.needsUpdate).length;
     if (updatedCount > 0) countUpdates.push(`${updatedCount} skill(s) / orchestrator`);
   }
-  if (report.modules && report.modules.items) {
-    const updatedMods = report.modules.items.filter(i => i.needsUpdate).length;
-    if (updatedMods > 0) countUpdates.push(`${updatedMods} Marketplace module(s) / driver bundle`);
+  if (report.modules) {
+    if (report.modules.isMultiWorkspace && Array.isArray(report.modules.workspaces)) {
+      let totalUpdatedMods = 0;
+      let totalProjectsWithUpdates = 0;
+      for (const ws of report.modules.workspaces) {
+        const u = (ws.items || []).filter(i => i.needsUpdate).length;
+        if (u > 0) {
+          totalUpdatedMods += u;
+          totalProjectsWithUpdates++;
+        }
+      }
+      if (totalUpdatedMods > 0) {
+        countUpdates.push(`${totalUpdatedMods} Marketplace module(s) across ${totalProjectsWithUpdates} project(s)`);
+      }
+    } else if (report.modules.items) {
+      const updatedMods = report.modules.items.filter(i => i.needsUpdate).length;
+      if (updatedMods > 0) countUpdates.push(`${updatedMods} Marketplace module(s) / driver bundle`);
+    }
   }
 
   if (countUpdates.length > 0) {
@@ -1085,8 +1245,7 @@ async function syncMxcli() {
   }
 }
 
-async function syncMarketplaceModules(options = {}) {
-  const config = options.config || loadConfig();
+async function syncSingleMarketplaceModuleProject(projectConfig, options = {}) {
   const {
     MENDITECT_MARKETPLACE_MODULES,
     inspectInstalledMarketplaceModules,
@@ -1103,17 +1262,17 @@ async function syncMarketplaceModules(options = {}) {
     findMpr
   } = require('./setup');
 
-  const projectDir = config.mendix_project_dir || '';
+  const projectDir = projectConfig.mendix_project_dir || '';
   if (!projectDir || !fs.existsSync(projectDir)) {
-    console.log('[NOTICE] No local Mendix project directory configured in mta_config.json. Skipping Marketplace modules sync.');
+    console.log(`[NOTICE] No local Mendix project directory configured or found (${projectDir || 'empty'}). Skipping Marketplace modules sync.`);
     return false;
   }
 
-  const mprPath = config.mendix_mpr_path || findMpr(projectDir);
-  const mendixVersion = config.mendix_version || (mprPath ? detectMendixVersion(mprPath) : '') || '11.0.0';
+  const mprPath = projectConfig.mendix_mpr_path || findMpr(projectDir);
+  const mendixVersion = projectConfig.mendix_version || (mprPath ? detectMendixVersion(mprPath) : '') || '11.0.0';
   const mxcliBin = findMxcliBinary(mprPath);
   if (!mxcliBin) {
-    console.warn('[WARN] mxcli binary not found. Cannot download Marketplace modules.');
+    console.warn(`[WARN] mxcli binary not found for project ${projectDir}. Cannot download Marketplace modules.`);
     return false;
   }
 
@@ -1135,9 +1294,10 @@ async function syncMarketplaceModules(options = {}) {
     }
   }
 
-  console.log(`Syncing Menditect Marketplace modules for Mendix ${mendixVersion} in ${projectDir}...`);
+  const appTitle = projectConfig.app_name || (projectConfig.config_file_path ? path.basename(path.dirname(projectConfig.config_file_path)) : path.basename(projectDir));
+  console.log(`Syncing Menditect Marketplace modules for ${appTitle} (Mendix ${mendixVersion}) in ${projectDir}...`);
   const installed = inspectInstalledMarketplaceModules(projectDir);
-  const isPaid = config.mta_license_tier === 'paid_enterprise' || config.mta_license_tier === 'paid' || isPaidMtaServerUrl(config.mta_base_url);
+  const isPaid = projectConfig.mta_license_tier === 'paid_enterprise' || projectConfig.mta_license_tier === 'paid' || isPaidMtaServerUrl(projectConfig.mta_base_url);
 
   const modsToSync = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
   if (isPaid || installed.modules.MenditectMxFrontendTestKit?.installed || installed.modules.MenditectPlaywrightConnector?.installed || installed.modules.MenditectMtaCommons?.installed) {
@@ -1195,16 +1355,67 @@ async function syncMarketplaceModules(options = {}) {
   return true;
 }
 
+async function syncMarketplaceModules(options = {}) {
+  if (options.config) {
+    return await syncSingleMarketplaceModuleProject(options.config, options);
+  }
+
+  const targetConfigs = resolveWorkspaceConfigs({
+    targetPaths: options.targetPaths || [],
+    isAll: options.isAll
+  });
+
+  if (targetConfigs.length === 0) {
+    console.log('[NOTICE] No Mendix workspace configurations resolved. Skipping Marketplace modules sync.');
+    return false;
+  }
+
+  if (targetConfigs.length === 1) {
+    return await syncSingleMarketplaceModuleProject(targetConfigs[0], options);
+  }
+
+  console.log(`\nSyncing Marketplace modules across ${targetConfigs.length} Mendix projects...\n`);
+  let successCount = 0;
+  for (let i = 0; i < targetConfigs.length; i++) {
+    const cfg = targetConfigs[i];
+    const appTitle = cfg.app_name || (cfg.config_file_path ? path.basename(path.dirname(cfg.config_file_path)) : (cfg.mendix_project_dir ? path.basename(cfg.mendix_project_dir) : `Project #${i + 1}`));
+    console.log(`\n[${i + 1}/${targetConfigs.length}] === ${appTitle} ===`);
+    const ok = await syncSingleMarketplaceModuleProject(cfg, options);
+    if (ok) successCount++;
+  }
+  console.log(`\nCompleted Marketplace modules sync for ${successCount}/${targetConfigs.length} project(s).`);
+  return true;
+}
+
 async function run(cliTarget = null) {
   const args = process.argv.slice(2);
   const isCheckOnly = args.includes('--check') || args.includes('-c');
   const isAutoYes = args.includes('--yes') || args.includes('-y');
   const isForce = args.includes('--force') || args.includes('-f');
+  const isAll = args.includes('--all') || args.includes('-a');
 
-  const positionalArgs = args.filter(a => !a.startsWith('-'));
-  const target = cliTarget || positionalArgs[0] || 'all';
+  const rawPositional = args.filter(a => !a.startsWith('-'));
+  const targetKeywords = ['all', 'skills', 'tools', 'mxcli', 'modules'];
 
-  const report = await checkVersions({ target });
+  let target = cliTarget;
+  let targetPaths = [];
+
+  if (cliTarget) {
+    target = cliTarget;
+    // Any positional arguments passed to sync-modules or other subrunners are target workspace paths
+    targetPaths = rawPositional;
+  } else {
+    // Top-level sync-upstream invocation: check if first positional is a keyword
+    if (rawPositional.length > 0 && targetKeywords.includes(rawPositional[0].toLowerCase())) {
+      target = rawPositional[0].toLowerCase();
+      targetPaths = rawPositional.slice(1);
+    } else {
+      target = 'all';
+      targetPaths = rawPositional;
+    }
+  }
+
+  const report = await checkVersions({ target, isAll, targetPaths });
   printVersionTable(report);
 
   if (isCheckOnly) {
@@ -1251,7 +1462,7 @@ async function run(cliTarget = null) {
   } else if (target === 'mxcli') {
     await syncMxcli();
   } else if (target === 'modules') {
-    await syncMarketplaceModules({ force: isForce });
+    await syncMarketplaceModules({ force: isForce, isAll, targetPaths });
   } else {
     // 'all' (default: npm run update)
     await syncSkills();
@@ -1260,7 +1471,7 @@ async function run(cliTarget = null) {
     console.log();
     await syncMxcli();
     console.log();
-    await syncMarketplaceModules({ force: isForce });
+    await syncMarketplaceModules({ force: isForce, isAll, targetPaths });
   }
   console.log('\n[PASS] Upstream update complete.');
 }

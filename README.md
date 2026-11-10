@@ -295,13 +295,35 @@ Just like `npm run verify`, when working in the **`[1] Central Tools Hub`** arch
 
 1. **Update Default / Active Workspace:**
    ```bash
-   npm run update            # Updates skills, mxcli, and marketplace modules
-   npm run update:modules    # Updates only Marketplace modules & Playwright driver jar
+   npm run update            # Updates skills, mxcli, and marketplace modules for the active workspace
+   npm run update:modules    # Updates only Marketplace modules & Playwright driver jar for the active workspace
    ```
-   If a single linked workspace is detected, it is updated directly. In interactive terminals with multiple workspaces registered in `.mxcli/workspaces.json`, you are prompted to select which target workspace to update.
+   If a single linked workspace is detected, it is updated directly. In environments with multiple registered workspaces, running without path arguments updates the primary active workspace.
 
-2. **Update a Specific Workspace via CLI / Environment:**
-   You can target a specific workspace directly without switching directories:
+2. **Update a Specific Workspace via CLI Argument:**
+   You can pass the path to a specific workspace folder or its `mta_config.json` directly:
+   ```bash
+   npm run update:modules -- ../app-alpha-workspace
+   # or absolute path:
+   npm run update:modules -- "C:\projects\menditect\app-alpha-workspace"
+   ```
+
+3. **Update Multiple Specific Workspaces:**
+   You can provide multiple workspace paths in a single command:
+   ```bash
+   npm run update:modules -- "../app-alpha-workspace" "../app-beta-workspace"
+   ```
+
+4. **Update All Registered Workspaces (`--all` / `-a`):**
+   To update Marketplace modules across **all** registered workspaces in your Central Tools Hub in one batch:
+   ```bash
+   npm run update:modules -- --all
+   # Dry-run check for all workspaces:
+   npm run update:modules -- --check --all
+   ```
+   The sync engine automatically discovers all candidates from `.mxcli/workspaces.json`, deduplicates by underlying Mendix project directory, checks module versions per application, and updates them sequentially with clear progress banners (`[1/N] === AppName ===`).
+
+5. **Target via Environment Variable:**
    ```bash
    # Target specific workspace via MTA_CONFIG_PATH
    MTA_CONFIG_PATH=../app-alpha-workspace/mta_config.json npm run update
