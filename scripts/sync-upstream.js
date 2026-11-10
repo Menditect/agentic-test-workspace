@@ -501,7 +501,7 @@ async function checkVersions(options = {}) {
 
     if (projectDir && fs.existsSync(projectDir)) {
       const installed = inspectInstalledMarketplaceModules(projectDir);
-      const isPaid = config.mta_license_tier === 'paid' || isPaidMtaServerUrl(config.mta_base_url);
+      const isPaid = config.mta_license_tier === 'paid_enterprise' || config.mta_license_tier === 'paid' || isPaidMtaServerUrl(config.mta_base_url);
       const moduleRows = [];
       let modulesUpdateAvailable = false;
 
@@ -1137,7 +1137,7 @@ async function syncMarketplaceModules(options = {}) {
 
   console.log(`Syncing Menditect Marketplace modules for Mendix ${mendixVersion} in ${projectDir}...`);
   const installed = inspectInstalledMarketplaceModules(projectDir);
-  const isPaid = config.mta_license_tier === 'paid' || isPaidMtaServerUrl(config.mta_base_url);
+  const isPaid = config.mta_license_tier === 'paid_enterprise' || config.mta_license_tier === 'paid' || isPaidMtaServerUrl(config.mta_base_url);
 
   const modsToSync = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
   if (isPaid || installed.modules.MenditectMxFrontendTestKit?.installed || installed.modules.MenditectPlaywrightConnector?.installed || installed.modules.MenditectMtaCommons?.installed) {

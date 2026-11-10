@@ -128,6 +128,8 @@ function refreshConfigAndEnv() {
 
   if (config.workspace_dir && fs.existsSync(config.workspace_dir)) {
     process.env.MTA_WORKSPACE_DIR = config.workspace_dir;
+    loadEnvFile(path.join(config.workspace_dir, '.env'), true);
+    loadEnvFile(path.join(config.workspace_dir, '.env.local'), true);
     const wsConfigPath = path.join(config.workspace_dir, 'mta_config.json');
     if (fs.existsSync(wsConfigPath)) {
       try {
@@ -326,6 +328,50 @@ async function makeRequest(payloadString, requestId, retryCount = 0) {
   // Update cached initialize parameters if received from client
   if (parsedReq && parsedReq.method === 'initialize' && parsedReq.params) {
     cachedInitParams = parsedReq.params;
+  }
+
+  // Exploratory Free Mode stub handling when no Cloud MTA token is configured
+  const isExploratoryOnly = mode === 'mta' && (!AUTH_HEADER || config.mta_license_tier === 'free_exploratory' || (TARGET_URL && TARGET_URL.includes('services.menditect.com')));
+  if (isExploratoryOnly) {
+    if (parsedReq.method === 'initialize') {
+      const resp = {
+        jsonrpc: '2.0',
+        id: requestId,
+        result: {
+          protocolVersion: '2024-11-05',
+          capabilities: { tools: {} },
+          serverInfo: { name: 'mta-exploratory-mode', version: '1.12.1' }
+        }
+      };
+      process.stdout.write(JSON.stringify(resp) + '\n');
+      return;
+    } else if (parsedReq.method === 'notifications/initialized') {
+      return;
+    } else if (parsedReq.method === 'tools/list') {
+      const resp = {
+        jsonrpc: '2.0',
+        id: requestId,
+        result: { tools: [] }
+      };
+      process.stdout.write(JSON.stringify(resp) + '\n');
+      return;
+    } else if (parsedReq.method === 'tools/call') {
+      const resp = {
+        jsonrpc: '2.0',
+        id: requestId,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: 'Cloud MTA authoring tools require an MTA Cloud service account token. Local exploratory testing is active via MTA_plugin (execute-testcase).'
+            }
+          ],
+          isError: true
+        }
+      };
+      process.stdout.write(JSON.stringify(resp) + '\n');
+      return;
+    }
   }
 
   // Wire-level state machine gatekeeper for tools/call (PAT-43, ANTI-46, ANTI-56)

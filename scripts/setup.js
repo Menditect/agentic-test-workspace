@@ -97,7 +97,10 @@ function normalizeConfigAliases(cfg) {
   normalized.studiopro_mcp_url = cfg.studiopro_mcp_url || cfg.studioproMcpUrl || cfg.studio_pro_mcp_url || '';
   normalized.documentation_url = cfg.documentation_url || cfg.documentationUrl || 'https://documentation.menditect.com';
   normalized.llms_txt_url = cfg.llms_txt_url || cfg.llmsTxtUrl || '';
-  normalized.mta_license_tier = cfg.mta_license_tier || cfg.license_tier || cfg.licenseTier || 'auto';
+  let rawTier = cfg.mta_license_tier || cfg.license_tier || cfg.licenseTier || 'auto';
+  if (rawTier === 'exploratory_free') rawTier = 'free_exploratory';
+  if (rawTier === 'paid') rawTier = 'paid_enterprise';
+  normalized.mta_license_tier = rawTier;
   return normalized;
 }
 
@@ -2604,7 +2607,7 @@ async function run(options = {}) {
             stepSubBack = true;
           } else {
             const isPaidServer = tierAns === '2';
-            state.licenseTier = isPaidServer ? 'paid' : 'exploratory_free';
+            state.licenseTier = isPaidServer ? 'paid_enterprise' : 'free_exploratory';
 
             let rawMtaConnectionUrl = 'wss://services.menditect.com';
             let httpMtaUrl = 'https://services.menditect.com';
