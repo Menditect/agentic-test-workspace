@@ -94,7 +94,11 @@ function normalizeConfigAliases(cfg) {
   normalized.exploratory_execution_mode = cfg.exploratory_execution_mode || cfg.exploratoryExecutionMode || 'auto_execute';
   normalized.playwright_viewer_url = cfg.playwright_viewer_url || cfg.playwrightViewerUrl || '';
   normalized.tracefile_base_url = cfg.tracefile_base_url || cfg.tracefileBaseUrl || cfg.tracefile_url || '';
-  normalized.studiopro_mcp_url = cfg.studiopro_mcp_url || cfg.studioproMcpUrl || cfg.studio_pro_mcp_url || '';
+  let studioProUrl = cfg.studiopro_mcp_url || cfg.studioproMcpUrl || cfg.studio_pro_mcp_url || '';
+  if (typeof studioProUrl === 'string') {
+    studioProUrl = studioProUrl.replace(/^\[|\]$/g, '').trim();
+  }
+  normalized.studiopro_mcp_url = studioProUrl;
   normalized.documentation_url = cfg.documentation_url || cfg.documentationUrl || 'https://documentation.menditect.com';
   normalized.llms_txt_url = cfg.llms_txt_url || cfg.llmsTxtUrl || '';
   let rawTier = (cfg.mta_license_tier || cfg.license_tier || cfg.licenseTier || 'auto').toLowerCase();
@@ -1573,7 +1577,8 @@ function tryCreateConfigurationInMpr(mprPath, mxcliBin, configName, httpPort = 8
     });
     return { success: true };
   } catch (err) {
-    return { success: false, error: err.message };
+    const rawError = (err.stderr ? err.stderr.toString('utf8') : '') || (err.stdout ? err.stdout.toString('utf8') : '') || err.message || '';
+    return { success: false, error: rawError.trim() || err.message };
   } finally {
     try { if (fs.existsSync(tmpMdl)) fs.unlinkSync(tmpMdl); } catch (e) {}
   }
@@ -2307,7 +2312,27 @@ async function run(options = {}) {
   console.log(' • Press [Enter] to accept the detected [default value in brackets]');
   console.log(" • Type 'b' or 'back' at any question to return to the previous step");
   console.log(' • You can review and edit all answers before any files are saved');
-  console.log('======================================================\n');
+  console.log('======================================================');
+  console.log('\n┌──────────────────────────────────────────────────────────────────────────────┐');
+  console.log('│ 📋 PRE-FLIGHT CHECKLIST: DATA REQUIRED FOR SETUP                             │');
+  console.log('├──────────────────────────────────────────────────────────────────────────────┤');
+  console.log('│ Before proceeding, have the following items ready:                           │');
+  console.log('│                                                                              │');
+  console.log('│ 1. Mendix Project Path:                                                      │');
+  console.log('│    Local directory of your app (e.g. C:\\Users\\...\\Mendix\\MyApp).           │');
+  console.log('│                                                                              │');
+  console.log('│ 2. Application Instance Token (UUID):                                        │');
+  console.log('│    • Free Exploratory: Personal license token from Menditect welcome email.  │');
+  console.log('│    • Paid MTA: Portal > Applications > Application Instances > Token.        │');
+  console.log('│                                                                              │');
+  console.log('│ 3. Plugin Runtime Port / Access Token:                                       │');
+  console.log('│    • Default Port: 8081 (Studio Pro > App > Settings > Configurations).      │');
+  console.log('│    • Access Token: Secret token for /plugin/mcp (default: "1").              │');
+  console.log('│                                                                              │');
+  console.log('│ 4. Optional / Advanced:                                                      │');
+  console.log('│    • Studio Pro MCP Port: Default 7782 (if using Studio Pro live MCP).       │');
+  console.log('│    • MTA Cloud Service Account Token: Leave blank for Free Exploratory.      │');
+  console.log('└──────────────────────────────────────────────────────────────────────────────┘\n');
 
   const defaultMpr = existingConfig.mendix_mpr_path || '';
   const defaultDetectedVersion = defaultMpr ? detectMendixVersion(defaultMpr) : '';
@@ -2646,14 +2671,27 @@ async function run(options = {}) {
                   break;
                 }
 
-                // mxcli failed to create configuration (e.g. Mendix 11 duplicate OpenTelemetry GUIDs limitation)
+                // mxcli failed to create configuration
+                const isProjectOpenInStudioPro = createRes.error && /Studio Pro has this project open/i.test(createRes.error);
                 console.log('\n┌──────────────────────────────────────────────────────────────────────────────┐');
-                console.log('│ ⚠️  Cannot Auto-Create Configuration in .mpr (Mendix 11 Limitation)          │');
-                console.log('├──────────────────────────────────────────────────────────────────────────────┤');
-                console.log(`│ mxcli cannot generate a brand-new Configuration in this Mendix project due   │`);
-                console.log(`│ to duplicate OpenTelemetry GUIDs in Project Settings.                        │`);
-                console.log('│                                                                              │');
-                console.log(`│ To use '${candidateName}', you can add it in Studio Pro:                     │`);
+                if (isProjectOpenInStudioPro) {
+                  console.log('│ ⚠️  Cannot Auto-Create Configuration (.mpr Locked by Studio Pro)              │');
+                  console.log('├──────────────────────────────────────────────────────────────────────────────┤');
+                  console.log(`│ mxcli refused to write to the project because Mendix Studio Pro has this     │`);
+                  console.log(`│ project open.                                                                │`);
+                  console.log('│                                                                              │');
+                  console.log(`│ You can either close Studio Pro, or add the configuration manually:          │`);
+                } else {
+                  console.log('│ ⚠️  Cannot Auto-Create Configuration in .mpr                                  │');
+                  console.log('├──────────────────────────────────────────────────────────────────────────────┤');
+                  console.log(`│ mxcli could not automatically create configuration '${candidateName}'.      │`);
+                  if (createRes.error) {
+                    const firstErrLine = createRes.error.split('\n').filter(l => l.trim() && !l.includes('WARNING: This is a vibe-coded'))[0] || createRes.error;
+                    console.log(`│ Details: ${firstErrLine.slice(0, 68).padEnd(68)} │`);
+                  }
+                  console.log('│                                                                              │');
+                  console.log(`│ To use '${candidateName}', you can add it in Studio Pro:                     │`);
+                }
                 console.log('│   1. In Studio Pro: App Explorer > App > Settings > Configurations tab       │');
                 console.log(`│   2. Click 'Add', enter name '${candidateName}', set Port 8081 / http://...  │`);
                 console.log('│   3. Save the project in Studio Pro and return here                          │');
@@ -3056,20 +3094,39 @@ async function run(options = {}) {
         }
       }
     } else if (currentStep === 'studiopro_url') {
-      const defaultStudioUrl = state.studioproMcpUrl || existingConfig.studiopro_mcp_url || process.env.STUDIOPRO_MCP_URL || 'http://localhost:7782/mcp';
-      const ans = await ask('Studio Pro MCP URL (port configured in Studio Pro Preferences)', defaultStudioUrl);
-      if (isBack(ans)) {
-        goBack = true;
-      } else {
-        state.studioproMcpUrl = ans;
+      const existingUrl = state.studioproMcpUrl || existingConfig.studiopro_mcp_url || process.env.STUDIOPRO_MCP_URL || 'http://localhost:7782/mcp';
+      let defaultPort = '7782';
+      try {
+        const m = existingUrl.match(/:(\d+)\/mcp/i) || existingUrl.match(/:(\d+)/);
+        if (m && m[1]) defaultPort = m[1];
+      } catch (e) {}
+
+      let validPort = false;
+      while (!validPort && !goBack) {
+        const portAns = await ask('Studio Pro MCP Port (as configured in Studio Pro > Preferences)', defaultPort);
+        if (isBack(portAns)) {
+          goBack = true;
+          break;
+        }
+        const cleanedPort = portAns.trim().replace(/^\[|\]$/g, '').trim();
+        const parsedPort = parseInt(cleanedPort, 10);
+        if (isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+          console.log(`${ERROR} Invalid port number "${cleanedPort}". Please enter a valid port between 1 and 65535.`);
+          continue;
+        }
+        validPort = true;
+        state.studioproMcpUrl = `http://localhost:${parsedPort}/mcp`;
+      }
+
+      if (!goBack) {
         console.log('\n┌──────────────────────────────────────────────────────────────────────────┐');
         console.log('│ ACTION REQUIRED IN MENDIX STUDIO PRO:                                    │');
         console.log('│ 1. Open this project in Mendix Studio Pro (version 11.12+ required).     │');
         console.log('│ 2. In Studio Pro, go to Edit > Preferences and enable the MCP Server.    │');
-        console.log(`│ 3. Confirm the port/URL matches: ${(state.studioproMcpUrl || 'http://localhost:7782/mcp').padEnd(39)} │`);
+        console.log(`│ 3. Confirm the port matches: ${(state.studioproMcpUrl || 'http://localhost:7782/mcp').padEnd(43)} │`);
         console.log('│ 4. Keep Studio Pro running with this project while using your AI agent.  │');
         console.log('└──────────────────────────────────────────────────────────────────────────┘\n');
-        console.log(`${INFO} Studio Pro MCP configured for your IDE AI assistant.`);
+        console.log(`${INFO} Studio Pro MCP configured for your IDE AI assistant (${state.studioproMcpUrl}).`);
         console.log(`  ${INFO} Note: The setup wizard will continue using mxcli in the background to inspect`);
         console.log('       project configurations, discover MTA settings, and prepare workspace scaffolding.');
         state.catalogChoice = 'skip';

@@ -150,7 +150,11 @@ function refreshConfigAndEnv() {
     TARGET_URL = config.plugin_mcp_url || config.plugin_url || config.pluginUrl || process.env.PLUGIN_MCP_URL || (isUrlArg ? rawArg : null) || 'http://localhost:8081/plugin/mcp';
     AUTH_HEADER = process.env.PLUGIN_MCP_TOKEN || config.plugin_mcp_token || config.plugin_token || config.pluginToken || (process.argv[3] && !process.argv[3].startsWith('-') ? process.argv[3] : null) || null;
   } else if (mode === 'studiopro') {
-    TARGET_URL = config.studiopro_mcp_url || process.env.STUDIOPRO_MCP_URL || (isUrlArg ? rawArg : null) || 'http://localhost:7782/mcp';
+    let rawStudioUrl = config.studiopro_mcp_url || process.env.STUDIOPRO_MCP_URL || (isUrlArg ? rawArg : null) || 'http://localhost:7782/mcp';
+    if (typeof rawStudioUrl === 'string') {
+      rawStudioUrl = rawStudioUrl.replace(/^\[|\]$/g, '').trim();
+    }
+    TARGET_URL = rawStudioUrl;
     AUTH_HEADER = null;
   }
 }
