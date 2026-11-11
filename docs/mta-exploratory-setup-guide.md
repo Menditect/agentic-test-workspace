@@ -182,20 +182,84 @@ Configure MAIA's MCP tool settings in Studio Pro (or within your environment MCP
 > [!TIP]
 > Don't forget to enable the `execute-testcase` tool in the MCP Settings pane.
 
+### 4b. Connect MAIA to the Local MTA Linter MCP Server (`MTA_linter`)
+
+To enable strict 6-section test plan linting, safety gate verification (`pre_exec_check`), and hash locking directly within Mendix Studio Pro 11.16+, connect MAIA to the local MTA Linter MCP server.
+
+#### 1. Start the MTA Linter MCP Server (Zero Setup Required)
+
+> [!TIP]
+> **No Setup Script or NPM Install Required for MAIA:**
+> The MTA Linter MCP server is **100% zero-dependency** and built entirely on native Node.js core libraries. MAIA users do **not** need to run `npm run setup`, do **not** need to run `npm install`, and do **not** need an `mta_config.json` or `.env` file! All you need is Node.js (v18+) installed on your machine.
+
+In your `agentic-test-workspace` directory, launch the linter server using one of the one-click launchers:
+* **Windows:** Double-click `start-linter-mcp.bat` (or run `.\start-linter-mcp.bat` in a terminal).
+* **Linux / macOS:** Run `./start-linter-mcp` (or `npm run linter:mcp`).
+
+The linter starts instantly on `http://localhost:7790/mcp` with zero configuration needed.
+
+> [!NOTE]
+> **Zero-Config Operation for MAIA:**
+> `mta_config.json` is **not required** when using MAIA. When MAIA runs inside Studio Pro, it has direct access to the active Mendix project model and local disk. The `MTA_linter` server automatically operates in zero-config mode, accepting either in-memory markdown plan content (`plan_content`) or relative paths (`plan_path`).
+
+#### 2. Changing the MCP Server Port (Optional)
+
+By default, the MTA Linter runs on HTTP port **`7790`**. If you need to change this port (e.g. due to a port collision), you can customize it in any of the following ways:
+
+* **Via Command-Line Argument:**
+  ```bash
+  # Windows:
+  start-linter-mcp.bat --port 8890
+
+  # Linux / macOS:
+  ./start-linter-mcp --port 8890
+
+  # Via npm:
+  npm run linter:mcp -- --port 8890
+  ```
+* **Via Environment Variable:**
+  Set `MTA_LINTER_MCP_PORT=8890` in your environment or in a local `.env` file.
+* **Via `mta_config.json` (if present):**
+  Add `"mta_linter_port": 8890` to your `mta_config.json`.
+
+*(Note: If you change the port, remember to adjust the URL in Studio Pro to `http://localhost:<port>/mcp`.)*
+
+> [!NOTE]
+> **Changing Ports for Other MCP Servers:**
+> * **MTA Plugin (`MTA_plugin`):** Listens on your Mendix application's local runtime port (`http://localhost:[Port]/plugin/mcp`). Change the port in Studio Pro under **App > Settings > Configurations > Edit > Server > Application root URL**.
+> * **Studio Pro Live MCP (`StudioPro`):** Embedded in Studio Pro (default `7782`). Change the port in Studio Pro under **Edit > Preferences > MCP Server > Port** (range `7782-7789`).
+
+#### 3. Configure MAIA's MCP Server in Studio Pro
+In Mendix Studio Pro:
+1. Open **Edit > Preferences > AI Assistant > MCP Servers** (or your MAIA MCP settings pane) and click **Add**.
+2. Configure the server connection:
+   * **Server Name:** `MTA_linter`
+   * **URL:** `http://localhost:7790/mcp` *(or your custom port)*
+   * **Connection type:** `HTTP`
+   * **Authentication:** `None`
+3. Click **Save** and ensure the tools are enabled (`lint_plan`, `pre_exec_check`, `stage_placement`, `pre_build_check`, `lock_plan`, `verify_lock`, `smoke_audit`, `list_plans`).
+
+#### 4. MAIA Execution Plan Conventions
+Starting in Mendix Studio Pro 11.16+, MAIA creates execution plans under the standard folder structure:
+* `maia/plans/<testcase_subfolder>/plan.md` (or `.maia/plans/<testcase_subfolder>/plan.md`)
+
+The MTA linter natively recognizes both this convention and standalone `EP_*.md` files.
+
 ### 5. Execute an Exploratory Test in MAIA
 1. Ensure your Mendix app is running (**F5**).
 2. Open the **MAIA Chat** panel inside Mendix Studio Pro.
 3. Prompt MAIA:
 
 ```text
-Using the Menditect Agentic Test Skills module, execute an in-memory exploratory test via MTA_plugin for microflow MyModule.SUB_CalculateDiscount on my running app. Verify boundary conditions and check return values. Do not create test microflows in Mendix.
+Using the Menditect Agentic Test Skills module, execute an in-memory exploratory test via MTA_plugin for microflow MyModule.SUB_CalculateDiscount on my running app. Verify boundary conditions and check return values. First draft the test plan under maia/plans/SUB_CalculateDiscount/plan.md, validate it with MTA_linter.lint_plan and MTA_linter.pre_exec_check, and execute via MTA_plugin.execute-testcase. Do not create test microflows in Mendix.
 ```
 
 4. **MAIA Execution Process:**
    * MAIA reads the microflow directly from your active Studio Pro model.
-   * It composes the in-memory test payload (`TCEX_RQ`) following the patterns in `Menditect_AgenticTestSkills`.
-   * It sends the request to the local MTA Plugin MCP server (`execute-testcase`).
-   * The microflow executes in the JVM and rolls back immediately.
+   * It drafts a 6-section execution plan in `maia/plans/SUB_CalculateDiscount/plan.md`.
+   * It invokes `MTA_linter.lint_plan` and `MTA_linter.pre_exec_check` to verify structural integrity and approval status (`status: "AUTO_APPROVED"` or `"APPROVED"`).
+   * It sends the validated test payload (`TCEX_RQ`) to `MTA_plugin.execute-testcase`.
+   * The microflow executes in the JVM and rolls back immediately (`RollbackTcseAfterExecution: "Yes"`).
    * MAIA displays the execution telemetry, step durations, and verified return values in the chat.
 
 #### 💡 MAIA Prompting Best Practices: Do's and Don'ts

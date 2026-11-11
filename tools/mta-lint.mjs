@@ -23,6 +23,18 @@ import net from 'node:net';
 export const LINTER_VERSION = "1.11.0";
 const VERSION = LINTER_VERSION;
 
+/**
+ * Checks if a file path follows the Mendix MAIA 11.16+ planning convention:
+ * <project>/maia/plans/<subfolder>/plan.md or .maia/plans/<subfolder>/plan.md
+ */
+export function isMaiaPlanFilePath(filePath) {
+  if (!filePath || typeof filePath !== 'string') return false;
+  const baseName = path.basename(filePath).toLowerCase();
+  if (baseName !== 'plan.md') return false;
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+  return normalized.includes('/maia/plans/') || normalized.includes('/.maia/plans/');
+}
+
 // ==========================================
 // CLI Argument Dispatcher
 // ==========================================
@@ -1254,11 +1266,12 @@ export function verifyPreExecGate(filePath) {
   };
 
   const baseName = path.basename(filePath);
-  const validFileName = /^EP_[A-Za-z0-9_.-]+\.md$/i.test(baseName);
+  const isMaiaPlan = isMaiaPlanFilePath(filePath);
+  const validFileName = /^EP_[A-Za-z0-9_.-]+\.md$/i.test(baseName) || isMaiaPlan;
   addCheck(
-    "Canonical EP_*.md Filename (PAT-43)",
+    "Canonical Execution Plan Filename (PAT-43)",
     validFileName,
-    validFileName ? null : `Execution plan filename '${baseName}' must match 'EP_<TestCaseName>.md'`,
+    validFileName ? null : `Execution plan filename '${baseName}' must match 'EP_<TestCaseName>.md' or '<project>/maia/plans/<feature>/plan.md'`,
     "INVALID_EP_FILENAME"
   );
 
@@ -1420,6 +1433,7 @@ export function findActiveExecutionPlan(workspaceDir = process.cwd()) {
   }
 
   let plansDir = path.join(absRoot, 'menditect-output', 'execution-plans');
+  let mendixProjectDir = null;
   const cfgPath = path.join(absRoot, 'mta_config.json');
   if (fs.existsSync(cfgPath)) {
     try {
@@ -1429,9 +1443,21 @@ export function findActiveExecutionPlan(workspaceDir = process.cwd()) {
           ? cfg.execution_plans_dir
           : path.join(absRoot, cfg.execution_plans_dir);
       }
+      if (cfg && cfg.mendix_mpr_path) {
+        mendixProjectDir = path.isAbsolute(cfg.mendix_mpr_path)
+          ? path.dirname(cfg.mendix_mpr_path)
+          : path.dirname(path.join(absRoot, cfg.mendix_mpr_path));
+      } else if (cfg && cfg.mendix_project_dir) {
+        mendixProjectDir = path.isAbsolute(cfg.mendix_project_dir)
+          ? cfg.mendix_project_dir
+          : path.join(absRoot, cfg.mendix_project_dir);
+      }
     } catch (e) {}
   }
 
+  const allCandidateFiles = [];
+
+  // Check traditional execution-plans directory
   if (fs.existsSync(plansDir)) {
     try {
       const files = fs.readdirSync(plansDir)
@@ -1439,10 +1465,40 @@ export function findActiveExecutionPlan(workspaceDir = process.cwd()) {
         .map(f => {
           const full = path.join(plansDir, f);
           return { full, mtime: fs.statSync(full).mtimeMs };
-        })
-        .sort((a, b) => b.mtime - a.mtime);
-      if (files.length > 0) return files[0].full;
+        });
+      allCandidateFiles.push(...files);
     } catch (e) {}
+  }
+
+  // Check MAIA plans directories
+  const candidateMaiaRoots = [
+    path.join(absRoot, 'maia', 'plans'),
+    path.join(absRoot, '.maia', 'plans')
+  ];
+  if (mendixProjectDir && path.resolve(mendixProjectDir) !== absRoot) {
+    candidateMaiaRoots.push(path.join(mendixProjectDir, 'maia', 'plans'));
+    candidateMaiaRoots.push(path.join(mendixProjectDir, '.maia', 'plans'));
+  }
+
+  for (const maiaDir of candidateMaiaRoots) {
+    if (fs.existsSync(maiaDir)) {
+      try {
+        const subDirs = fs.readdirSync(maiaDir, { withFileTypes: true });
+        for (const sub of subDirs) {
+          if (sub.isDirectory()) {
+            const planFile = path.join(maiaDir, sub.name, 'plan.md');
+            if (fs.existsSync(planFile)) {
+              allCandidateFiles.push({ full: planFile, mtime: fs.statSync(planFile).mtimeMs });
+            }
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  if (allCandidateFiles.length > 0) {
+    allCandidateFiles.sort((a, b) => b.mtime - a.mtime);
+    return allCandidateFiles[0].full;
   }
   return null;
 }
@@ -1490,7 +1546,7 @@ export function evaluateHookPayload(payload = {}, options = {}) {
   if (isFileWriteTool) {
     const targetPath = String(rawToolInput.Path || rawToolInput.file_path || rawToolInput.TargetFile || rawToolInput.path || '').trim();
     const baseName = path.basename(targetPath);
-    if (/^EP_.*\.md$/i.test(baseName)) {
+    if (/^EP_.*\.md$/i.test(baseName) || isMaiaPlanFilePath(targetPath)) {
       const absTarget = path.isAbsolute(targetPath) ? targetPath : path.join(path.resolve(workspaceDir), targetPath);
       const existingContent = fs.existsSync(absTarget) ? fs.readFileSync(absTarget, 'utf-8') : null;
       const existingMeta = existingContent ? extractMetadata(existingContent) : null;
@@ -1620,7 +1676,7 @@ export function evaluateHookPayload(payload = {}, options = {}) {
       return {
         decision: 'deny',
         code: 'MISSING_EXECUTION_PLAN',
-        reason: 'STATE VIOLATION (ANTI-46): Calling MTA_plugin.execute-testcase without a persisted EP_*.md file on disk is strictly prohibited. Draft and lint EP_*.md first.'
+        reason: 'STATE VIOLATION (ANTI-46): Calling MTA_plugin.execute-testcase without a persisted EP_*.md or maia/plans/*/plan.md file on disk is strictly prohibited. Draft and lint EP_*.md first.'
       };
     }
     const preExecRes = verifyPreExecGate(activePlan);
@@ -1642,7 +1698,7 @@ export function evaluateHookPayload(payload = {}, options = {}) {
       return {
         decision: 'deny',
         code: 'MISSING_EXECUTION_PLAN',
-        reason: `STATE VIOLATION (PAT-43 / ANTI-56): Calling mutating MTA tool '${mcpTool}' without an approved EP_*.md execution plan is strictly prohibited.`
+        reason: `STATE VIOLATION (PAT-43 / ANTI-56): Calling mutating MTA tool '${mcpTool}' without an approved EP_*.md or maia/plans/*/plan.md execution plan is strictly prohibited.`
       };
     }
     const preBuildRes = verifyPreBuildGate(activePlan);
@@ -4441,6 +4497,10 @@ export function lintArtifacts(outputDir = 'menditect-output', options = {}) {
     const metadata = extractMetadata(content);
 
     let tcName = pf.name.replace(/^EP_/i, '').replace(/\.md$/i, '');
+    if (isMaiaPlanFilePath(pf.path) && pf.name.toLowerCase() === 'plan.md') {
+      const parentFolder = path.basename(path.dirname(pf.path));
+      if (parentFolder) tcName = parentFolder;
+    }
     if (metadata && metadata.plan_id) {
       const planIdName = String(metadata.plan_id).replace(/-v\d+.*$/i, '');
       if (planIdName) tcName = planIdName;
@@ -5614,6 +5674,35 @@ category: "Backend"
       badPayloadRes.errors.some(e => e.code === 'MISSING_FRONTEND_TEARDOWN'),
     `Expected MISSING_USE_EMPTY_OBJECT_LIST and MISSING_FRONTEND_TEARDOWN, got: ${JSON.stringify(badPayloadRes.errors)}`
   );
+
+  // MAIA 11.16+ Plan Path & Gate Verification
+  const isMaiaSample1 = isMaiaPlanFilePath('C:/MyProject/maia/plans/feature-discount/plan.md');
+  const isMaiaSample2 = isMaiaPlanFilePath('/home/user/project/.maia/plans/sub/plan.md');
+  const isMaiaSample3 = isMaiaPlanFilePath('C:/MyProject/menditect-output/execution-plans/EP_Test.md');
+  addCheck("isMaiaPlanFilePath: recognizes standard and hidden MAIA plan.md paths", isMaiaSample1 && isMaiaSample2 && !isMaiaSample3, "Failed MAIA plan path pattern recognition");
+
+  const tempMaiaDir = path.join(fixturesDir, 'temp-maia-workspace');
+  try {
+    const maiaSubDir = path.join(tempMaiaDir, 'maia', 'plans', 'feature-discount');
+    fs.mkdirSync(maiaSubDir, { recursive: true });
+    const maiaPlanFile = path.join(maiaSubDir, 'plan.md');
+    const validDraftTemplate = fs.readFileSync(path.join(fixturesDir, 'valid_draft_plan.md'), 'utf8');
+    const maiaPlanContent = validDraftTemplate.replace(/status:\s*"DRAFT"/i, 'status: "AUTO_APPROVED"');
+    fs.writeFileSync(maiaPlanFile, maiaPlanContent, 'utf8');
+
+    const maiaLintRes = lintExecutionPlan(maiaPlanFile);
+    addCheck("MAIA 11.16+: lintExecutionPlan validates maia/plans/<subfolder>/plan.md", maiaLintRes.valid, `Expected valid, got: ${JSON.stringify(maiaLintRes.errors)}`);
+
+    const maiaPreExecRes = verifyPreExecGate(maiaPlanFile);
+    addCheck("MAIA 11.16+: verifyPreExecGate accepts plan.md in maia/plans/", maiaPreExecRes.valid, `Expected valid pre-exec gate, got: ${JSON.stringify(maiaPreExecRes.errors)}`);
+
+    const discoveredPlan = findActiveExecutionPlan(tempMaiaDir);
+    addCheck("MAIA 11.16+: findActiveExecutionPlan discovers latest plan in maia/plans/", discoveredPlan && path.resolve(discoveredPlan) === path.resolve(maiaPlanFile), `Expected ${maiaPlanFile}, got ${discoveredPlan}`);
+  } finally {
+    if (fs.existsSync(tempMaiaDir)) {
+      try { fs.rmSync(tempMaiaDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  }
 
   return {
     valid: errors.length === 0,

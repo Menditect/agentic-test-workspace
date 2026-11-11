@@ -1781,6 +1781,12 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
       ? '${workspaceFolder}/mta_config.json'
       : path.join(workspaceDir, 'mta_config.json').replace(/\\/g, '/'));
 
+  const linterMcpScriptPath = isToolsWorkspace
+    ? '${workspaceFolder}/scripts/mta-lint-mcp.js'
+    : (isParentWorkspace
+      ? `\${workspaceFolder}/${toolsDirName}/scripts/mta-lint-mcp.js`
+      : path.join(toolsRootDir, 'scripts', 'mta-lint-mcp.js').replace(/\\/g, '/'));
+
   const newMcpServers = {
     "mta": {
       "command": "node",
@@ -1792,6 +1798,13 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
     "mta_plugin": {
       "command": "node",
       "args": [proxyScriptPath, "plugin"],
+      "env": {
+        "MTA_CONFIG_PATH": mtaConfigEnvPath
+      }
+    },
+    "mta_linter": {
+      "command": "node",
+      "args": [linterMcpScriptPath, "--stdio"],
       "env": {
         "MTA_CONFIG_PATH": mtaConfigEnvPath
       }
@@ -2108,7 +2121,32 @@ node ${verifyShScript} "$@"
   fs.writeFileSync(verifyShPath, verifyShContent, 'utf8');
   try { fs.chmodSync(verifyShPath, 0o755); } catch (e) {}
 
-  console.log(`Deployed local ./mxcli and ./verify runners into ${targetDir}`);
+  // Deploy linter MCP server runners (Streamable HTTP for MAIA)
+  const linterMcpScriptInTools = path.join(toolsRootDir, 'scripts', 'mta-lint-mcp.js');
+  const linterMcpBatScript = isParent
+    ? `"%SCRIPT_DIR%${toolsRelName}\\scripts\\mta-lint-mcp.js"`
+    : `"${linterMcpScriptInTools.replace(/\//g, '\\')}"`;
+
+  const linterMcpShScript = isParent
+    ? `"$SCRIPT_DIR/${toolsRelName}/scripts/mta-lint-mcp.js"`
+    : `"${linterMcpScriptInTools.replace(/\\/g, '/')}"`;
+
+  const linterMcpBatContent = `@echo off
+set SCRIPT_DIR=%~dp0
+node ${linterMcpBatScript} --http %*
+`;
+
+  const linterMcpShContent = `#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+node ${linterMcpShScript} --http "$@"
+`;
+
+  fs.writeFileSync(path.join(targetDir, 'start-linter-mcp.bat'), linterMcpBatContent, 'utf8');
+  const linterMcpShPath = path.join(targetDir, 'start-linter-mcp');
+  fs.writeFileSync(linterMcpShPath, linterMcpShContent, 'utf8');
+  try { fs.chmodSync(linterMcpShPath, 0o755); } catch (e) {}
+
+  console.log(`Deployed local ./mxcli, ./verify, and ./start-linter-mcp runners into ${targetDir}`);
 }
 
 function ensureExecutionPlanFolders(targetDir) {
@@ -3711,7 +3749,7 @@ async function run(options = {}) {
             fs.cpSync(mendixOutputDir, menditectOutputDir, { recursive: true, force: false });
             fs.rmSync(mendixOutputDir, { recursive: true, force: true });
           }
-          const filesToClean = ['mta_config.json', 'mta_config.schema.json', '.env', 'mxcli.bat', 'mxcli', 'verify.bat', 'verify'];
+          const filesToClean = ['mta_config.json', 'mta_config.schema.json', '.env', 'mxcli.bat', 'mxcli', 'verify.bat', 'verify', 'start-linter-mcp.bat', 'start-linter-mcp'];
           for (const f of filesToClean) {
             const fp = path.join(state.projectDir, f);
             if (fs.existsSync(fp)) fs.unlinkSync(fp);

@@ -36,7 +36,7 @@ An **Agentic Test Workspace** is a dedicated project environment created specifi
 
 Think of this workspace as the AI agent's dedicated command center containing:
 - **Agent Directives & Skills (`skills/`)**: Authoritative testing instructions and domain skills (synchronized from `Menditect/agentic-test-skills`) that teach the AI how to design, write, and execute MTA tests following Menditect standards.
-- **MCP Server Configurations (`mta`, `mta_plugin`, `StudioPro`)**: Standardized Model Context Protocol (MCP) bridges allowing the AI to interact with the MTA Cloud portal, local runtime plugins, and Mendix Studio Pro.
+- **MCP Server Configurations (`mta`, `mta_plugin`, `StudioPro`, `mta_linter`)**: Standardized Model Context Protocol (MCP) bridges allowing the AI to interact with the MTA Cloud portal, local runtime plugins, Mendix Studio Pro, and the MTA Linter engine.
 - **Model Inspection & Search Index (`mxcli`, `.mxcli/catalog.db`)**: Fast offline search tools allowing the AI to inspect and understand your Mendix domain models, microflows, and dependencies.
 - **Test Artifacts (`menditect-output/`)**: Persistent test execution plans (`EP_*.md`), test results, and trace logs.
 
@@ -280,9 +280,14 @@ npm run update -- --force  # Force re-download/re-sync even if up to date
 npm run verify             # Verify active workspace MCP connectivity, catalog, and agent directives
 npm run verify -- <path>   # Verify a specific linked app workspace (e.g. npm run verify -- ../app-alpha)
 
+# MTA Linter MCP Server (Dual-Transport: Streamable HTTP & Stdio)
+npm run linter:mcp         # Start local Streamable HTTP MCP server on port 7790 for Mendix MAIA
+npm run linter:mcp:stdio   # Start Stdio MCP server (used by Cursor, VS Code, Claude, etc.)
+
 # Running from Workspace Root (when agentic-test-workspace is in a subdirectory)
 npm run --prefix ./agentic-test-workspace update
 npm run --prefix ./agentic-test-workspace verify
+npm run --prefix ./agentic-test-workspace linter:mcp
 ```
 
 ## Workspace Verification & Diagnostics
@@ -391,10 +396,54 @@ These local runners automatically export `MTA_CONFIG_PATH` pointing to the works
 | **Live MTA Server MCP** | Connects to the MTA primitive tools server (`mcp_endpoint`), tests JSON-RPC handshake, and validates Bearer token authentication. |
 | **Live MTA Plugin MCP** | Connects to the local Mendix runtime plugin (`plugin_mcp_url`), checks handshake response, and verifies authorization. |
 | **Live Studio Pro MCP** | *(If `model_source: "studiopro"`)* Verifies live connection to the Mendix Studio Pro MCP server (`studiopro_mcp_url`). |
+| **Live MTA Linter MCP** | Validates the zero-dependency MTA Linter MCP server (`mta-lint-mcp.js`), checks stdio JSON-RPC handshake for all 8 tools, and probes local HTTP endpoint (`http://localhost:7790/mcp`) for Mendix MAIA. |
 | **Mendix Git & Add-on Hygiene** | Validates that Git is properly prepared for MTA Add-on modules (`.gitignore` rules to prevent merge conflicts on generated Java actions/proxies per [Menditect Documentation](https://documentation.menditect.com/installation/import-plugin#prepare-git)). |
 
 > [!TIP]
 > **Clean Deployment Directory & Git Preparation**: Whenever `npm run setup` or `npm run update:modules` updates Marketplace modules (`MtaPluginModule`, `MenditectMxFrontendTestKit`, `MenditectPlaywrightConnector`, `MenditectMtaCommons`, or the Playwright driver bundle JAR), it automatically cleans the Mendix app's `deployment/` directory to eliminate stale bytecode and prevent compilation/runtime errors. If your Mendix project is tracked by Git, it also prepares Git by untracking cached generated Java files (`modules/javasource/*/actions/*`, `proxies/*`, etc.) and configuring `.gitignore` to prevent team merge conflicts.
+
+## Model Context Protocol (MCP) Servers & Architecture
+
+The Agentic Test Workspace orchestrates 4 specialized MCP servers providing AI assistants with full capabilities across the test automation lifecycle:
+
+| MCP Server | Transport & URL | Description & Purpose | Authentication |
+| :--- | :--- | :--- | :--- |
+| **`mta`** | Stdio (via `mta-proxy.js`) | Connects to the Menditect MTA Cloud / Server platform for persistent test suites, test cases, variation matrices, and backend assertions. | Bearer Token (`MTA_MCP_AUTH_HEADER` in `.env`) |
+| **`mta_plugin`** | Stdio (via `mta-proxy.js` &rarr; HTTP `/plugin/mcp`) | Connects to the running Mendix application runtime for sub-second, in-memory exploratory test execution (`execute-testcase`). | Bearer Token (`PLUGIN_MCP_TOKEN` in `.env`) |
+| **`StudioPro`** | Stdio (via `mta-proxy.js` &rarr; HTTP port 7782) | Optional live model inspection server embedded in Mendix Studio Pro 10.12+ / 11+. | None |
+| **`MTA_linter`** | Dual: Streamable HTTP (`:7790`) & Stdio | Canonical test plan linter, safety gate enforcement (`pre_exec_check`, `pre_build_check`), and hash sealing. Built-in zero-dependency Node server (`scripts/mta-lint-mcp.js`). | None |
+
+### MTA Linter MCP Server (`MTA_linter`)
+
+The MTA Linter MCP server (`scripts/mta-lint-mcp.js`) exposes the canonical `tools/mta-lint.mjs` verification engine natively over the Model Context Protocol:
+
+* **Dual Transport:**
+  - **Streamable HTTP (`--http`, default port `7790`):** Designed for **Mendix MAIA (Studio Pro 11.16+)**, which connects directly to HTTP MCP servers.
+  - **Stdio (`--stdio`):** Designed for external AI IDEs (**Cursor**, **VS Code**, **Claude Code**, **Antigravity / Gemini**). Automatically configured by `npm run setup`.
+* **Zero-Setup & Zero-Dependency Execution:**
+  - The linter server is built with native Node.js standard libraries—**no `npm install` and no `npm run setup` is required**.
+  - MAIA users only need Node.js installed on their computer to run the linter immediately via the one-click launchers.
+* **Zero-Config Operation for MAIA:**
+  - Running within Studio Pro, MAIA has direct access to the active Mendix project. `mta_config.json` and `.env` are **not required**.
+  - Accepts raw markdown plan content (`plan_content`) or file paths (`plan_path`) using either standard `EP_*.md` or MAIA 11.16+ conventions (`maia/plans/<subfolder>/plan.md`).
+* **Customizing the Port:**
+  - Default HTTP port is **`7790`**. You can change it via:
+    - CLI flag: `start-linter-mcp.bat --port 8890` / `./start-linter-mcp --port 8890` (or `npm run linter:mcp -- --port 8890`)
+    - Environment variable: `MTA_LINTER_MCP_PORT=8890` (in shell or `.env`)
+    - Configuration file: `"mta_linter_port": 8890` in `mta_config.json` (if present)
+* **Exposed MCP Tools:**
+  1. `lint_plan`: Lint an Execution Plan against 6-section schema standards.
+  2. `pre_exec_check`: Verify safety gates before exploratory execution (`Rollback == Yes`, `status: AUTO_APPROVED`).
+  3. `stage_placement`: Stage target configuration, suite, and case placement before Option B mutation.
+  4. `pre_build_check`: Verify Gate 2 placement before mutating MTA cloud/server assets.
+  5. `lock_plan`: Compute SHA-256 hash and lock a test plan for test-driven bug fixing (TDBF).
+  6. `verify_lock`: Verify that a locked test plan has not been tampered with.
+  7. `smoke_audit`: Run 5-point semantic audit comparing executed steps against server definitions.
+  8. `list_plans`: Discover all active execution plans across the workspace.
+
+#### Starting the MTA Linter Server for MAIA:
+* **Windows:** Double-click `start-linter-mcp.bat` (or run `npm run linter:mcp`).
+* **Linux / macOS:** Run `./start-linter-mcp` (or `npm run linter:mcp`).
 
 <!-- BEGIN_SHARED_MTA_CONFIG_CONTRACT -->
 ## Configuration Contract (`mta_config.json`) & Resolution Hierarchy

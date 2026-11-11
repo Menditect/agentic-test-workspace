@@ -766,6 +766,106 @@ function verifyMode(mode) {
   });
 }
 
+function checkLinterHttpPort() {
+  return new Promise((resolve) => {
+    const http = require('http');
+    const port = config.mta_linter_mcp_port || config.mta_linter_port || process.env.MTA_LINTER_MCP_PORT || 7790;
+    const req = http.get(`http://127.0.0.1:${port}/health`, { timeout: 600 }, (res) => {
+      if (res.statusCode === 200) {
+        console.log(`  ${PASS} Linter HTTP Server is actively listening on http://127.0.0.1:${port} (ready for MAIA).`);
+        resolve(true);
+      } else {
+        console.log(`  ${INFO} Linter HTTP Server port ${port} returned status ${res.statusCode}.`);
+        resolve(false);
+      }
+    });
+    req.on('error', () => {
+      console.log(`  ${INFO} Linter HTTP Server is offline on port ${port}. (Start via "npm run linter:mcp" or "start-linter-mcp.bat" when using Mendix MAIA).`);
+      resolve(false);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      console.log(`  ${INFO} Linter HTTP Server probe on port ${port} timed out.`);
+      resolve(false);
+    });
+  });
+}
+
+function verifyLinterMcpServer() {
+  return new Promise((resolve) => {
+    console.log('Verifying MTA Linter MCP server...');
+    const linterMcpPath = path.join(__dirname, 'mta-lint-mcp.js');
+    if (!fs.existsSync(linterMcpPath)) {
+      console.warn(`  ${WARN} MTA Linter MCP server not found at ${linterMcpPath}.`);
+      resolve({ success: false, message: 'mta-lint-mcp.js not found' });
+      return;
+    }
+
+    let resolved = false;
+    const safeResolve = (val) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeout);
+      resolve(val);
+    };
+
+    const proc = spawn('node', [linterMcpPath, '--stdio'], {
+      cwd: fs.existsSync(activeWorkspaceDir) ? activeWorkspaceDir : rootDir,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        ...(activeConfigPath ? { MTA_CONFIG_PATH: activeConfigPath } : {}),
+        MTA_WORKSPACE_DIR: activeWorkspaceDir
+      }
+    });
+
+    let responseData = '';
+    const timeout = setTimeout(() => {
+      console.error('  Timeout waiting for Linter MCP server (5s elapsed).');
+      proc.kill();
+      safeResolve({ success: false, message: 'Timeout' });
+    }, 5000);
+
+    proc.stdout.on('data', async (chunk) => {
+      responseData += chunk.toString();
+      if (responseData.includes('jsonrpc')) {
+        const lines = responseData.split('\n');
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const res = JSON.parse(line.trim());
+            if (res.id === 1 && res.result && res.result.tools) {
+              const toolNames = res.result.tools.map(t => t.name);
+              const expectedTools = ['lint_plan', 'pre_exec_check', 'stage_placement', 'pre_build_check', 'lock_plan', 'verify_lock', 'smoke_audit', 'list_plans'];
+              const allPresent = expectedTools.every(t => toolNames.includes(t));
+              if (allPresent) {
+                console.log(`  ${PASS} Linter MCP Server (stdio) is responding correctly (${res.result.tools.length} tools found).`);
+              } else {
+                console.warn(`  ${WARN} Linter MCP Server returned unexpected tool list: ${toolNames.join(', ')}`);
+              }
+              proc.kill();
+              await checkLinterHttpPort();
+              safeResolve({ success: allPresent });
+              return;
+            }
+          } catch (e) {}
+        }
+      }
+    });
+
+    proc.on('close', () => {
+      safeResolve({ success: false, message: 'Process closed unexpectedly' });
+    });
+
+    proc.stdin.write(JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/list',
+      params: {}
+    }) + '\n');
+  });
+}
+
 function promptWorkspaceSelection(candidates) {
   return new Promise((resolve) => {
     const readline = require('readline');
@@ -875,6 +975,8 @@ async function run() {
   console.log();
   const pluginResult = await verifyMode('plugin');
   console.log();
+  const linterResult = await verifyLinterMcpServer();
+  console.log();
 
   let spResult = { success: true };
   if (config.model_source === 'studiopro') {
@@ -882,7 +984,7 @@ async function run() {
     console.log();
   }
   
-  if (mtaResult.success && pluginResult.success && spResult.success) {
+  if (mtaResult.success && pluginResult.success && linterResult.success && spResult.success) {
     console.log(`${colors.green}${colors.bold}Verification Complete.${colors.reset} Workspace configuration and required MCP services are verified.`);
   } else {
     console.log(`${colors.red}${colors.bold}Verification Failed.${colors.reset} Please check the errors above and ensure your .env credentials are valid.`);

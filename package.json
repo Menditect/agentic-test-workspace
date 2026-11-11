@@ -18,6 +18,8 @@
     "lint:pre-build": "node tools/run-linter.mjs pre-build",
     "lint:audit": "node tools/run-linter.mjs audit",
     "lint:config": "node tools/run-linter.mjs config",
-    "lint:test": "node tools/run-linter.mjs self-test"
+    "lint:test": "node tools/run-linter.mjs self-test",
+    "linter:mcp": "node scripts/mta-lint-mcp.js --http",
+    "linter:mcp:stdio": "node scripts/mta-lint-mcp.js --stdio"
   }
 }
