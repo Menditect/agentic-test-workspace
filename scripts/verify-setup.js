@@ -161,6 +161,10 @@ function validateConfigAgainstSchema(cfg) {
     errors.push(`Invalid workspace_type: '${cfg.workspace_type}' (expected: clone_root, mendix_project, or custom)`);
   }
 
+  if (cfg.workspace_type === 'mendix_project' && cfg.model_source && cfg.model_source !== 'studiopro') {
+    errors.push(`Invalid model_source: '${cfg.model_source}' (must be 'studiopro' when workspace_type is 'mendix_project')`);
+  }
+
   if (cfg.skills_style && !['standard', 'mendix_module'].includes(cfg.skills_style)) {
     errors.push(`Invalid skills_style: '${cfg.skills_style}' (expected: standard or mendix_module)`);
   }
@@ -229,8 +233,34 @@ function checkSchemaContractAlignment() {
 }
 
 function checkSkillsPresence() {
+  const wsType = config.workspace_type || 'clone_root';
   const skillsDir = activeSkillsDir;
   console.log('Checking MTA skills presence...');
+
+  if (wsType === 'mendix_project') {
+    const mendixDir = config.mendix_project_dir || activeWorkspaceDir;
+    const moduleSkillsDir = path.join(mendixDir, 'skillssource', '_modules', 'menditect_agentictestskills');
+    const plansDir = config.execution_plans_dir || path.join(mendixDir, 'maia', 'plans');
+
+    const hasModuleSkills = fs.existsSync(moduleSkillsDir) && fs.existsSync(path.join(moduleSkillsDir, 'AGENTS.md'));
+    const hasPlansDir = fs.existsSync(plansDir);
+
+    if (hasModuleSkills) {
+      console.log(`  ${PASS} Menditect_AgenticTestSkills module is installed at ${moduleSkillsDir}.`);
+    } else {
+      console.warn(`  ${WARN} Menditect_AgenticTestSkills module not found at ${moduleSkillsDir}.`);
+      console.warn(`         Download component 305457 (Menditect_AgenticTestSkills) from Mendix Marketplace`);
+      console.warn(`         or re-run "npm run setup" to automatically extract it.`);
+    }
+
+    if (hasPlansDir) {
+      console.log(`  ${PASS} MAIA execution plans directory is ready at ${plansDir}.`);
+    } else {
+      console.warn(`  ${WARN} MAIA execution plans directory not found at ${plansDir}.`);
+    }
+
+    return hasModuleSkills;
+  }
 
   if (!fs.existsSync(skillsDir)) {
     console.warn(`  ${WARN} Skills directory not found at ${skillsDir}. Run "npm run update:skills" to download MTA skills.`);
@@ -254,6 +284,10 @@ function checkSkillsPresence() {
 }
 
 function checkMxcliBinary() {
+  if (config.workspace_type === 'mendix_project') {
+    console.log(`${INFO} Mendix Project Workspace uses Studio Pro MCP; mxcli binary and catalog checks omitted.`);
+    return true;
+  }
   const toolsRootDir = path.join(__dirname, '..');
   const binName = process.platform === 'win32' ? 'mxcli.exe' : 'mxcli';
   const binPath = path.join(toolsRootDir, 'bin', binName);

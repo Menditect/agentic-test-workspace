@@ -614,6 +614,9 @@ async function checkVersions(options = {}) {
       let modulesUpdateAvailable = false;
 
       const modsToCheck = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
+      if (projConfig.workspace_type === 'mendix_project' && MENDITECT_MARKETPLACE_MODULES.Menditect_AgenticTestSkills) {
+        modsToCheck.push(MENDITECT_MARKETPLACE_MODULES.Menditect_AgenticTestSkills);
+      }
       if (isPaid || installed.modules.MenditectMxFrontendTestKit?.installed || installed.modules.MenditectPlaywrightConnector?.installed || installed.modules.MenditectMtaCommons?.installed) {
         modsToCheck.push(
           MENDITECT_MARKETPLACE_MODULES.MenditectMxFrontendTestKit,
@@ -1300,6 +1303,9 @@ async function syncSingleMarketplaceModuleProject(projectConfig, options = {}) {
   const isPaid = projectConfig.mta_license_tier === 'paid_enterprise' || projectConfig.mta_license_tier === 'paid' || isPaidMtaServerUrl(projectConfig.mta_base_url);
 
   const modsToSync = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
+  if (projectConfig.workspace_type === 'mendix_project' && MENDITECT_MARKETPLACE_MODULES.Menditect_AgenticTestSkills) {
+    modsToSync.push(MENDITECT_MARKETPLACE_MODULES.Menditect_AgenticTestSkills);
+  }
   if (isPaid || installed.modules.MenditectMxFrontendTestKit?.installed || installed.modules.MenditectPlaywrightConnector?.installed || installed.modules.MenditectMtaCommons?.installed) {
     modsToSync.push(
       MENDITECT_MARKETPLACE_MODULES.MenditectMxFrontendTestKit,
