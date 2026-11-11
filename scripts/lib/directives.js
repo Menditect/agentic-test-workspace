@@ -28,16 +28,8 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
       '  * If `MTA` MCP server is not configured and `MtaPluginModule.MTAConnectionUrl` is `wss://services.menditect.com`, the user is operating under the **Free MTA Exploratory License**.',
       '  * **Free Capabilities:** Unlimited local in-memory microflow testing (`execute-testcase`) and local Execution Plan generation (`EP_*.md`).',
       '  * **Paid Platform Capabilities:** Persistent test suites, Playwright Frontend UI testing, and CI/CD automated regression pipelines require a paid MTA Platform License.',
-      `- ** Application name is: ${appName || '[ApplicationName]'}**`,
-      `- ** MTA Url: ${mtaUrl || '[MtaUrl]'}**`
+      '- **ENVIRONMENT CONFIGURATION & LINTER RECOMMENDATION:** All runtime settings (Application Name, MTA Base URL, Active App Instances, ApplicationInstanceTokens, and Playwright preferences) must be loaded dynamically from `mta_config.json` (or via `MTA_linter.get_config()` in Chat Mode / MAIA). For the highest test reliability and automated plan validation, running the local `MTA_linter` MCP server (`http://localhost:7790/mcp`) is strongly recommended. Never bake hardcoded tokens or URLs into prompt text or test files.'
     ];
-
-    if (appInstances && appInstances.length > 0) {
-      for (const inst of appInstances) {
-        const isDef = inst.name === defaultInstanceName ? ' (Default)' : '';
-        lines.push(`  - [${inst.name}]${isDef}: ${inst.token}`);
-      }
-    }
 
     return lines.join('\n');
   }
@@ -50,17 +42,8 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
     lines.push(`- **CENTRAL TOOLS HUB LOCATION:** MTA skills reside at \`${path.dirname(skillsRelPath).replace(/\\/g, '/')}/\` and MTA CLI tools reside at \`${cleanToolsDir}/\`. Whenever any skill instructs you to run \`node tools/mta-lint.mjs\` or \`node tools/mta-bughunter.mjs\`, execute them from the central tools path: \`${lintCmd}\` and \`${bughunterCmd}\`.`);
   }
   lines.push(
-    `- ** Application name is: ${appName || '[ApplicationName]'}**`,
-    `- ** MTA Url: ${mtaUrl || '[MtaUrl]'}**`
-  );
-  if (appInstances && appInstances.length > 0) {
-    for (const inst of appInstances) {
-      const isDef = inst.name === defaultInstanceName ? ' (Default)' : '';
-      lines.push(`  - [${inst.name}]${isDef}: ${inst.token}`);
-    }
-  }
-  lines.push(
-    '- **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json`.',
+    '- **ENVIRONMENT CONFIGURATION & LINTER RECOMMENDATION:** All runtime settings (Application Name, MTA Base URL, Active App Instances, ApplicationInstanceTokens, and Playwright preferences) must be loaded dynamically from `mta_config.json` (or via `MTA_linter.get_config()` in Chat Mode / MAIA). For the highest test reliability and automated plan validation, running the local `MTA_linter` MCP server (`http://localhost:7790/mcp`) is strongly recommended. Never bake hardcoded tokens or URLs into prompt text or test files.',
+    '- **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json` (or via `MTA_linter.get_config()`).',
     '- **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use the MTA Plugin MCP tool (`MTA_plugin.execute-testcase`) for all in-memory exploratory test executions.',
     '- **ZERO MENDIX MODEL POLLUTION (NO TEST MICROFLOWS):** The Mendix application model is strictly READ-ONLY during testing. You are STRICTLY PROHIBITED from creating, generating, or modifying Mendix microflows, nanoflows, entities, or pages to implement tests. Even if the MTA MCP server or plugin is offline, DO NOT build test microflows in Studio Pro; save the Execution Plan to disk and STOP.',
     '- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).',

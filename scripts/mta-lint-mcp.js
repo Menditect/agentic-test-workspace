@@ -33,19 +33,65 @@ async function getMtaLint() {
   return mtaLintModulePromise;
 }
 
-function loadConfig(rootDir = process.cwd()) {
+function loadConfigPath(rootDir = process.cwd()) {
   const candidatePaths = [
     path.join(rootDir, 'mta_config.json'),
     path.join(__dirname, '..', 'mta_config.json')
   ];
   for (const cfgPath of candidatePaths) {
     if (fs.existsSync(cfgPath)) {
-      try {
-        return JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-      } catch (e) {}
+      return cfgPath;
     }
   }
+  return path.join(rootDir, 'mta_config.json');
+}
+
+function loadConfig(rootDir = process.cwd()) {
+  const cfgPath = loadConfigPath(rootDir);
+  if (fs.existsSync(cfgPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    } catch (e) {}
+  }
   return null;
+}
+
+function resolveExecutionPlanDestination(planId = '', workspaceDir = process.cwd()) {
+  const absRoot = path.resolve(workspaceDir);
+  const cfg = loadConfig(absRoot);
+  const safeId = planId ? planId.replace(/[^a-zA-Z0-9_\-]/g, '_') : `plan_${Date.now()}`;
+
+  // 1. Explicit execution_plans_dir in mta_config.json
+  if (cfg && cfg.execution_plans_dir) {
+    const customDir = path.isAbsolute(cfg.execution_plans_dir)
+      ? cfg.execution_plans_dir
+      : path.join(absRoot, cfg.execution_plans_dir);
+    return path.join(customDir, `${safeId.startsWith('EP_') ? safeId : 'EP_' + safeId}.md`);
+  }
+
+  // 2. Workspace type detection
+  let mendixProjectDir = null;
+  if (cfg) {
+    if (cfg.mendix_mpr_path) {
+      mendixProjectDir = path.isAbsolute(cfg.mendix_mpr_path)
+        ? path.dirname(cfg.mendix_mpr_path)
+        : path.dirname(path.join(absRoot, cfg.mendix_mpr_path));
+    } else if (cfg.mendix_project_dir) {
+      mendixProjectDir = path.isAbsolute(cfg.mendix_project_dir)
+        ? cfg.mendix_project_dir
+        : path.join(absRoot, cfg.mendix_project_dir);
+    }
+  }
+
+  if (cfg && cfg.workspace_type === 'mendix_project') {
+    const maiaDir = mendixProjectDir ? path.join(mendixProjectDir, 'maia', 'plans', safeId) : path.join(absRoot, 'maia', 'plans', safeId);
+    return path.join(maiaDir, 'plan.md');
+  }
+
+  // 3. Default to menditect-output/execution-plans/EP_<planId>.md
+  const defaultDir = path.join(absRoot, 'menditect-output', 'execution-plans');
+  const fileName = safeId.startsWith('EP_') ? `${safeId}.md` : `EP_${safeId}.md`;
+  return path.join(defaultDir, fileName);
 }
 
 function resolvePlanPath(givenPath, workspaceDir = process.cwd(), mtaLint) {
@@ -190,8 +236,40 @@ function discoverAllPlans(workspaceDir = process.cwd()) {
 
 const MCP_TOOLS = [
   {
+    name: 'get_config',
+    description: 'Reads active workspace settings from mta_config.json. Masks secrets by default unless include_secrets is true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include_secrets: {
+          type: 'boolean',
+          default: false,
+          description: 'Whether to return unmasked tokens and sensitive headers.'
+        },
+        section: {
+          type: 'string',
+          description: 'Optional top-level key to return (e.g. "application_name", "app_instances", "mta_base_url").'
+        }
+      }
+    }
+  },
+  {
+    name: 'update_config',
+    description: 'Safely deep-merges partial updates into mta_config.json and validates the resulting configuration against canonical rules before saving.',
+    inputSchema: {
+      type: 'object',
+      required: ['updates'],
+      properties: {
+        updates: {
+          type: 'object',
+          description: 'Partial configuration object containing fields to update/merge.'
+        }
+      }
+    }
+  },
+  {
     name: 'lint_plan',
-    description: 'Validates the 6-section Execution Plan (EP_*.md or maia/plans/*/plan.md) structure, metadata, variation matrix (ANTI-48, ANTI-59), and step patterns (PAT-07, ANTI-20). Records Phase 1 draft receipt.',
+    description: 'Validates the 6-section Execution Plan (EP_*.md or maia/plans/*/plan.md) structure, metadata, variation matrix (ANTI-48, ANTI-59), and step patterns (PAT-07, ANTI-20). In Mendix 11.12-11.15, pass plan_content with persist: true to write the plan to disk on MAIA behalf.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -202,6 +280,11 @@ const MCP_TOOLS = [
         plan_content: {
           type: 'string',
           description: 'Optional raw markdown string of the execution plan to validate in-memory before writing to disk.'
+        },
+        persist: {
+          type: 'boolean',
+          default: false,
+          description: 'When true and plan_content is provided, writes the plan to disk at plan_path or the workspace execution plan folder (essential for Mendix 11.12-11.15 MAIA).'
         }
       }
     }
@@ -347,6 +430,101 @@ async function executeTool(name, args = {}, workspaceDir = process.cwd()) {
   const mtaLint = await getMtaLint();
 
   switch (name) {
+    case 'get_config': {
+      const cfg = loadConfig(workspaceDir);
+      if (!cfg) {
+        return {
+          error: 'No mta_config.json found in workspace or parent directories.',
+          config: null
+        };
+      }
+      const includeSecrets = !!args.include_secrets;
+      const maskSecret = (val) => {
+        if (!val || typeof val !== 'string') return val;
+        if (includeSecrets) return val;
+        if (val.length <= 8) return '********';
+        return val.slice(0, 4) + '...' + val.slice(-4);
+      };
+
+      const sanitized = JSON.parse(JSON.stringify(cfg));
+      if (!includeSecrets) {
+        if (sanitized.default_app_instance_token) sanitized.default_app_instance_token = maskSecret(sanitized.default_app_instance_token);
+        if (sanitized.mta_auth_header) sanitized.mta_auth_header = maskSecret(sanitized.mta_auth_header);
+        if (sanitized.plugin_mcp_token) sanitized.plugin_mcp_token = maskSecret(sanitized.plugin_mcp_token);
+        if (Array.isArray(sanitized.app_instances)) {
+          for (const inst of sanitized.app_instances) {
+            if (inst.token) inst.token = maskSecret(inst.token);
+            if (inst.pluginToken) inst.pluginToken = maskSecret(inst.pluginToken);
+          }
+        }
+      }
+
+      if (args.section && typeof args.section === 'string') {
+        const sec = args.section.trim();
+        if (sec in sanitized) {
+          return { [sec]: sanitized[sec] };
+        }
+        return { error: `Section '${sec}' not found in mta_config.json.` };
+      }
+
+      return sanitized;
+    }
+
+    case 'update_config': {
+      if (!args.updates || typeof args.updates !== 'object' || Array.isArray(args.updates)) {
+        return {
+          valid: false,
+          error: 'Invalid updates parameter. Expected an object with key-value updates to merge.'
+        };
+      }
+
+      const cfgPath = loadConfigPath(workspaceDir);
+      let currentCfg = loadConfig(workspaceDir) || {};
+
+      // Deep merge helper
+      function deepMerge(target, source) {
+        for (const key of Object.keys(source)) {
+          if (source[key] instanceof Object && !Array.isArray(source[key]) && key in target && typeof target[key] === 'object') {
+            deepMerge(target[key], source[key]);
+          } else {
+            target[key] = source[key];
+          }
+        }
+        return target;
+      }
+
+      const merged = deepMerge(JSON.parse(JSON.stringify(currentCfg)), args.updates);
+
+      // Validate merged config using mtaLint.lintConfig via temp file
+      const tempCfgFile = path.join(os.tmpdir(), `temp_mta_cfg_${Date.now()}.json`);
+      try {
+        fs.writeFileSync(tempCfgFile, JSON.stringify(merged, null, 2), 'utf8');
+        const validation = mtaLint.lintConfig(tempCfgFile);
+        if (!validation.valid) {
+          return {
+            valid: false,
+            error: 'Configuration update rejected: validation failed against schema invariants.',
+            details: validation.errors || validation.checks
+          };
+        }
+      } finally {
+        try { fs.unlinkSync(tempCfgFile); } catch (e) {}
+      }
+
+      // Ensure directory exists and write
+      const targetDir = path.dirname(cfgPath);
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+      fs.writeFileSync(cfgPath, JSON.stringify(merged, null, 2), 'utf8');
+
+      return {
+        valid: true,
+        message: `Successfully updated configuration at ${cfgPath}`,
+        updated_fields: Object.keys(args.updates)
+      };
+    }
+
     case 'lint_plan': {
       if (args.plan_content && typeof args.plan_content === 'string') {
         const tempFile = path.join(os.tmpdir(), `temp_plan_${Date.now()}_${Math.random().toString(36).slice(2)}.md`);
@@ -354,6 +532,26 @@ async function executeTool(name, args = {}, workspaceDir = process.cwd()) {
           fs.writeFileSync(tempFile, args.plan_content, 'utf8');
           const result = mtaLint.lintExecutionPlan(tempFile);
           result.target = args.plan_path || '<in-memory>';
+
+          if (args.persist) {
+            let targetDestination = args.plan_path;
+            if (!targetDestination || targetDestination === 'auto' || targetDestination === 'latest') {
+              const metaMatch = args.plan_content.match(/plan_id:\s*["']?([^"'\r\n]+)["']?/i);
+              const planId = metaMatch ? metaMatch[1] : '';
+              targetDestination = resolveExecutionPlanDestination(planId, workspaceDir);
+            } else if (!path.isAbsolute(targetDestination)) {
+              targetDestination = path.resolve(workspaceDir, targetDestination);
+            }
+
+            const destDir = path.dirname(targetDestination);
+            if (!fs.existsSync(destDir)) {
+              fs.mkdirSync(destDir, { recursive: true });
+            }
+            fs.writeFileSync(targetDestination, args.plan_content, 'utf8');
+            result.persisted = true;
+            result.persisted_path = targetDestination;
+          }
+
           return result;
         } finally {
           try { fs.unlinkSync(tempFile); } catch (e) {}
