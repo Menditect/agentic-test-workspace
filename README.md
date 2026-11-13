@@ -102,7 +102,7 @@ When you run `npm run setup`, the wizard lets you choose between **3 workspace s
 C:\projects\menditect\
 ├── agentic-test-workspace\          <-- Clone ONCE & run `npm run update` here
 │   ├── skills\                      <-- Central SSOT for all MTA skills
-│   ├── tools\                       <-- Central SSOT for mta-lint.mjs & mta-bughunter.mjs
+│   ├── tools\                       <-- Central SSOT for mta-lint.mjs & run-linter.mjs
 │   ├── scripts\                     <-- Central mta-proxy.js, setup.js, sync-upstream.js
 │   └── bin\                         <-- Central mxcli binary
 │

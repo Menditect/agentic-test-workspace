@@ -201,6 +201,11 @@
     "mendix_mpr_path": {
       "type": "string",
       "description": "Absolute path to the Mendix project .mpr file."
+    },
+    "require_linter_mcp": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, enforces MTA_linter MCP server as a strict mandatory gate for plan creation and smoke audit. When false (default), enables adaptive dual-track with cognitive fallback for developers without Node.js."
     }
   },
   "required": [
