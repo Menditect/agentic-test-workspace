@@ -22,13 +22,14 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
       '- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).',
       '- **EXECUTION STRATEGY SEGREGATION:**',
       '  1. **IN-MEMORY EXPLORATORY (Plugin):** Allowed to auto_execute ONLY when using MTA_plugin.execute-testcase (zero database mutation, safe rollback) and MAIA Plan Mode is disabled.',
-      '  2. **MAIA PLAN MODE (Mendix 11.16+):** Treated as `prompt_approval`. Auto-execution is strictly prohibited. MAIA can write `.md` execution plan files to disk and MUST write the plan adhering to the canonical 6-section format (`references/execution-plan-template.md`).',
+      '  2. **MAIA PLAN MODE & TEST PLAN LOCATION (Mendix 11.12+):** If MAIA Plan Mode is enabled, treat as `prompt_approval` (auto-execution is strictly prohibited). Across all Mendix versions `>= 11.12`, MAIA MUST always write Menditect test execution plans (`EP_*.md`) in the canonical 6-section format (`references/execution-plan-template.md`) to `menditect-output/execution-plans/` via `lint_plan(persist: true)`, keeping Menditect test plans cleanly separated from MAIA application build plans (`maia/plans/`).',
       '  3. **PERSISTENT MTA PLATFORM MUTATIONS:** STRICTLY PROHIBITED from auto-executing. Before calling ANY mutating MTA server tools (CreateTestSuite, CreateTestCase, CreateObjectActionTestStep, etc.), the agent MUST pause and receive explicit, unambiguous user approval for Checkpoint 1 (Execution Plan) and Checkpoint 2 (Placement Summary). Never bypass this gate based on automated linter passes or context compaction summaries.',
       '- **MTA LICENSE TIER & CAPABILITIES:**',
       '  * If `MTA` MCP server is not configured and `MtaPluginModule.MTAConnectionUrl` is `wss://services.menditect.com`, the user is operating under the **Free MTA Exploratory License**.',
       '  * **Free Capabilities:** Unlimited local in-memory microflow testing (`execute-testcase`) and local Execution Plan generation (`EP_*.md`).',
       '  * **Paid Platform Capabilities:** Persistent test suites, Playwright Frontend UI testing, and CI/CD automated regression pipelines require a paid MTA Platform License.',
-      '- **ENVIRONMENT CONFIGURATION & LINTER RECOMMENDATION:** All runtime settings (Application Name, MTA Base URL, Active App Instances, ApplicationInstanceTokens, and Playwright preferences) must be loaded dynamically from `mta_config.json` (or via `MTA_linter.get_config()` in Chat Mode / MAIA). For the highest test reliability and automated plan validation, running the local `MTA_linter` MCP server (`http://localhost:7790/mcp`) is strongly recommended. Never bake hardcoded tokens or URLs into prompt text or test files.'
+      '- **MANDATORY `mta-linter` STUDIO PRO EXTENSION GATE (MENDIX 11.12+):** `Menditect_AgenticTestSkills.mxmodule` bundles the `mta-linter` TypeScript Studio Pro Web Extension, which automatically starts on Studio Pro startup and registers the 10 canonical `mta-lint.mjs` tools (`get_config`, `update_config`, `lint_plan`, `pre_exec_check`, `stage_placement`, `pre_build_check`, `lock_plan`, `verify_lock`, `smoke_audit`, `list_plans`) natively in MAIA. Calling these tools (`lint_plan` with `persist: true`, `pre_exec_check`, `stage_placement`, `pre_build_check`, `lock_plan`, `verify_lock`, `smoke_audit`) is **strictly mandatory** when using the MTA skills inside Studio Pro MAIA (`PAT-43`, `ANTI-46`, `ANTI-80`). Cognitive fallback is prohibited. If the `mta-linter` tools are not visible in MAIA\'s tool catalog, HALT and instruct the user to verify that `Menditect_AgenticTestSkills.mxmodule` is installed in `modules/` and extensions are enabled in Studio Pro. For Mendix versions `< 11.12`, instruct the user to use the separate external `agentic-test-workspace` with `mxcli`.',
+      '- **ENVIRONMENT CONFIGURATION & ZERO-SETUP INITIALIZATION:** All runtime settings (Application Name, MTA Base URL, Active App Instances, ApplicationInstanceTokens, and Playwright preferences) must be loaded dynamically from `mta_config.json` (or via `get_config()` in Studio Pro MAIA). If `mta_config.json` does not exist yet (e.g., when installed directly from Marketplace), call `get_config()` to retrieve auto-detected project defaults, prompt the user for `mta_base_url` and `default_app_instance_token`, and initialize `<MendixProjectDir>/mta_config.json` via `update_config({ create_if_missing: true, updates })`. Never bake hardcoded tokens or URLs into prompt text or test files.'
     ];
 
     return lines.join('\n');
@@ -42,8 +43,8 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
     lines.push(`- **CENTRAL TOOLS HUB LOCATION:** MTA skills reside at \`${path.dirname(skillsRelPath).replace(/\\/g, '/')}/\` and MTA CLI tools reside at \`${cleanToolsDir}/\`. Whenever any skill instructs you to run \`node tools/mta-lint.mjs\` or \`node tools/mta-bughunter.mjs\`, execute them from the central tools path: \`${lintCmd}\` and \`${bughunterCmd}\`.`);
   }
   lines.push(
-    '- **ENVIRONMENT CONFIGURATION & LINTER RECOMMENDATION:** All runtime settings (Application Name, MTA Base URL, Active App Instances, ApplicationInstanceTokens, and Playwright preferences) must be loaded dynamically from `mta_config.json` (or via `MTA_linter.get_config()` in Chat Mode / MAIA). For the highest test reliability and automated plan validation, running the local `MTA_linter` MCP server (`http://localhost:7790/mcp`) is strongly recommended. Never bake hardcoded tokens or URLs into prompt text or test files.',
-    '- **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json` (or via `MTA_linter.get_config()`).',
+    '- **ENVIRONMENT CONFIGURATION & SSOT:** All runtime settings (Application Name, MTA Base URL, Active App Instances, ApplicationInstanceTokens, and Playwright preferences) must be loaded dynamically from `mta_config.json`. Never bake hardcoded tokens or URLs into prompt text or test files.',
+    '- **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json`.',
     '- **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use the MTA Plugin MCP tool (`MTA_plugin.execute-testcase`) for all in-memory exploratory test executions.',
     '- **ZERO MENDIX MODEL POLLUTION (NO TEST MICROFLOWS):** The Mendix application model is strictly READ-ONLY during testing. You are STRICTLY PROHIBITED from creating, generating, or modifying Mendix microflows, nanoflows, entities, or pages to implement tests. Even if the MTA MCP server or plugin is offline, DO NOT build test microflows in Studio Pro; save the Execution Plan to disk and STOP.',
     '- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).',
@@ -61,12 +62,36 @@ function getMenditectSetupBlock(appName, mtaUrl, skillsStyle, appInstances = [],
 function updateDirectiveFile(filePath, appName, mtaUrl, skillsStyle, appInstances, defaultInstanceName, skillsRelPath = 'skills/AGENTS.md', toolsDir = null) {
   let content = '';
   const isExternalWorkspace = path.resolve(path.dirname(filePath)) !== path.resolve(toolsRootDir);
+  const isAgentsMd = path.basename(filePath).toUpperCase() === 'AGENTS.MD';
+
   if (fs.existsSync(filePath)) {
     content = fs.readFileSync(filePath, 'utf8');
   } else if (!toolsDir || !isExternalWorkspace) {
     const baseFile = path.join(toolsRootDir, path.basename(filePath));
     if (fs.existsSync(baseFile)) {
       content = fs.readFileSync(baseFile, 'utf8');
+    }
+  }
+
+  // For mendix_module mode, ensure AGENTS.md (root and skillssource/AGENTS.md) includes the full orchestrator header & rules
+  if (skillsStyle === 'mendix_module' && isAgentsMd) {
+    const moduleAgentsPath = path.join(path.dirname(filePath), 'skillssource', '_modules', 'menditect_agentictestskills', 'AGENTS.md');
+    const centralAgentsPath = path.join(toolsRootDir, 'skills', 'AGENTS.md');
+    const sourceOrchestratorPath = fs.existsSync(moduleAgentsPath) ? moduleAgentsPath : centralAgentsPath;
+    if (fs.existsSync(sourceOrchestratorPath)) {
+      const orchestratorContent = fs.readFileSync(sourceOrchestratorPath, 'utf8').trimEnd();
+      if (!content.trim()) {
+        content = orchestratorContent + '\n';
+      } else if (!content.includes('# Menditect Agentic Test Automation Orchestrator')) {
+        // Prepend orchestrator while preserving existing custom project instructions
+        content = orchestratorContent + '\n\n' + content.trimStart();
+      } else {
+        // Update existing orchestrator section up to # Menditect Architecture Setup (or end of orchestrator)
+        const orchRegex = /^(?:---\r?\n[\s\S]*?\r?\n---\r?\n\s*)?# Menditect Agentic Test Automation Orchestrator[\s\S]*?(?=(?:\r?\n# Menditect Architecture Setup|\r?\n# (?!Menditect|\d+\.)|$))/;
+        if (orchRegex.test(content)) {
+          content = content.replace(orchRegex, orchestratorContent + '\n');
+        }
+      }
     }
   }
 
@@ -101,6 +126,9 @@ function updateAgentDirectives(targetDir, appName, mtaUrl, skillsStyle, appInsta
     path.join(targetDir, 'GEMINI.md'),
     path.join(targetDir, '.github', 'copilot-instructions.md')
   ];
+  if (skillsStyle === 'mendix_module') {
+    targetFiles.push(path.join(targetDir, 'skillssource', 'AGENTS.md'));
+  }
 
   let skillsRelPath = 'skills/AGENTS.md';
   if (skillsDir) {

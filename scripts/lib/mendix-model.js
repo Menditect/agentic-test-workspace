@@ -586,6 +586,58 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
   }
 }
 
+function removeSourceModuleFromMpr(mprPath, moduleName, optionalBin) {
+  if (!mprPath || !fs.existsSync(mprPath) || !moduleName) {
+    return { removed: false, existed: false };
+  }
+  const mxcliBin = optionalBin || findMxcliBinary(mprPath);
+  if (!mxcliBin) {
+    return { removed: false, existed: false };
+  }
+
+  let existed = false;
+  try {
+    const modulesOutput = execSync(`"${mxcliBin}" -c "SHOW MODULES;" -p "${mprPath}"`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 25000
+    });
+    const re = new RegExp(`\\|\\s*${moduleName}\\s*\\|`, 'i');
+    existed = re.test(modulesOutput);
+  } catch (e) {}
+
+  if (!existed) {
+    return { removed: false, existed: false };
+  }
+
+  try {
+    execSync(`"${mxcliBin}" -c "DROP MODULE ${moduleName};" -p "${mprPath}"`, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30000
+    });
+  } catch (err) {
+    return { removed: false, existed: true, error: err.message };
+  }
+
+  const projectDir = path.dirname(mprPath);
+  const lowerMod = moduleName.toLowerCase();
+  const cleanupDirs = [
+    path.join(projectDir, 'themesource', lowerMod),
+    path.join(projectDir, 'javasource', lowerMod),
+    path.join(projectDir, 'javascriptsource', lowerMod)
+  ];
+  for (const dir of cleanupDirs) {
+    if (fs.existsSync(dir)) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch (e) {}
+    }
+  }
+
+  console.log(`  ${PASS} Removed legacy unpacked Source module '${moduleName}' from .mpr before installing .mxmodule.`);
+  return { removed: true, existed: true };
+}
+
 module.exports = {
   cleanDeploymentDirectory,
   prepareMendixGitRepo,
@@ -597,5 +649,6 @@ module.exports = {
   detectMendixModule,
   inspectMendixMtaSettings,
   tryCreateConfigurationInMpr,
-  configureMtaPluginInMpr
+  configureMtaPluginInMpr,
+  removeSourceModuleFromMpr
 };

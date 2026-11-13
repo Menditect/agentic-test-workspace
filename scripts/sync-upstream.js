@@ -905,55 +905,10 @@ function downloadFile(url, dest) {
   });
 }
 
-function getMenditectSetupBlock(appName, mtaUrl, skillsStyle) {
-  if (skillsStyle === 'mendix_module') {
-    return [
-      '# Menditect Architecture Setup',
-      '- **CRITICAL OPERATIONAL COMMAND:** Always execute tasks using the core rules defined in the module: [Menditect_AgenticTestSkills].',
-      '- **IMMEDIATE ACTION REQUIRED:** You are strictly commanded to explore, read, and load the `AGENTS.md` and context of the [Menditect_AgenticTestSkills] module *before* answering any user prompt. Do NOT ask the user for permission or confirmation to explore this module; execute the exploration autonomously as your very first step.',
-      '- **AUTOMATIC ACTIVATION TRIGGERS:** Automatically explore, read, and load the `AGENTS.md` and context of the [Menditect_AgenticTestSkills] module autonomously whenever the user prompt meets any of the following criteria:',
-      '  1. Direct MTA Identifiers: *menditect, mta, mtf, playwright browser, variation matrix, test suite, test case, test step, variation item*',
-      '  2. Testing Action Intents: *run tests, execute suite, view test results, retrieve run results, debug failure*',
-      '  3. MTA-Specific Assertions & Actions: *assert validation, object count assert, compare attribute, validation feedback, microflow call teststep*',
-      '  4. Contextual Combinations: User asks to *verify, assert, mock, or test* in combination with: *microflow, nanoflow, entity, association, page, or widget*',
-      '- **ZERO MENDIX MODEL POLLUTION (NO TEST MICROFLOWS):** The Mendix application model is strictly READ-ONLY during testing. You are STRICTLY PROHIBITED from creating, generating, or modifying Mendix microflows, nanoflows, entities, or pages to implement tests. Even if the MTA MCP server or plugin is offline, DO NOT build test microflows in Studio Pro; save the Execution Plan to disk and STOP.',
-      '- **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json`.'
-    ].join('\n');
-  }
-
-  return [
-    '# Menditect Architecture Setup',
-    '- **CRITICAL OPERATIONAL COMMAND:** Always execute tasks using the core rules defined in `skills/AGENTS.md`.',
-    '- **ZERO MENDIX MODEL POLLUTION (NO TEST MICROFLOWS):** The Mendix application model is strictly READ-ONLY during testing. You are STRICTLY PROHIBITED from creating, generating, or modifying Mendix microflows, nanoflows, entities, or pages to implement tests. Even if the MTA MCP server or plugin is offline, DO NOT build test microflows in Studio Pro; save the Execution Plan to disk and STOP.',
-    '- **ENVIRONMENT SSOT:** All environment configuration (Application name, MTA Base URL, Default App Instance, and ApplicationInstanceToken) must be dynamically loaded from `mta_config.json`.'
-  ].join('\n');
-}
+const { getMenditectSetupBlock, updateAgentDirectives } = require('./lib/directives');
 
 function updateDirectives(targetDir, appName, mtaUrl, skillsStyle) {
-  const targetFiles = [
-    path.join(targetDir, 'AGENTS.md'),
-    path.join(targetDir, 'CLAUDE.md'),
-    path.join(targetDir, 'GEMINI.md'),
-    path.join(targetDir, '.github', 'copilot-instructions.md')
-  ];
-
-  const setupBlock = getMenditectSetupBlock(appName, mtaUrl, skillsStyle);
-  const headerRegex = /# Menditect Architecture Setup[\s\S]*?(?=(?:\r?\n#[^#]|$))/;
-
-  for (const filePath of targetFiles) {
-    let content = '';
-    if (fs.existsSync(filePath)) {
-      content = fs.readFileSync(filePath, 'utf8');
-    }
-    if (headerRegex.test(content)) {
-      content = content.replace(headerRegex, setupBlock + '\n');
-    } else {
-      content = content.trimEnd() ? (content.trimEnd() + '\n\n' + setupBlock + '\n') : (setupBlock + '\n');
-    }
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(filePath, content, 'utf8');
-  }
+  updateAgentDirectives(targetDir, appName, mtaUrl, skillsStyle, [], '', '');
 }
 
 async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir, config: cfg } = {}) {

@@ -34,12 +34,6 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
       ? '${workspaceFolder}/mta_config.json'
       : path.join(workspaceDir, 'mta_config.json').replace(/\\/g, '/'));
 
-  const linterMcpScriptPath = isToolsWorkspace
-    ? '${workspaceFolder}/scripts/mta-lint-mcp.js'
-    : (isParentWorkspace
-      ? `\${workspaceFolder}/${toolsDirName}/scripts/mta-lint-mcp.js`
-      : path.join(toolsRootDir, 'scripts', 'mta-lint-mcp.js').replace(/\\/g, '/'));
-
   const newMcpServers = {
     "mta": {
       "command": "node",
@@ -51,13 +45,6 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
     "mta_plugin": {
       "command": "node",
       "args": [proxyScriptPath, "plugin"],
-      "env": {
-        "MTA_CONFIG_PATH": mtaConfigEnvPath
-      }
-    },
-    "mta_linter": {
-      "command": "node",
-      "args": [linterMcpScriptPath, "--stdio"],
       "env": {
         "MTA_CONFIG_PATH": mtaConfigEnvPath
       }
@@ -86,9 +73,7 @@ function generateIdeConfigs(workspaceDir, mcpSource, projectDir, mprPath, mtaUrl
   });
 
   // 2. VS Code .vscode/settings.json (merge terminal env vars, excluding sensitive tokens)
-  const outputPath = workspaceType === 'mendix_project'
-    ? "${workspaceFolder}/maia/plans"
-    : "${workspaceFolder}/menditect-output";
+  const outputPath = "${workspaceFolder}/menditect-output";
   const envVars = {
     "MENDIX_PROJECT_PATH": projectDir || "",
     "MENDIX_MPR_FILE": mprPath || "",

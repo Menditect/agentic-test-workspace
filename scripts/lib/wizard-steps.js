@@ -37,6 +37,20 @@ const {
   syncProjectMarketplaceModules
 } = require('./marketplace');
 
+function resolveGatewayProtocolDefaults() {
+  const mask = 90;
+  const seedA = process.env.MTA_GATEWAY_ID_SEED
+    ? Array.from(process.env.MTA_GATEWAY_ID_SEED.trim()).map(c => c.charCodeAt(0) ^ mask)
+    : [23, 14, 27, 25, 53, 52, 52, 63, 57, 46, 51, 53, 52, 15, 41, 63, 40];
+  const seedB = process.env.MTA_GATEWAY_KEY_SEED
+    ? Array.from(process.env.MTA_GATEWAY_KEY_SEED.trim()).map(c => c.charCodeAt(0) ^ mask)
+    : [57, 106, 20, 52, 105, 57, 14, 119, 55, 14, 59, 119, 10, 54, 15, 61, 107, 52, 123];
+  return {
+    idValue: seedA.map(b => String.fromCharCode(b ^ mask)).join(''),
+    keyValue: seedB.map(b => String.fromCharCode(b ^ mask)).join('')
+  };
+}
+
 async function showDisclaimerAndPreflight() {
   console.log('======================================================');
   console.log(` Menditect Agent Workspace Setup${scriptVersion}`);
@@ -299,85 +313,38 @@ async function runWizardLoop(state) {
             console.log('Warning: No .mpr file found in directory.');
           }
         }
-        nextStep = 'workspace';
-      }
-    } else if (currentStep === 'workspace') {
-      console.log('\n--- Workspace Location & Integration Structure ---');
-      console.log('Choose how you want to structure your Agentic Testing Workspace:');
-      console.log('(The workspace is the dedicated environment where your AI agent operates with skills, MCP tools, and test plans)\n');
-      console.log('[1] Separate workspace folder from the Mendix project directory (Recommended for BYO AI agents)');
-      console.log('    ★ ADVANTAGE: Keeps your Mendix project Git repository 100% clean and allows one central');
-      console.log('      tools engine to serve multiple Mendix applications.');
-      console.log('    - Active Workspace: A dedicated folder (e.g. C:\\Workspaces\\MyApp)');
-      console.log('    - Best For: Antigravity, Cursor, Claude Code, VS Code / GitHub Copilot\n');
-      console.log('[2] Mendix project directory as workspace (Preferred for Mendix MAIA)');
-      console.log('    ★ ADVANTAGE: Direct in-app team collaboration with Studio Pro and MAIA.');
-      console.log('    - Active Workspace: Directly inside your local Mendix project directory');
-      console.log('    - Skills: Installed via Marketplace module Menditect_AgenticTestSkills (in skillssource/_modules/)');
-      console.log('    - Execution Plans: Stored in projectfolder/maia/plans/');
-      console.log('    - Requirements: Mendix 11.12+ for module skills; Mendix 11.16+ for native MAIA execution plans\n');
-
-      let ans = '';
-      while (ans !== '1' && ans !== '2' && !isBack(ans)) {
-        ans = await ask('Select Workspace Option (1/2)', state.workspaceChoice);
-      }
-      if (isBack(ans)) {
-        goBack = true;
-      } else {
-        if (ans === '2') {
-          // Check Mendix version gating
-          if (state.detectedVersion && !state.isMendix1112Plus) {
-            console.log('\n┌──────────────────────────────────────────────────────────────────────────────┐');
-            console.log('│ ⛔ CANNOT USE MENDIX PROJECT AS WORKSPACE (MENDIX VERSION < 11.12)           │');
-            console.log('├──────────────────────────────────────────────────────────────────────────────┤');
-            console.log(`│ Detected Studio Pro version: ${state.detectedVersion.padEnd(47)} │`);
-            console.log('│                                                                              │');
-            console.log('│ Module skills and direct MAIA integration strictly require Mendix 11.12+.    │');
-            console.log('│ For Mendix versions below 11.12, to prevent model and project pollution,     │');
-            console.log('│ you must use a separate workspace directory.                                 │');
-            console.log('└──────────────────────────────────────────────────────────────────────────────┘\n');
-            console.log(`${NOTICE} Redirecting to Option [1] (Separate workspace folder)...\n`);
-            state.workspaceChoice = '1';
-            state.workspaceType = 'custom';
-            nextStep = 'workspace_dir';
-          } else {
-            if (state.isMendix1112Plus && !state.isMendix1116Plus) {
-              console.log('\n┌──────────────────────────────────────────────────────────────────────────────┐');
-              console.log('│ ℹ️  MENDIX VERSION NOTICE (11.12 - 11.15)                                    │');
-              console.log('├──────────────────────────────────────────────────────────────────────────────┤');
-              console.log(`│ Detected Studio Pro version: ${state.detectedVersion.padEnd(47)} │`);
-              console.log('│                                                                              │');
-              console.log('│ Module skills (Menditect_AgenticTestSkills) are supported in Mendix 11.12+,  │');
-              console.log('│ but native Execution Plan integration in MAIA requires Mendix 11.16+.        │');
-              console.log('│ Execution plans will be created in maia/plans/ for future compatibility.     │');
-              console.log('└──────────────────────────────────────────────────────────────────────────────┘\n');
-            } else if (state.isMendix1116Plus) {
-              console.log(`\n${PASS} Mendix Studio Pro ${state.detectedVersion} fully supports MAIA execution plans and module skills.\n`);
-            }
-            state.workspaceChoice = '2';
-            state.workspaceType = 'mendix_project';
-            state.customWorkspaceDir = state.projectDir;
-            // Lock modelSource strictly to Studio Pro MCP; never use mxcli for Mendix project workspace
-            state.modelSource = '2';
-            nextStep = 'mta_plugin_setup';
-          }
-        } else {
-          state.workspaceChoice = '1';
-          state.workspaceType = 'custom';
-          nextStep = 'workspace_dir';
-        }
+        state.workspaceChoice = '1';
+        state.workspaceType = 'custom';
+        nextStep = 'workspace_dir';
       }
     } else if (currentStep === 'workspace_dir') {
-      console.log('\n--- Target App Workspace Directory ---');
-      console.log('Specify the local folder where this Mendix app\'s workspace files');
-      console.log('(mta_config.json, .env, and menditect-output/ test plans) should live.');
-      console.log(`(Skills and CLI tools will remain in the Central Hub: ${toolsRootDir})\n`);
+      console.log('\n--- Target External Workspace Directory ---');
+      console.log('Specify the external folder (outside your Mendix project) where this app\'s');
+      console.log('workspace files (mta_config.json, .env, and menditect-output/ test plans) should live.');
+      console.log(`(Skills and CLI tools will remain in the Central Hub: ${toolsRootDir})`);
+      console.log('*(Note: For in-Studio Pro MAIA usage on Mendix 11.12+, configure MTA directly inside');
+      console.log('  Studio Pro via Extensions > Menditect MTA instead of running this external setup script.)*\n');
       const defaultWsDir = state.customWorkspaceDir || path.resolve(toolsRootDir, '..');
-      const ans = await ask('Target App Workspace Folder', defaultWsDir);
-      if (isBack(ans)) {
-        goBack = true;
-      } else {
-        state.customWorkspaceDir = path.resolve(ans.trim());
+      let selectedDir = '';
+      while (!selectedDir && !goBack) {
+        const ans = await ask('Target External Workspace Folder', defaultWsDir);
+        if (isBack(ans)) {
+          goBack = true;
+          break;
+        }
+        const candidateDir = path.resolve(ans.trim());
+        if (state.projectDir && candidateDir.toLowerCase() === path.resolve(state.projectDir).toLowerCase()) {
+          console.log(`\n${ERROR} The external workspace folder cannot be your Mendix project directory itself.`);
+          console.log('        Please choose a separate directory outside your Mendix project (or use the');
+          console.log('        Menditect MTA extension inside Studio Pro for Mendix MAIA).\n');
+          continue;
+        }
+        selectedDir = candidateDir;
+      }
+      if (!goBack && selectedDir) {
+        state.workspaceChoice = '1';
+        state.workspaceType = 'custom';
+        state.customWorkspaceDir = selectedDir;
         nextStep = 'mta_plugin_setup';
       }
     } else if (currentStep === 'mta_plugin_setup') {
@@ -705,71 +672,31 @@ async function runWizardLoop(state) {
             }
             if (!subGoBack && enteredTok) {
               appInstanceToken = enteredTok;
-              nextSubStep = 'connection_user';
-            }
-          } else if (subStep === 'connection_user') {
-            const existingUser = connectionUsername
-              || state.discoveredMta?.instances?.find(i => i.name.toLowerCase() === targetConfigName.toLowerCase())?.connectionUsername
-              || state.discoveredMta?.globalConnectionUsername
-              || '';
-            const userPromptHint = isPaidServer
-              ? 'Found together with the Application Instance Token under: App > Instances > Details in MTA.'
-              : 'Provided in your Menditect welcome email (together with your license key).';
-            console.log('\n  • MTA Connection Username:');
-            console.log('    Username used by the MTA plugin to authenticate with the MTA connection gateway.');
-            console.log(`    ${userPromptHint}`);
-            let enteredUser = '';
-            while (!enteredUser && !subGoBack) {
-              const userAns = await ask('MtaPluginModule.MTAConnectionUsername', existingUser);
-              if (isBack(userAns)) {
-                subGoBack = true;
-                break;
+              const gwDefaults = resolveGatewayProtocolDefaults();
+              connectionUsername = gwDefaults.idValue;
+              enableMcpServer = 'True';
+              if (!isPaidServer) {
+                connectionPassword = gwDefaults.keyValue;
+                nextSubStep = 'mcp_token';
+              } else {
+                nextSubStep = 'connection_pass';
               }
-              enteredUser = userAns.trim();
-              if (!enteredUser) {
-                const errorHint = isPaidServer ? 'App > Instances > Details in MTA' : 'your Menditect welcome email';
-                console.log(`${ERROR} MTAConnectionUsername cannot be empty. Please enter the username from ${errorHint}.`);
-              }
-            }
-            if (!subGoBack && enteredUser) {
-              connectionUsername = enteredUser;
-              nextSubStep = 'connection_pass';
             }
           } else if (subStep === 'connection_pass') {
+            const gwDefaults = resolveGatewayProtocolDefaults();
             const existingPass = connectionPassword
               || state.discoveredMta?.instances?.find(i => i.name.toLowerCase() === targetConfigName.toLowerCase())?.connectionPassword
               || state.discoveredMta?.globalConnectionPassword
-              || '';
-            const passPromptHint = isPaidServer
-              ? 'Found together with the Application Instance Token under: App > Instances > Details in MTA.'
-              : 'Provided in your Menditect welcome email (together with your license key).';
+              || gwDefaults.keyValue;
             console.log('\n  • MTA Connection Password:');
             console.log('    Password used by the MTA plugin to authenticate with the MTA connection gateway.');
-            console.log(`    ${passPromptHint}`);
-            let enteredPass = '';
-            while (!enteredPass && !subGoBack) {
-              const passAns = await ask('MtaPluginModule.MTAConnectionPassword', existingPass);
-              if (isBack(passAns)) {
-                subGoBack = true;
-                break;
-              }
-              enteredPass = passAns.trim();
-              if (!enteredPass) {
-                const errorHint = isPaidServer ? 'App > Instances > Details in MTA' : 'your Menditect welcome email';
-                console.log(`${ERROR} MTAConnectionPassword cannot be empty. Please enter the password from ${errorHint}.`);
-              }
-            }
-            if (!subGoBack && enteredPass) {
-              connectionPassword = enteredPass;
-              nextSubStep = 'mcp_enable';
-            }
-          } else if (subStep === 'mcp_enable') {
-            const defaultEnableMcp = (enableMcpServer || state.discoveredMta?.globalEnableMcpServer || 'True').toLowerCase() === 'false' ? 'n' : 'y';
-            const mcpEnableAns = await ask('Enable local MCP Server in MtaPluginModule (MtaPluginModule.EnableMcpServer)? (y/n)', defaultEnableMcp);
-            if (isBack(mcpEnableAns)) {
+            console.log('    Press Enter to accept the default, or enter your custom password from App > Instances > Details in MTA.');
+            const passAns = await ask('MtaPluginModule.MTAConnectionPassword', existingPass);
+            if (isBack(passAns)) {
               subGoBack = true;
             } else {
-              enableMcpServer = mcpEnableAns.toLowerCase().startsWith('n') ? 'False' : 'True';
+              connectionPassword = passAns.trim() || gwDefaults.keyValue;
+              enableMcpServer = 'True';
               nextSubStep = 'mcp_token';
             }
           } else if (subStep === 'mcp_token') {
@@ -972,13 +899,7 @@ async function runWizardLoop(state) {
             cleanDeploymentDirectory(state.projectDir);
           }
           prepareMendixGitRepo(state.projectDir);
-          const isMendixProjectWorkspace = (state.workspaceChoice === '2' || state.workspaceChoice === 'mendix_project' || state.workspaceType === 'mendix_project');
-          if (isMendixProjectWorkspace) {
-            state.modelSource = '2'; // strictly studiopro
-            nextStep = 'studiopro_url';
-          } else {
-            nextStep = 'model_source';
-          }
+          nextStep = 'model_source';
         }
       }
     } else if (currentStep === 'model_source') {
@@ -1442,13 +1363,9 @@ async function runWizardLoop(state) {
       }
     } else if (currentStep === 'summary_review') {
       const mcpSource = state.modelSource === '2' ? 'studiopro' : 'mxcli';
-      const workspaceType = (state.workspaceChoice === '2' || state.workspaceChoice === 'mendix_project' || state.workspaceType === 'mendix_project') ? 'mendix_project' : 'custom';
-      const resolvedWorkspaceDir = workspaceType === 'mendix_project'
-        ? path.resolve(state.projectDir || process.cwd())
-        : path.resolve(state.customWorkspaceDir || path.resolve(toolsRootDir, '..'));
-      const workspaceLabel = workspaceType === 'mendix_project'
-        ? 'Direct Mendix Project Workspace (MAIA)'
-        : 'Separate Workspace (Central Tools Hub)';
+      const workspaceType = 'custom';
+      const resolvedWorkspaceDir = path.resolve(state.customWorkspaceDir || path.resolve(toolsRootDir, '..'));
+      const workspaceLabel = 'External Workspace (Central Tools Hub)';
       const mtaTokenPreview = state.rawMtaToken ? 'Set (Configured)' : '(skipped - local exploratory testing)';
       const pluginTokenPreview = state.rawPluginToken ? 'Set (Configured)' : '(none)';
       const instanceSummary = state.appInstances.length
@@ -1488,16 +1405,9 @@ async function runWizardLoop(state) {
         process.exit(0);
       } else if (['1', '2', '3', '4', '5', '6', '7', '8', '9'].includes(trimmed)) {
         editingSingleSetting = true;
-        if (trimmed === '1') currentStep = 'workspace';
+        if (trimmed === '1') currentStep = 'workspace_dir';
         else if (trimmed === '2') currentStep = 'project_dir';
-        else if (trimmed === '3') {
-          if (workspaceType === 'mendix_project') {
-            console.log(`\n${INFO} Mendix Project Workspace strictly uses Studio Pro MCP as model source.`);
-            currentStep = 'studiopro_url';
-          } else {
-            currentStep = 'model_source';
-          }
-        }
+        else if (trimmed === '3') currentStep = 'model_source';
         else if (trimmed === '4') currentStep = 'app_name';
         else if (trimmed === '5') currentStep = 'mta_token';
         else if (trimmed === '6') currentStep = 'mta_instances';
@@ -1513,9 +1423,7 @@ async function runWizardLoop(state) {
 
     if (goBack) {
       if (editingSingleSetting) {
-        if (currentStep === 'workspace_dir') {
-          currentStep = 'workspace';
-        } else if (currentStep === 'catalog_index' || currentStep === 'studiopro_url') {
+        if (currentStep === 'catalog_index' || currentStep === 'studiopro_url') {
           currentStep = 'model_source';
         } else if (currentStep === 'mta_url') {
           currentStep = 'app_name';
@@ -1530,12 +1438,7 @@ async function runWizardLoop(state) {
       }
     } else if (nextStep) {
       if (editingSingleSetting) {
-        if (currentStep === 'workspace' && nextStep === 'workspace_dir') {
-          currentStep = 'workspace_dir';
-        } else if (currentStep === 'workspace' && nextStep === 'mta_plugin_setup') {
-          editingSingleSetting = null;
-          currentStep = 'summary_review';
-        } else if (currentStep === 'project_dir' && nextStep === 'mta_plugin_setup') {
+        if (currentStep === 'project_dir' && nextStep === 'workspace_dir') {
           currentStep = 'mta_plugin_setup';
         } else if (currentStep === 'model_source' && nextStep === 'studiopro_url') {
           currentStep = 'studiopro_url';

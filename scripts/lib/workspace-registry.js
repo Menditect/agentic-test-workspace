@@ -300,15 +300,8 @@ function parseInstanceSelection(input, instances) {
 }
 
 function ensureExecutionPlanFolders(targetDir, workspaceType = 'custom') {
-  let menditectOutputDir;
-  let plansDir;
-  if (workspaceType === 'mendix_project') {
-    menditectOutputDir = path.join(targetDir, 'maia');
-    plansDir = path.join(menditectOutputDir, 'plans');
-  } else {
-    menditectOutputDir = path.join(targetDir, 'menditect-output');
-    plansDir = path.join(menditectOutputDir, 'execution-plans');
-  }
+  const menditectOutputDir = path.join(targetDir, 'menditect-output');
+  const plansDir = path.join(menditectOutputDir, 'execution-plans');
   if (!fs.existsSync(menditectOutputDir)) fs.mkdirSync(menditectOutputDir, { recursive: true });
   if (!fs.existsSync(plansDir)) fs.mkdirSync(plansDir, { recursive: true });
   console.log(`Ensured execution plan folder at:`);

@@ -26,12 +26,13 @@ const {
   buildProjectCatalog,
   deployMxcliWrappers
 } = require('./mxcli-manager');
-const { isPaidMtaServerUrl } = require('./marketplace');
+const { isPaidMtaServerUrl, syncAndVerifyMaiaSkills } = require('./marketplace');
 const { generateIdeConfigs } = require('./ide-configs');
 const { updateAgentDirectives } = require('./directives');
 
 async function applyWorkspaceConfiguration(state, options = {}) {
   const skipSkills = Boolean(options.skipSkills);
+  const nonInteractive = Boolean(options.nonInteractive);
   const existingConfig = state.existingConfig || {};
 
   // --- SAVING AND CONFIGURATION PERSISTENCE ---
@@ -84,7 +85,7 @@ async function applyWorkspaceConfiguration(state, options = {}) {
     const hasLocalTools = fs.existsSync(localToolsCopy);
     if (hasLocalSkills || hasLocalTools) {
       console.log(`\n[MIGRATION] Detected local ${[hasLocalSkills ? 'skills/' : null, hasLocalTools ? 'tools/' : null].filter(Boolean).join(' and ')} inside ${workspaceDir} from a previous Standalone setup.`);
-      const cleanAns = await ask('Remove these redundant local copies so this workspace uses the Central Tools Hub exclusively? (y/n)', 'y', { allowBack: false });
+      const cleanAns = nonInteractive ? 'y' : await ask('Remove these redundant local copies so this workspace uses the Central Tools Hub exclusively? (y/n)', 'y', { allowBack: false });
       if (cleanAns.toLowerCase().startsWith('y')) {
         try {
           if (hasLocalSkills) fs.rmSync(localSkillsCopy, { recursive: true, force: true });
@@ -105,7 +106,7 @@ async function applyWorkspaceConfiguration(state, options = {}) {
     const mendixMaiaDir = path.join(state.projectDir, 'maia');
     if (fs.existsSync(mendixCfgPath) || fs.existsSync(mendixOutputDir) || fs.existsSync(mendixMaiaDir)) {
       console.log(`\n[MIGRATION] Detected an existing Direct Mendix Project setup in ${state.projectDir}.`);
-      const migAns = await ask(`Migrate execution plans to ${workspaceDir} and clean up MTA config files from the Mendix project folder? (y/n)`, 'y', { allowBack: false });
+      const migAns = nonInteractive ? 'y' : await ask(`Migrate execution plans to ${workspaceDir} and clean up MTA config files from the Mendix project folder? (y/n)`, 'y', { allowBack: false });
       if (migAns.toLowerCase().startsWith('y')) {
         try {
           if (fs.existsSync(mendixOutputDir)) {
@@ -118,7 +119,7 @@ async function applyWorkspaceConfiguration(state, options = {}) {
               fs.cpSync(maiaPlans, plansDir, { recursive: true, force: false });
             }
           }
-          const filesToClean = ['mta_config.json', 'mta_config.schema.json', '.env', 'mxcli.bat', 'mxcli', 'verify.bat', 'verify', 'start-linter-mcp.bat', 'start-linter-mcp'];
+          const filesToClean = ['mta_config.json', 'mta_config.schema.json', '.env', 'mxcli.bat', 'mxcli', 'verify.bat', 'verify'];
           for (const f of filesToClean) {
             const fp = path.join(state.projectDir, f);
             if (fs.existsSync(fp)) fs.unlinkSync(fp);
@@ -140,7 +141,7 @@ async function applyWorkspaceConfiguration(state, options = {}) {
     const prevOutputDir = path.join(existingConfig.workspace_dir, 'menditect-output');
     if (fs.existsSync(prevOutputDir)) {
       console.log(`\n[MIGRATION] Detected existing execution plans in previous workspace (${prevOutputDir}).`);
-      const copyAns = await ask(`Copy existing menditect-output/ execution plans into ${workspaceDir}? (y/n)`, 'y', { allowBack: false });
+      const copyAns = nonInteractive ? 'y' : await ask(`Copy existing menditect-output/ execution plans into ${workspaceDir}? (y/n)`, 'y', { allowBack: false });
       if (copyAns.toLowerCase().startsWith('y')) {
         try {
           const prevPlans = path.join(prevOutputDir, 'execution-plans');
@@ -296,6 +297,15 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
     }
   }
 
+  // Ensure MAIA skills and project-level skillssource/AGENTS.md are verified for mendix_project workspaces
+  if (workspaceType === 'mendix_project') {
+    const maiaVerify = syncAndVerifyMaiaSkills(workspaceDir, '', path.join(toolsRootDir, 'skills'));
+    if (maiaVerify.success) {
+      skillsSyncSuccess = true;
+      console.log(`${PASS} Verified MAIA skills in ${maiaVerify.targetSkillsDir} (${maiaVerify.verifiedCount}/${maiaVerify.expectedCount} skills + AGENTS.md).`);
+    }
+  }
+
   // Scaffolding & Runners
   if (workspaceType === 'custom') {
     initializeMxcli(workspaceDir, state.mprPath, null, { isMendixProject: false });
@@ -328,6 +338,15 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
   console.log(` App Instances Total:     ${state.appInstances.length}`);
   console.log(` Execution plans:         ${plansDir}`);
   console.log('======================================================\n');
+
+  try {
+    const { registerWindowsProtocolHandler } = require('../studio-pro-bridge');
+    if (registerWindowsProtocolHandler) registerWindowsProtocolHandler();
+  } catch (e) {}
+
+  if (nonInteractive) {
+    return;
+  }
 
   // Verify Prompt
   console.log('--- Workspace Verification ---');

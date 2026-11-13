@@ -5,6 +5,7 @@ const https = require('https');
 const zlib = require('zlib');
 const { execSync } = require('child_process');
 const { toolsRootDir, PASS, WARN, NOTICE, INFO, ask, isBack } = require('./cli-prompt');
+const { findMpr, removeSourceModuleFromMpr } = require('./mendix-model');
 
 const MENDITECT_MARKETPLACE_MODULES = {
   MtaPluginModule: {
@@ -54,6 +55,14 @@ const MENDITECT_MARKETPLACE_MODULES = {
     role: null
   }
 };
+
+function isPaidMtaServerUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const cleaned = url.trim().toLowerCase();
+  if (!cleaned) return false;
+  if (cleaned.includes('services.menditect.com')) return false;
+  return true;
+}
 
 function readZipEntriesFromBuffer(buf) {
   const entries = new Map();
@@ -110,12 +119,97 @@ function extractVersionFromMxModule(mxmodulePath) {
   try {
     const buf = fs.readFileSync(mxmodulePath);
     const entries = readZipEntriesFromBuffer(buf);
+    const manifestEntry = entries.get('manifest.json');
+    if (manifestEntry) {
+      const manifestBuf = extractZipEntryFromBuffer(buf, manifestEntry);
+      if (manifestBuf) {
+        try {
+          const manifestJson = JSON.parse(manifestBuf.toString('utf8'));
+          if (manifestJson && manifestJson.package && manifestJson.package.version) {
+            return String(manifestJson.package.version).trim();
+          }
+        } catch (e) {}
+      }
+    }
     for (const [name] of entries.entries()) {
       const m = name.match(/^userlib\/(?:mta-plugin|menditect-[a-z-]+)-([0-9]+\.[0-9]+\.[0-9]+)\.jar$/i);
       if (m) return m[1];
     }
   } catch (e) {}
   return null;
+}
+
+function syncAndVerifyMaiaSkills(projectDir, mxmodulePath = '', fallbackSkillsDir = '') {
+  if (!projectDir || !fs.existsSync(projectDir)) {
+    return { success: false, error: 'Project directory does not exist' };
+  }
+  const targetSkillsDir = path.join(projectDir, 'skillssource', '_modules', 'menditect_agentictestskills');
+  if (!fs.existsSync(targetSkillsDir)) {
+    fs.mkdirSync(targetSkillsDir, { recursive: true });
+  }
+
+  const effectiveMxModule = mxmodulePath || path.join(projectDir, 'modules', 'Menditect_AgenticTestSkills.mxmodule');
+  let extractedCount = 0;
+
+  if (fs.existsSync(effectiveMxModule)) {
+    try {
+      const buf = fs.readFileSync(effectiveMxModule);
+      const entries = readZipEntriesFromBuffer(buf);
+      const prefix = 'skillssource/_modules/menditect_agentictestskills/';
+      for (const [entryName, entryMeta] of entries.entries()) {
+        const normalized = entryName.replace(/\\/g, '/');
+        if (normalized.startsWith(prefix) && !normalized.endsWith('/')) {
+          const relPath = normalized.slice(prefix.length);
+          if (!relPath) continue;
+          const fileBuf = extractZipEntryFromBuffer(buf, entryMeta);
+          if (fileBuf) {
+            const destPath = path.join(targetSkillsDir, relPath);
+            const destDir = path.dirname(destPath);
+            if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+            fs.writeFileSync(destPath, fileBuf);
+            extractedCount++;
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  const effectiveFallback = fallbackSkillsDir || path.join(toolsRootDir, 'skills');
+  if (extractedCount === 0 && fs.existsSync(effectiveFallback)) {
+    try {
+      fs.cpSync(effectiveFallback, targetSkillsDir, { recursive: true });
+      extractedCount = 1;
+    } catch (e) {}
+  }
+
+  const expectedSkills = [
+    'menditecttestabilityframework',
+    'mta-build',
+    'mta-install-config',
+    'mta-run-analyze',
+    'mta-test-design'
+  ];
+  const hasAgentsMd = fs.existsSync(path.join(targetSkillsDir, 'AGENTS.md'));
+  const verifiedSkills = expectedSkills.filter(skill =>
+    fs.existsSync(path.join(targetSkillsDir, skill, 'SKILL.md'))
+  );
+
+  // Also ensure project-level skillssource/AGENTS.md exists so Studio Pro MAIA's ModuleInstructionsApi loads the orchestrator
+  const moduleAgentsPath = path.join(targetSkillsDir, 'AGENTS.md');
+  const rootSkillsSourceAgentsPath = path.join(projectDir, 'skillssource', 'AGENTS.md');
+  if (hasAgentsMd && !fs.existsSync(rootSkillsSourceAgentsPath)) {
+    try {
+      fs.copyFileSync(moduleAgentsPath, rootSkillsSourceAgentsPath);
+    } catch (e) {}
+  }
+
+  return {
+    success: hasAgentsMd && verifiedSkills.length === expectedSkills.length,
+    targetSkillsDir,
+    hasAgentsMd,
+    verifiedCount: verifiedSkills.length,
+    expectedCount: expectedSkills.length
+  };
 }
 
 function extractPlaywrightDriverVersion(releaseNotes, mxmodulePath) {
@@ -218,14 +312,6 @@ function inspectInstalledMarketplaceModules(projectDir) {
   }
 
   return result;
-}
-
-function isPaidMtaServerUrl(url) {
-  if (!url || typeof url !== 'string') return false;
-  const trimmed = url.trim().toLowerCase();
-  if (!trimmed) return false;
-  if (trimmed.includes('services.menditect.com')) return false;
-  return /^https?:\/\/|^wss?:\/\//i.test(trimmed);
 }
 
 function compareSemverDesc(a, b) {
@@ -463,6 +549,13 @@ async function installMxModuleFromMarketplace(modSpec, projectDir, mendixVersion
     fs.mkdirSync(modulesDir, { recursive: true });
   }
 
+  if (modSpec.moduleName === 'Menditect_AgenticTestSkills') {
+    const mprPath = options.mprPath || findMpr(projectDir);
+    if (mprPath && fs.existsSync(mprPath)) {
+      removeSourceModuleFromMpr(mprPath, 'Menditect_AgenticTestSkills', mxcliBin);
+    }
+  }
+
   const tmpDownloadPath = path.join(os.tmpdir(), `${modSpec.moduleName}-${resolved.version}-${Date.now()}.mpk`);
   try {
     console.log(`  Downloading ${modSpec.moduleName} v${resolved.version} (Marketplace ID ${modSpec.id})...`);
@@ -546,16 +639,9 @@ async function installMxModuleFromMarketplace(modSpec, projectDir, mendixVersion
     console.log(`  ${PASS} Installed ${modSpec.fileName} (v${resolved.version}) in modules/`);
 
     if (modSpec.moduleName === 'Menditect_AgenticTestSkills') {
-      const targetSkillsDir = path.join(projectDir, 'skillssource', '_modules', 'menditect_agentictestskills');
-      if (!fs.existsSync(targetSkillsDir)) {
-        fs.mkdirSync(targetSkillsDir, { recursive: true });
-      }
-      const centralSkills = path.join(toolsRootDir, 'skills');
-      if (fs.existsSync(centralSkills)) {
-        try {
-          fs.cpSync(centralSkills, targetSkillsDir, { recursive: true });
-          console.log(`  ${PASS} Synchronized module skills into ${path.relative(projectDir, targetSkillsDir)}`);
-        } catch (e) {}
+      const syncRes = syncAndVerifyMaiaSkills(projectDir, targetMxModulePath, path.join(toolsRootDir, 'skills'));
+      if (syncRes.success) {
+        console.log(`  ${PASS} Synchronized & verified MAIA skills in ${path.relative(projectDir, syncRes.targetSkillsDir)} (${syncRes.verifiedCount}/${syncRes.expectedCount} skills + AGENTS.md)`);
       }
     }
 
@@ -662,5 +748,6 @@ module.exports = {
   downloadBinaryFile,
   ensurePlaywrightDriverBundle,
   installMxModuleFromMarketplace,
-  syncProjectMarketplaceModules
+  syncProjectMarketplaceModules,
+  syncAndVerifyMaiaSkills
 };

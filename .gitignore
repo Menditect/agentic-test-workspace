@@ -40,3 +40,12 @@ node_modules/
 # OS Specific
 .DS_Store
 Thumbs.db
+
+# Menditect Test Automation (MTA) — Generated proxies & local secrets
+/modules/javasource/*/actions/*
+/modules/javasource/*/proxies/*
+/modules/javasource/system/*
+/javasource/*/actions/*
+/javasource/*/proxies/*
+/javasource/system/*
+.mta-credentials.enc

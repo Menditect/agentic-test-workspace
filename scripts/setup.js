@@ -34,7 +34,8 @@ const {
   isVersion1116OrHigher,
   inspectMendixMtaSettings,
   tryCreateConfigurationInMpr,
-  configureMtaPluginInMpr
+  configureMtaPluginInMpr,
+  removeSourceModuleFromMpr
 } = require('./lib/mendix-model');
 
 const {
@@ -46,7 +47,8 @@ const {
   ensureMxcliAuth,
   resolveCompatibleModuleVersion,
   ensurePlaywrightDriverBundle,
-  installMxModuleFromMarketplace
+  installMxModuleFromMarketplace,
+  syncAndVerifyMaiaSkills
 } = require('./lib/marketplace');
 
 const {
@@ -91,8 +93,10 @@ if (require.main === module) {
     extractPlaywrightDriverVersion,
     ensurePlaywrightDriverBundle,
     installMxModuleFromMarketplace,
+    syncAndVerifyMaiaSkills,
     tryCreateConfigurationInMpr,
     configureMtaPluginInMpr,
+    removeSourceModuleFromMpr,
     getOrDownloadMxcli,
     parseInstanceSelection,
     inspectMendixMtaSettings,
