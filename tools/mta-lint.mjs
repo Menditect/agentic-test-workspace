@@ -3225,6 +3225,22 @@ function validateIntentAndGroundTruth(metadata, content, stepLedgerTable, variat
     );
   }
 
+
+  // 6. Ground Truth Provenance Warning Banner for Model Baseline (PAT-121, ANTI-69)
+  if (metadata.spec_source && metadata.spec_source.type === 'model_baseline') {
+    const hasWarningBanner = /(?:Ground\s+Truth\s+Provenance\s+Warning|Tautological\s+Testing)/i.test(content);
+    if (!hasWarningBanner) {
+      addCheck(
+        "ANTI-69: Ground Truth Provenance Warning Banner",
+        false,
+        "Execution plan specifies 'spec_source.type: model_baseline' but is missing the mandatory Ground Truth Provenance Warning banner in Section 1 (PAT-121 / ANTI-69). Plans derived solely from Mendix models without external specifications must include a '> [!WARNING]' alert explaining the risk of tautological verification.",
+        "MISSING_MODEL_BASELINE_WARNING"
+      );
+    } else {
+      addCheck("ANTI-69: Ground Truth Provenance Warning Banner", true);
+    }
+  }
+
 }
 
 /**
@@ -5336,6 +5352,19 @@ category: "Backend"
       const res = lintExecutionPlan(invalidMissingSpec);
       const caughtMissingSpec = res.errors.some(e => e.code === 'MISSING_SPEC_SOURCE');
       addCheck("Fixture: invalid_intent_missing_spec.md caught MISSING_SPEC_SOURCE", !res.valid && caughtMissingSpec, "Expected invalid with MISSING_SPEC_SOURCE");
+    }
+
+    const invalidModelBaselineNoWarn = path.join(fixturesDir, 'invalid_model_baseline_no_warning.md');
+    if (fs.existsSync(invalidModelBaselineNoWarn)) {
+      const res = lintExecutionPlan(invalidModelBaselineNoWarn);
+      const caughtWarning = res.errors.some(e => e.code === 'MISSING_MODEL_BASELINE_WARNING');
+      addCheck("Fixture: invalid_model_baseline_no_warning.md caught MISSING_MODEL_BASELINE_WARNING", !res.valid && caughtWarning, "Expected invalid with MISSING_MODEL_BASELINE_WARNING");
+    }
+
+    const validModelBaselineWithWarn = path.join(fixturesDir, 'valid_model_baseline_with_warning.md');
+    if (fs.existsSync(validModelBaselineWithWarn)) {
+      const res = lintExecutionPlan(validModelBaselineWithWarn);
+      addCheck("Fixture: valid_model_baseline_with_warning.md passes with Ground Truth Provenance Warning", res.valid, "Expected valid with warning banner");
     }
 
     if (fs.existsSync(validPlan) && fs.existsSync(passServer)) {

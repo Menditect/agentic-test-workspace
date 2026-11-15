@@ -9,8 +9,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const customLinter = path.join(__dirname, 'mta-lint.custom.mjs');
 const baseLinter = path.join(__dirname, 'mta-lint.mjs');
 
-// PAT-113 / ANTI-62: Pinned normalized (LF) SHA-256 baseline hash for tools/mta-lint.mjs v1.12.0
-const EXPECTED_LINTER_SHA256 = '41d48735542f67a935c1fb46d30a626bd9ccc7a362883b8aa5f0d7a427fe057c';
+// PAT-113 / ANTI-62: Pinned normalized (LF) SHA-256 baseline hash for tools/mta-lint.mjs v1.13.0
+const EXPECTED_LINTER_SHA256 = 'f2cba818cc279ca3eb7560334e7c6b83381ced4b3adb0fcd7b833d4e6d5081b1';
 
 if (fs.existsSync(customLinter)) {
   console.error('[FATAL] Unauthorized local linter override detected at tools/mta-lint.custom.mjs.');
