@@ -201,10 +201,11 @@ Configure your assistant's MCP client using the connection details specified in 
 Studio Pro MAIA is supported on **Mendix 11.12 and higher** (for Mendix versions `< 11.12`, use an external `agentic-test-workspace` with `mxcli`).
 
 When you install [Menditect MTA Agentic Tools & Skills](https://marketplace.mendix.com/link/component/305457) (Marketplace Component `305457`, `MenditectMtaAgenticToolsSkills.mxmodule`)—either via `npm run setup` or directly from the Mendix Marketplace—its bundled **`mta-linter` TypeScript Studio Pro Web Extension** starts automatically when Studio Pro opens your project and:
-1. Synchronizes all Menditect skills into `<MendixProjectDir>/skillssource/_modules/menditect_agentictestskills/`.
-2. Creates or updates `<MendixProjectDir>/skillssource/AGENTS.md` and `<MendixProjectDir>/AGENTS.md` (preserving any custom instructions outside the managed block).
-3. Registers all **10 canonical `mta-lint.mjs` tools** (`get_config`, `update_config`, `lint_plan`, `pre_exec_check`, `stage_placement`, `pre_build_check`, `lock_plan`, `verify_lock`, `smoke_audit`, `list_plans`) natively inside MAIA.
-4. Persists all Menditect test execution plans (`EP_*.md`) to `<MendixProjectDir>/menditect-output/execution-plans/` via `lint_plan(persist: true)`, keeping Menditect **test plans** cleanly separated from MAIA **application build plans** (`maia/plans/`).
+1. **Manages & Auto-Updates All Modules, Tools & Skills:** Manages all Menditect modules, tools, and skills in your app and keeps them automatically up to date for you — no more manual updates from the Marketplace required anymore.
+2. **Syncs Menditect Skills & Directives:** Synchronizes all Menditect skills into `<MendixProjectDir>/skillssource/_modules/menditect_agentictestskills/` and creates or updates `<MendixProjectDir>/skillssource/AGENTS.md` and `<MendixProjectDir>/AGENTS.md` (preserving any custom instructions outside the managed block).
+3. **Registers Native MAIA Tools:** Registers all **10 canonical `mta-lint.mjs` tools** (`get_config`, `update_config`, `lint_plan`, `pre_exec_check`, `stage_placement`, `pre_build_check`, `lock_plan`, `verify_lock`, `smoke_audit`, `list_plans`) natively inside MAIA.
+4. **Full Paid MTA & Regression Test Integration:** When the paid MTA server is configured, takes care of its integration with MAIA, allowing you to persist tests at all levels in MTA to keep them as regression tests with a single prompt.
+5. **Clean Execution Plan Storage:** Persists all Menditect test execution plans (`EP_*.md`) to `<MendixProjectDir>/menditect-output/execution-plans/` via `lint_plan(persist: true)`, keeping Menditect **test plans** cleanly separated from MAIA **application build plans** (`maia/plans/`).
 
 The managed directive block in `skillssource/AGENTS.md` and `AGENTS.md` is:
 

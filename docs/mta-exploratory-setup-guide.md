@@ -125,11 +125,12 @@ If your project already defines an *After Startup* microflow under **App > Setti
 If you work in Studio Pro 11.12+, setup takes less than two minutes using the built-in extension.
 
 ### What the Extension Does
-The extension sets up everything needed for exploratory testing inside Studio Pro:
-- Installs and configures the MTA runtime plugin module.
-- Syncs Menditect testing skills and registers testing tools inside MAIA.
+The extension sets up and manages everything needed for AI-driven testing inside Studio Pro:
+- Manages all Menditect modules, tools, and skills in your app and keeps them automatically up to date for you — no more manual updates from the Marketplace required anymore.
+- Installs and configures the MTA runtime plugin module and registers testing tools and skills inside MAIA.
 - Lets you request and configure your free exploratory license with a single click.
-- Runs tests in-memory with automatic database rollback so your application data stays clean.
+- When the paid MTA server is configured, takes care of its integration with MAIA, allowing you to persist tests at all levels in MTA to keep them as regression tests with a single prompt.
+- Runs exploratory tests in-memory with automatic database rollback so your application data stays clean.
 
 ### Setup Steps
 1. **Import the Extension:** Add [Menditect MTA Agentic Tools & Skills](https://marketplace.mendix.com/link/component/305457) (`MenditectMtaAgenticToolsSkills.mxmodule`) to your Mendix project.
