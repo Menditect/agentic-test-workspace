@@ -415,32 +415,27 @@ The Agentic Test Workspace orchestrates specialized MCP servers and a determinis
 | **`mta`** | Stdio (via `mta-proxy.js`) or HTTP | Connects to the Menditect MTA Cloud / Server platform for persistent test suites, test cases, variation matrices, and backend assertions. | Bearer Token (`MTA_MCP_AUTH_HEADER` in `.env`) |
 | **`mta_plugin`** | Stdio (via `mta-proxy.js` &rarr; HTTP `/plugin/mcp`) | Connects to the running Mendix application runtime for sub-second, in-memory exploratory test execution (`execute-testcase`). | Bearer Token (`PLUGIN_MCP_TOKEN` in `.env`) |
 | **`StudioPro`** | Stdio (via `mta-proxy.js` &rarr; HTTP port 7782) | Optional live model inspection server embedded in Mendix Studio Pro 11.12+. | None |
-| **`mta-lint.mjs` / `mta-linter` Extension** | • **External IDEs:** Direct Node.js CLI (`node tools/mta-lint.mjs`)<br>• **Studio Pro MAIA (11.12+):** Bundled TypeScript Studio Pro Web Extension in `Menditect_AgenticTestSkills.mxmodule` | Canonical 6-section test plan linter, safety gate enforcement (`pre_exec_check`, `pre_build_check`), Gate 2 placement staging, SHA-256 plan locking, and post-build semantic smoke auditing. | Local File System / Studio Pro `AppFilesApi` |
+| **`mta-lint.mjs` / `mta-linter` Extension** | • **External IDEs:** Direct Node.js CLI (`node tools/mta-lint.mjs`)<br>• **Studio Pro MAIA (11.12+):** Bundled TypeScript Studio Pro Web Extension in `MenditectMtaAgenticToolsSkills.mxmodule` | Canonical 6-section test plan linter, safety gate enforcement (`pre_exec_check`, `pre_build_check`), Gate 2 placement staging, SHA-256 plan locking, and post-build semantic smoke auditing. | Local File System / Studio Pro `AppFilesApi` |
 
-### Built-in `mta-linter` Studio Pro Extension for Mendix MAIA (Mendix 11.12+)
+### Using Mendix Studio Pro MAIA vs. External AI Workspaces
 
-While external AI coding assistants (Cursor, VS Code, Claude Code, Antigravity) execute `node tools/mta-lint.mjs` directly via CLI, **Mendix Studio Pro MAIA (11.12+)** runs inside Studio Pro without direct shell/Node.js access. To provide identical deterministic enforcement in MAIA with **zero external processes to start**:
+Depending on your Mendix version and developer workflow, choose the approach that fits your project:
 
-* **Bundled in `Menditect_AgenticTestSkills.mxmodule` (Component `305457`):**
-  - The `mta-linter` TypeScript Studio Pro Web Extension is packaged directly inside `Menditect_AgenticTestSkills.mxmodule`.
-  - It starts automatically whenever Studio Pro opens the Mendix project (no batch files, background Node servers, or localhost ports required).
-* **Automatic Skill Sync & Zero-Setup `mta_config.json` Bootstrap:**
-  - On Studio Pro startup, the extension automatically copies/updates all skills in `skillssource/_modules/menditect_agentictestskills/` and ensures `skillssource/AGENTS.md`, `AGENTS.md`, and `mta_config.schema.json` are present via `mendix.AppFilesApi`.
-  - If the module was installed directly from the Mendix Marketplace without running `npm run setup`, MAIA calls `get_config()` (which auto-detects the project name and `.mpr` path via `mendix.ProjectManagerApi`) and initializes `<MendixProjectDir>/mta_config.json` via `update_config({ create_if_missing: true, updates })`.
-* **Dedicated Menditect Test Plan Directory (`menditect-output/execution-plans/`):**
-  - Across all Mendix versions `>= 11.12` (including Mendix 11.16+ Plan Mode), MAIA passes `plan_content` with `persist: true` to `lint_plan`, which validates and writes Menditect test plans to `<MendixProjectDir>/menditect-output/execution-plans/EP_*.md` and records the gate ledger at `<MendixProjectDir>/menditect-output/.mta-gate-ledger.json`.
-  - This ensures **Menditect test plans** (`menditect-output/execution-plans/`) are always cleanly separated from **MAIA application build plans** (`maia/plans/`).
-* **10 Native MAIA Tools (`mendix.ExternalAIToolRegistryApi`):**
-  1. `get_config`: Read active workspace configuration from `mta_config.json` (or auto-detect project defaults if missing).
-  2. `update_config`: Initialize or deep-merge updates into `mta_config.json` and validate against schema invariants.
-  3. `lint_plan`: Lint a 6-section Execution Plan (`EP_*.md`) and persist it to `menditect-output/execution-plans/` when `persist: true`.
-  4. `pre_exec_check`: Verify on-disk plan existence, status (`AUTO_APPROVED` / `APPROVED`), and gate ledger receipt before `MTA_plugin.execute-testcase`.
-  5. `stage_placement`: Stage target configuration, suite, and Playwright options in `.mta-gate-ledger.json` before Checkpoint 2.
-  6. `pre_build_check`: Verify Gate 1 and Gate 2 human approval before mutating MTA Cloud/Server assets.
-  7. `lock_plan`: Compute SHA-256 hash and lock a Red bug-reproduction test plan (`PAT-124`).
-  8. `verify_lock`: Verify that a locked test plan's assertions have not been tampered with during code repair (`ANTI-78`).
-  9. `smoke_audit`: Run the 4-phase semantic smoke audit comparing the approved plan against MTA server JSON payloads.
-  10. `list_plans`: List all discovered `EP_*.md` test execution plans in `menditect-output/execution-plans/`.
+- **For Mendix 11.12+ (Studio Pro MAIA):**  
+  Use the **Menditect MTA Agentic Tools & Skills** extension (`MenditectMtaAgenticToolsSkills.mxmodule`).  
+  It runs directly inside Studio Pro as a native web extension, synchronizes AI testing skills into your project, registers testing tools in MAIA, and provides an in-app setup dialog under **Extensions > Menditect MTA**. No external workspace or CLI required.
+
+- **For Mendix 9, 10, or 11.0–11.11, or External AI IDEs:**  
+  Use this **Agentic Test Workspace** (`agentic-test-workspace`).  
+  It runs alongside your project in external AI IDEs (Cursor, Claude Code, Antigravity, VS Code), using `mxcli` for headless model inspection and `tools/mta-lint.mjs` for deterministic verification.
+
+#### Studio Pro Extension Capabilities (Mendix 11.12+)
+When using the extension in Studio Pro:
+1. **Zero-Friction Setup:** The configuration dialog (**Extensions > Menditect MTA > MTA setup & configuration**) lets you switch between:
+   - **MTA Exploratory Free Edition:** Requires only an **Application Instance Token** (with a 1-click free request button) and a local **Plugin MCP Bearer Token** of your choice.
+   - **MTA Functional (paid license):** Requires your **MTA Server URL** and a **Bearer Token** created in MTA via a Service Account (with *Primitive Tools* scope).
+2. **One-Click Maintenance:** Automatically downloads and configures the MTA Plugin module, updates `.gitignore`, and sets runtime constants.
+3. **Deterministic Safety:** MAIA uses native extension tools to lint test plans and verify rollback flags before executing tests, ensuring test execution plans live in `menditect-output/execution-plans/` and application models remain untouched.
 
 <!-- BEGIN_SHARED_MTA_CONFIG_CONTRACT -->
 ## Configuration Contract (`mta_config.json`) & Resolution Hierarchy

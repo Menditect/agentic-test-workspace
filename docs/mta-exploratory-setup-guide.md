@@ -37,7 +37,7 @@ The **MTA Runtime Plugin** is required for all setups. You can choose how your A
 | :--- | :--- | :--- |
 | **Primary Environment** | Inside Mendix Studio Pro (**11.12+ only**; for Mendix `< 11.12`, use Variant 2) | External AI IDE (Cursor, VS Code, Antigravity, Claude Code) |
 | **Model Inspection** | Live native Studio Pro model context | Headless and offline via `mxcli` + local SQLite `catalog.db` |
-| **Testing Skills & Linter** | Marketplace module `Menditect_AgenticTestSkills.mxmodule` (`305457`) with bundled `mta-linter` Studio Pro Web Extension | Project or workspace `./skills/` and `./tools/mta-lint.mjs` |
+| **Testing Skills & Linter** | Marketplace module `MenditectMtaAgenticToolsSkills.mxmodule` with bundled `mta-linter` Studio Pro Web Extension | Project or workspace `./skills/` and `./tools/mta-lint.mjs` |
 | **Execution Plan Location** | `<MendixProjectDir>/menditect-output/execution-plans/EP_*.md` (distinct from MAIA build plans in `maia/plans/`) | `<WorkspaceDir>/menditect-output/execution-plans/EP_*.md` |
 | **Git Impact on Mendix** | Skills module & test plans committed to Mendix repository | **Zero impact** (isolated in dedicated tools workspace) |
 | **Best For** | Developers working entirely within Mendix Studio Pro 11.12+ | Developers using external AI coding IDEs or testing Mendix 9, 10, & 11 apps |
@@ -122,91 +122,26 @@ If your project already defines an *After Startup* microflow under **App > Setti
 
 ## Variant 1: Setup in Mendix MAIA (Studio Pro AI Assistant)
 
-Use this setup to work **entirely inside Mendix Studio Pro (11.12+)** using the built-in **Mendix AI Assistant (MAIA)**.
+If you work in Studio Pro 11.12+, setup takes less than two minutes using the built-in extension.
 
-> [!IMPORTANT]
-> **Mendix Version Requirement:**
-> Studio Pro MAIA and `Menditect_AgenticTestSkills.mxmodule` are supported **only on Mendix 11.12 and higher**. For Mendix versions below 11.12 (Mendix 9, 10, or 11.0–11.11), use **Variant 2: Agentic Test Workspace** with `mxcli`.
+### What the Extension Does
+The extension sets up everything needed for exploratory testing inside Studio Pro:
+- Installs and configures the MTA runtime plugin module.
+- Syncs Menditect testing skills and registers testing tools inside MAIA.
+- Lets you request and configure your free exploratory license with a single click.
+- Runs tests in-memory with automatic database rollback so your application data stays clean.
 
-### 1. Prerequisites
-* **Mendix Studio Pro 11.12 or higher** with MAIA enabled (ensure Studio Pro extensions are enabled, e.g., `--enable-extension-development` if required by your Studio Pro installation).
-* The **MTA Plugin** (`MtaPluginModule.mxmodule`, Marketplace ID `214717`) installed and running (from the Common Step).
-
-### 2. Install the `Menditect_AgenticTestSkills` Add-on Module (`305457`)
-You can install `Menditect_AgenticTestSkills.mxmodule` either directly from the **Mendix Marketplace** inside Studio Pro or automatically via `npm run setup` (choosing Option `[2] Mendix project directory as workspace`).
-
-1. In Mendix Studio Pro, open the **Marketplace** and download **`Menditect_AgenticTestSkills`** (Component ID `305457`).
-2. `Menditect_AgenticTestSkills.mxmodule` (`v2.0.0+`) is a Mendix 11.12+ Add-on Module that bundles both the official Menditect testing skills AND the **`mta-linter` TypeScript Studio Pro Web Extension**.
-3. As soon as Studio Pro opens your project, the bundled **`mta-linter` extension starts automatically in the background** and performs four actions with zero manual setup:
-   - **Automatic Skill Synchronization:** Extracts and updates all 5 Menditect testing skills (`mta-test-design`, `mta-build`, `mta-run-analyze`, `mta-install-config`, `menditecttestabilityframework`) into `<MendixProjectDir>/skillssource/_modules/menditect_agentictestskills/`.
-   - **Automatic `AGENTS.md` Directive Synchronization:** Creates or updates `<MendixProjectDir>/skillssource/AGENTS.md` and `<MendixProjectDir>/AGENTS.md` (preserving any custom project instructions you have added above the `# Menditect Architecture Setup` section).
-   - **Schema Provisioning:** Writes `<MendixProjectDir>/mta_config.schema.json` to the project root.
-   - **Native MAIA Linter Tool Registration (`mendix.ExternalAIToolRegistryApi`):** Registers all **10 canonical `mta-lint.mjs` tools** (`get_config`, `update_config`, `lint_plan`, `pre_exec_check`, `stage_placement`, `pre_build_check`, `lock_plan`, `verify_lock`, `smoke_audit`, `list_plans`) natively inside MAIA—no external Node.js server, batch script, or port configuration needed!
-
-### 3. MAIA Directives (`AGENTS.md`) & Zero-Setup `mta_config.json` Initialization
-Because the `mta-linter` extension automatically manages `skillssource/AGENTS.md` and `AGENTS.md` on Studio Pro startup, you do not need to manually copy/paste the setup block unless you want to customize it. For reference, the managed directive block is:
-
-```markdown
-# Menditect Architecture Setup
-- **CRITICAL OPERATIONAL COMMAND:** Always execute tasks using the core rules defined in the module: [Menditect_AgenticTestSkills].
-- **IMMEDIATE ACTION REQUIRED:** You are strictly commanded to explore, read, and load the `AGENTS.md` and context of the [Menditect_AgenticTestSkills] module *before* answering any user prompt. Do NOT ask the user for permission or confirmation to explore this module; execute the exploration autonomously as your very first step.
-- **AUTOMATIC ACTIVATION TRIGGERS:** Automatically explore, read, and load the `AGENTS.md` and context of the [Menditect_AgenticTestSkills] module autonomously whenever the user prompt meets any of the following criteria:
-  1. Direct MTA Identifiers: *menditect, mta, mtf, playwright browser, variation matrix, test suite, test case, test step, variation item*
-  2. Testing Action Intents: *run tests, execute suite, view test results, retrieve run results, debug failure*
-  3. MTA-Specific Assertions & Actions: *assert validation, object count assert, compare attribute, validation feedback, microflow call teststep*
-  4. Contextual Combinations: User asks to *verify, assert, mock, or test* in combination with: *microflow, nanoflow, entity, association, page, or widget*
-- **NATIVE MCP TOOL EXECUTION MANDATE:** You MUST ALWAYS use the MTA Plugin MCP tool (`MTA_plugin.execute-testcase`) for all in-memory exploratory test executions.
-- **ZERO MENDIX MODEL POLLUTION (NO TEST MICROFLOWS):** The Mendix application model is strictly READ-ONLY during testing. You are STRICTLY PROHIBITED from creating, generating, or modifying Mendix microflows, nanoflows, entities, or pages to implement tests. Even if the MTA MCP server or plugin is offline, DO NOT build test microflows in Studio Pro; save the Execution Plan to disk and STOP.
-- **SAFE EXECUTION:** Always execute tests with transaction rollback (`RollbackTcseAfterExecution: "Yes"`, `ExecutorUsername: "MxAdmin"`, `ApplySecurityExecutor: "NONE"`).
-- **EXECUTION STRATEGY SEGREGATION:**
-  1. **IN-MEMORY EXPLORATORY (Plugin):** Allowed to auto_execute ONLY when using MTA_plugin.execute-testcase (zero database mutation, safe rollback) and MAIA Plan Mode is disabled.
-  2. **MAIA PLAN MODE & TEST PLAN LOCATION (Mendix 11.12+):** If MAIA Plan Mode is enabled, treat as `prompt_approval` (auto-execution is strictly prohibited). Across all Mendix versions `>= 11.12`, MAIA MUST always write Menditect test execution plans (`EP_*.md`) in the canonical 6-section format (`references/execution-plan-template.md`) to `menditect-output/execution-plans/` via `lint_plan(persist: true)`, keeping Menditect test plans cleanly separated from MAIA application build plans (`maia/plans/`).
-  3. **PERSISTENT MTA PLATFORM MUTATIONS:** STRICTLY PROHIBITED from auto-executing. Before calling ANY mutating MTA server tools (CreateTestSuite, CreateTestCase, CreateObjectActionTestStep, etc.), the agent MUST pause and receive explicit, unambiguous user approval for Checkpoint 1 (Execution Plan) and Checkpoint 2 (Placement Summary). Never bypass this gate based on automated linter passes or context compaction summaries.
-- **MTA LICENSE TIER & CAPABILITIES:**
-  * If `MTA` MCP server is not configured and `MtaPluginModule.MTAConnectionUrl` is `wss://services.menditect.com`, the user is operating under the **Free MTA Exploratory License**.
-  * **Free Capabilities:** Unlimited local in-memory microflow testing (`execute-testcase`) and local Execution Plan generation (`EP_*.md`).
-  * **Paid Platform Capabilities:** Persistent test suites, Playwright Frontend UI testing, and CI/CD automated regression pipelines require a paid MTA Platform License.
-- **MANDATORY `mta-linter` STUDIO PRO EXTENSION GATE (MENDIX 11.12+):** `Menditect_AgenticTestSkills.mxmodule` bundles the `mta-linter` TypeScript Studio Pro Web Extension, which automatically starts on Studio Pro startup and registers the 10 canonical `mta-lint.mjs` tools (`get_config`, `update_config`, `lint_plan`, `pre_exec_check`, `stage_placement`, `pre_build_check`, `lock_plan`, `verify_lock`, `smoke_audit`, `list_plans`) natively in MAIA. Calling these tools (`lint_plan` with `persist: true`, `pre_exec_check`, `stage_placement`, `pre_build_check`, `lock_plan`, `verify_lock`, `smoke_audit`) is **strictly mandatory** when using the MTA skills inside Studio Pro MAIA (`PAT-43`, `ANTI-46`, `ANTI-80`). Cognitive fallback is prohibited. If the `mta-linter` tools are not visible in MAIA's tool catalog, HALT and instruct the user to verify that `Menditect_AgenticTestSkills.mxmodule` is installed in `modules/` and extensions are enabled in Studio Pro. For Mendix versions `< 11.12`, instruct the user to use the separate external `agentic-test-workspace` with `mxcli`.
-- **ENVIRONMENT CONFIGURATION & ZERO-SETUP INITIALIZATION:** All runtime settings (Application Name, MTA Base URL, Active App Instances, ApplicationInstanceTokens, and Playwright preferences) must be loaded dynamically from `mta_config.json` (or via `get_config()` in Studio Pro MAIA). If `mta_config.json` does not exist yet (e.g., when installed directly from Marketplace), call `get_config()` to retrieve auto-detected project defaults, prompt the user for `mta_base_url` and `default_app_instance_token`, and initialize `<MendixProjectDir>/mta_config.json` via `update_config({ create_if_missing: true, updates })`. Never bake hardcoded tokens or URLs into prompt text or test files.
-```
-
-> [!TIP]
-> **Zero-Setup `mta_config.json` Initialization in MAIA:**
-> If you installed `Menditect_AgenticTestSkills.mxmodule` directly from the Mendix Marketplace without running `npm run setup`, you do **not** need to create `mta_config.json` by hand! On your first testing prompt, MAIA calls the extension's `get_config()` tool, which automatically detects your Mendix project name and `.mpr` file from Studio Pro (`mendix.ProjectManagerApi`), asks you for your `mta_base_url` and `default_app_instance_token` (if needed), and creates `<MendixProjectDir>/mta_config.json` via `update_config({ create_if_missing: true, updates })`.
-
-### 4. Connect MAIA to the Local MTA Plugin MCP Server (`MTA_plugin`)
-Configure MAIA's MCP tool settings in Studio Pro (see [Mendix MAIA MCP Documentation](https://docs.mendix.com/refguide/maia-mcp/#adding-server)):
-
-* **Server Name:** `MTA_plugin`
-* **URL:** `http://localhost:[YourPort]/plugin/mcp`
-* **Connection type:** `HTTP`
-* **Authentication:** `Bearer Token`: use the exact value set in `MtaPluginModule.McpServerAccessToken`
-
-> [!TIP]
-> Make sure the `execute-testcase` tool is enabled in the MAIA MCP Settings pane, and verify that the 10 `mta-linter` extension tools (`get_config`, `update_config`, `lint_plan`, `pre_exec_check`, `stage_placement`, `pre_build_check`, `lock_plan`, `verify_lock`, `smoke_audit`, `list_plans`) appear in MAIA's tool list.
-
-#### Dedicated Menditect Test Plan Folder (`menditect-output/execution-plans/`)
-Across all Mendix versions `11.12+` (including Mendix 11.16+ Plan Mode), MAIA uses `lint_plan(persist: true)` to validate and write Menditect test execution plans to:
-* `<MendixProjectDir>/menditect-output/execution-plans/EP_<TestCaseName>.md` (with gate ledger receipts stored at `<MendixProjectDir>/menditect-output/.mta-gate-ledger.json`)
-
-This keeps **Menditect test plans** (`menditect-output/execution-plans/EP_*.md`) cleanly separated from **MAIA application build plans** (`maia/plans/`).
-
-### 5. Execute an Exploratory Test in MAIA
-1. Ensure your Mendix app is running locally (**F5**).
-2. Open the **MAIA Chat** panel inside Mendix Studio Pro.
-3. Prompt MAIA:
-
-```text
-Using the Menditect Agentic Test Skills module, execute an in-memory exploratory test via MTA_plugin for microflow MyModule.SUB_CalculateDiscount on my running app. Verify boundary conditions and check return values. Draft the 6-section execution plan, validate and persist it to menditect-output/execution-plans/EP_SUB_CalculateDiscount.md using lint_plan(persist: true) and pre_exec_check, and execute via MTA_plugin.execute-testcase. Do not create test microflows in Mendix.
-```
-
-4. **MAIA Execution Process:**
-   * MAIA reads `mta_config.json` via `get_config` (or initializes it via `update_config`) and inspects the microflow directly from your active Studio Pro model (`ped_read_document` with `depth=4`).
-   * It drafts a canonical 6-section Execution Plan and calls `lint_plan({ plan_content, persist: true })` to validate and write `menditect-output/execution-plans/EP_SUB_CalculateDiscount.md` and `menditect-output/.mta-gate-ledger.json`.
-   * It invokes `pre_exec_check` to verify structural integrity and approval status (`status: "AUTO_APPROVED"` when MAIA Plan Mode is off, or `"APPROVED"` after Checkpoint 1 when Plan Mode is on).
-   * It sends the validated test payload (`TCEX_RQ`) to `MTA_plugin.execute-testcase`.
-   * The microflow executes in the JVM and rolls back immediately (`RollbackTcseAfterExecution: "Yes"`).
-   * MAIA displays the execution telemetry, step durations, and verified return values in the chat.
+### Setup Steps
+1. **Import the Extension:** Add **Menditect MTA Agentic Tools & Skills** (`MenditectMtaAgenticToolsSkills.mxmodule`) to your Mendix project.
+2. **Open Configuration:** In Studio Pro, select **Extensions > Menditect MTA > MTA setup & configuration**.
+3. **Configure Free Edition Credentials:**
+   - Select **MTA Exploratory Free Edition**.
+   - Enter your **Application Instance Token**. If you don't have one, click **Request Free License** to generate one instantly.
+   - Set your **Plugin MCP Access Token** (default `1` is recommended for local development).
+   - Click **Save Configuration**. The extension automatically installs the required MTA plugin module and configures project settings.
+4. **Run Your App:** Press **F5** (Run Locally).
+5. **Ask MAIA to Test:** Open MAIA and ask:
+   > *"Execute an in-memory exploratory test for microflow MyModule.SUB_CalculateTotal."*
 
 #### 💡 MAIA Prompting Best Practices: Do's and Don'ts
 
