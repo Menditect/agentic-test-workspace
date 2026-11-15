@@ -1,0 +1,25 @@
+{
+  "RollbackTcseAfterExecution": "Yes",
+  "TCEX_RS_TestStepRun": [
+    {
+      "SequenceNumber": 1,
+      "TestStepType": "CreateObject",
+      "Status": "PASSED"
+    },
+    {
+      "SequenceNumber": 2,
+      "TestStepType": "RetrieveObject",
+      "ObjectCount": 1,
+      "Status": "PASSED"
+    },
+    {
+      "SequenceNumber": 3,
+      "TestStepType": "MicroflowCall",
+      "TCEX_RS_TestStepRunMfc": {
+        "ReturnValue": "true"
+      },
+      "Status": "PASSED"
+    }
+  ],
+  "TCEX_RS_ValidationFeedback": []
+}

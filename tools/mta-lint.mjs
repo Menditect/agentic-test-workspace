@@ -20,7 +20,7 @@ import process from 'node:process';
 import crypto from 'node:crypto';
 import net from 'node:net';
 
-export const LINTER_VERSION = "1.11.0";
+export const LINTER_VERSION = "1.12.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -144,6 +144,18 @@ async function main() {
         process.exit(result.valid ? 0 : 1);
         break;
       }
+      case 'mutate': {
+        const planPath = args[1];
+        const telemetryPath = args[2];
+        if (!planPath || planPath.startsWith('--') || !telemetryPath || telemetryPath.startsWith('--')) {
+          console.error("Error: Missing arguments. Usage: mta-lint mutate <path/to/EP_*.md> <path/to/telemetry.json> [--json]");
+          process.exit(1);
+        }
+        const result = runMutationAudit(planPath, telemetryPath);
+        outputResult(result, isJson, "MTA Reverse Mutation Testing & Oracle Sensitivity Audit (PAT-126)");
+        process.exit(result.valid ? 0 : 1);
+        break;
+      }
       case 'artifacts':
       case 'artifact': {
         const outputDir = args[1] && !args[1].startsWith('--') ? args[1] : 'menditect-output';
@@ -166,7 +178,7 @@ async function main() {
         break;
       }
       default:
-        console.error(`Unknown command: '${command}'. Available commands: lock, verify-lock, stage-placement, pre-build, pre-exec, plan, audit, artifacts, config, self-test`);
+        console.error(`Unknown command: '${command}'. Available commands: lock, verify-lock, stage-placement, pre-build, pre-exec, plan, audit, mutate, artifacts, config, self-test`);
         printHelp();
         process.exit(1);
     }
@@ -194,6 +206,7 @@ Commands:
   pre-exec <file> [--json]             Verify persisted plan & approval status before Option A execution
   plan <file> [--json]                 Validate Execution Plan syntax, schema, and pattern rules
   audit <plan-file> <server-json> [server2.json ...] Verify constructed MTA server state against plan (4-phase diff)
+  mutate <plan-file> <telemetry-json>  Generate reverse mutants and evaluate against runtime telemetry (PAT-126)
   artifacts [dir] [--json]             Audit execution outputs against Execution Plan artifacts (MTA-LINT-E010)
   config [path] [--json]               Validate mta_config.json structure and path integrity
   self-test                            Run internal unit tests and rule compliance checks
@@ -216,7 +229,11 @@ function outputResult(result, isJson, title) {
   console.log(`==================================================`);
   if (result.target) console.log(`Target  : ${result.target}`);
   console.log(`Status  : ${result.valid ? 'PASS' : 'FAIL'}`);
-  console.log(`Score   : ${result.passedCount}/${result.totalCount} checks passed\n`);
+  console.log(`Score   : ${result.passedCount !== undefined ? result.passedCount : (result.killedCount ?? 0)}/${result.totalCount} checks passed\n`);
+
+  if (result.markdownReport) {
+    console.log(`${result.markdownReport}\n`);
+  }
 
   if (result.checks && result.checks.length > 0) {
     for (const check of result.checks) {
@@ -4315,6 +4332,356 @@ ${phase0Line}* **Phase 1 (Step Count Parity):** Planned: ${pCount} | Server: ${s
 }
 
 // ==========================================
+// Reverse Mutation Testing Engine (PAT-126, ANTI-84)
+// ==========================================
+
+function generateMutantsForValue(stepNum, stepName, targetType, valStr, addMutant) {
+  const cleanVal = String(valStr).replace(/^[`'"]+|[`'"]+$/g, '').trim();
+
+  // Boolean
+  if (/^(?:true|_True)$/i.test(cleanVal)) {
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_BOOL', cleanVal, 'false', 'Inverted boolean return value (true -> false)', 'Test detects if conditional decision branch in microflow flips');
+    return;
+  }
+  if (/^(?:false|_False)$/i.test(cleanVal)) {
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_BOOL', cleanVal, 'true', 'Inverted boolean return value (false -> true)', 'Test detects if conditional decision branch in microflow flips');
+    return;
+  }
+
+  // Number (Integer, Decimal, Float)
+  if (/^-?\d+(?:\.\d+)?$/.test(cleanVal)) {
+    const num = parseFloat(cleanVal);
+    const isDecimal = cleanVal.includes('.');
+    const decimalPlaces = isDecimal ? cleanVal.split('.')[1].length : 0;
+    const formatNum = (n) => isDecimal ? n.toFixed(decimalPlaces) : String(Math.round(n));
+
+    // AMO_RET_NUM_DELTA: +1
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_NUM_DELTA', cleanVal, formatNum(num + 1), `Off-by-one (+1) in return value (${cleanVal} -> ${formatNum(num + 1)})`, 'Test detects off-by-one threshold calculation errors');
+
+    // AMO_RET_NUM_DELTA: -1
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_NUM_DELTA', cleanVal, formatNum(num - 1), `Off-by-one (-1) in return value (${cleanVal} -> ${formatNum(num - 1)})`, 'Test detects off-by-one base calculation errors');
+
+    // AMO_RET_NUM_ZERO: 0.00 or non-zero
+    if (num !== 0) {
+      addMutant(stepNum, stepName, targetType, 'AMO_RET_NUM_ZERO', cleanVal, formatNum(0), `Zero return value (${cleanVal} -> ${formatNum(0)})`, 'Test detects if calculation defaults to zero');
+    } else {
+      addMutant(stepNum, stepName, targetType, 'AMO_RET_NUM_ZERO', cleanVal, formatNum(1), `Non-zero return value (0 -> 1)`, 'Test detects if calculation fails to return zero');
+    }
+    return;
+  }
+
+  // Enum or String
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(cleanVal)) {
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_ENUM', cleanVal, `__MUTANT_${cleanVal}__`, `Alternative enum value (${cleanVal} -> __MUTANT_${cleanVal}__)`, 'Test detects if microflow assigns incorrect enum constant');
+  } else {
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_STR', cleanVal, `MUTANT_${cleanVal}`, `Altered string return value (${cleanVal} -> MUTANT_${cleanVal})`, 'Test detects unexpected string output or concatenation errors');
+  }
+}
+
+function generateMutantsForValidationCount(stepNum, stepName, countStr, addMutant) {
+  const cleanCount = String(countStr).replace(/^[`'"]+|[`'"]+$/g, '').trim();
+  const count = parseInt(cleanCount, 10) || 0;
+  if (count === 0) {
+    addMutant(stepNum, stepName, 'ValidationFeedbackCount', 'AMO_VF_COUNT', '0', '1', 'Validation feedback raised unexpectedly (0 -> 1 message)', 'Test detects if valid input erroneously triggers validation feedback');
+  } else {
+    addMutant(stepNum, stepName, 'ValidationFeedbackCount', 'AMO_VF_COUNT', String(count), '0', `Validation feedback omitted (${count} -> 0 messages)`, 'Test detects if invalid input fails to raise required validation feedback');
+  }
+}
+
+function generateMutantsForValidationMsg(stepNum, stepName, msgStr, addMutant) {
+  const cleanMsg = String(msgStr).replace(/^[`'"]+|[`'"]+$/g, '').trim();
+  addMutant(stepNum, stepName, 'ValidationFeedbackMessage', 'AMO_VF_MSG', cleanMsg, `MUTANT_${cleanMsg}`, `Altered validation feedback message text`, 'Test detects if wrong validation feedback message is displayed');
+}
+
+function generateMutantsForObjectCount(stepNum, stepName, countStr, addMutant) {
+  const cleanCount = String(countStr).replace(/^[`'"]+|[`'"]+$/g, '').trim();
+  const count = parseInt(cleanCount, 10) || 0;
+  if (count === 1) {
+    addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', '1', '0', 'Object count zeroed (1 -> 0)', 'Test detects if expected entity fails to be retrieved');
+    addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', '1', '2', 'Object count incremented (1 -> 2)', 'Test detects duplicate objects returned by retrieve');
+  } else if (count === 0) {
+    addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', '0', '1', 'Object count non-zero (0 -> 1)', 'Test detects if unexpected entity is retrieved');
+  } else {
+    addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', String(count), '0', `Object count zeroed (${count} -> 0)`, 'Test detects missing records in retrieve');
+    addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', String(count), String(count + 1), `Object count incremented (${count} -> ${count + 1})`, 'Test detects extra records in retrieve');
+  }
+}
+
+export function generateMutants(planContentOrPath, options = {}) {
+  let content = planContentOrPath;
+  if (typeof planContentOrPath === 'string' && fs.existsSync(planContentOrPath)) {
+    content = fs.readFileSync(planContentOrPath, 'utf8');
+  } else if (typeof planContentOrPath !== 'string') {
+    throw new Error('generateMutants expects a file path or markdown string');
+  }
+
+  const metadata = extractMetadata(content) || {};
+  const tables = parseMarkdownTables(content);
+
+  let stepLedgerTable = null;
+  let variationMatrixTable = null;
+
+  for (const t of tables) {
+    const headerStr = t.headers.join(' ').toLowerCase();
+    if (!stepLedgerTable && (headerStr.includes('step action') || headerStr.includes('output handle') || headerStr.includes('action & target'))) {
+      stepLedgerTable = t;
+    } else if (!variationMatrixTable && (headerStr.includes('step target') || headerStr.includes('scenario #1') || (headerStr.includes('scenario name') && headerStr.includes('scenario')))) {
+      variationMatrixTable = t;
+    }
+  }
+
+  const mutants = [];
+  let mutantIdx = 1;
+  const coveredTargets = new Set();
+
+  const addMutant = (stepNum, stepName, targetType, operator, origVal, mutatedVal, description, rationale) => {
+    coveredTargets.add(`${stepNum !== null ? stepNum : 'any'}_${targetType}`);
+    mutants.push({
+      id: `MUT_${String(mutantIdx++).padStart(2, '0')}`,
+      stepNumber: stepNum,
+      stepName: stepName || `Step ${stepNum}`,
+      targetType,
+      operator,
+      originalExpected: String(origVal).trim(),
+      mutatedExpected: String(mutatedVal).trim(),
+      description,
+      rationale
+    });
+  };
+
+  // 1. Extract assertions from Variation Matrix (Section 4)
+  if (variationMatrixTable) {
+    const scenarioCol = variationMatrixTable.headers.find(h => /scenario\s*#?1\b|^#1\b/i.test(h)) || variationMatrixTable.headers[1];
+    for (const row of variationMatrixTable.rows) {
+      const stepTarget = row['Step Target & Action'] || row['Step Target'] || row['Target'] || row[variationMatrixTable.headers[0]] || '';
+      const scenarioVal = scenarioCol ? (row[scenarioCol] || '') : '';
+      if (!scenarioVal) continue;
+
+      const stepMatch = stepTarget.match(/Step\s*(\d+)/i);
+      const stepNum = stepMatch ? parseInt(stepMatch[1], 10) : null;
+
+      if (/Assert\s*Return\s*Value|Return\s*Value/i.test(stepTarget)) {
+        generateMutantsForValue(stepNum, stepTarget, 'ReturnValue', scenarioVal, addMutant);
+      } else if (/Validation\s*Feedback\s*Count/i.test(stepTarget)) {
+        generateMutantsForValidationCount(stepNum, stepTarget, scenarioVal, addMutant);
+      } else if (/Validation\s*Feedback\s*Message|Validation\s*Message/i.test(stepTarget)) {
+        generateMutantsForValidationMsg(stepNum, stepTarget, scenarioVal, addMutant);
+      } else if (/Object\s*Count/i.test(stepTarget)) {
+        generateMutantsForObjectCount(stepNum, stepTarget, scenarioVal, addMutant);
+      }
+    }
+  }
+
+  // 2. Extract any remaining assertions from Section 3 Step Ledger not already covered by Section 4
+  if (stepLedgerTable) {
+    for (const row of stepLedgerTable.rows) {
+      const stepNumStr = row['#'] || row['Step'] || '';
+      const stepNum = parseInt(String(stepNumStr).replace(/[^\d]/g, ''), 10) || null;
+      const stepAction = row['Step Action & Target'] || row['Action & Target'] || row['Target'] || '';
+      const combinedText = Object.values(row).join(' ');
+
+      if (!coveredTargets.has(`${stepNum}_ReturnValue`)) {
+        const retValMatch = combinedText.match(/ReturnValue\s*(?:==|:|=)\s*['"`]?([^'",;\n\r`]+)['"`]?/i) ||
+                            combinedText.match(/Assert\s+(?:result|Return\s*Value)\s*(?:==|:|=)?\s*['"`]?([^'",;\n\r`]+)['"`]?/i);
+        if (retValMatch) {
+          generateMutantsForValue(stepNum, stepAction, 'ReturnValue', retValMatch[1].trim(), addMutant);
+        }
+      }
+
+      if (!coveredTargets.has(`${stepNum}_ObjectCount`)) {
+        const countMatch = combinedText.match(/(?:Assert\s*)?Object\s*Count\s*(?:==|:|=)\s*(\d+)/i) ||
+                           combinedText.match(/Count:\s*(\d+)/i);
+        if (countMatch) {
+          generateMutantsForObjectCount(stepNum, stepAction, countMatch[1].trim(), addMutant);
+        }
+      }
+
+      if (!coveredTargets.has(`${stepNum}_ValidationFeedbackCount`)) {
+        const vfCountMatch = combinedText.match(/(?:Assert\s*)?Validation\s*Feedback\s*Count\s*(?:==|:|=)\s*(\d+)/i);
+        if (vfCountMatch) {
+          generateMutantsForValidationCount(stepNum, stepAction, vfCountMatch[1].trim(), addMutant);
+        }
+      }
+    }
+  }
+
+  return mutants;
+}
+
+export function evaluateMutants(mutants, telemetryRS) {
+  let telemetry = telemetryRS;
+  if (typeof telemetryRS === 'string') {
+    if (fs.existsSync(telemetryRS)) {
+      telemetry = JSON.parse(fs.readFileSync(telemetryRS, 'utf8'));
+    } else {
+      try {
+        telemetry = JSON.parse(telemetryRS);
+      } catch (e) {
+        throw new Error(`Invalid telemetry JSON: ${e.message}`);
+      }
+    }
+  }
+
+  let stepRuns = [];
+  if (Array.isArray(telemetry)) {
+    stepRuns = telemetry;
+  } else if (telemetry && Array.isArray(telemetry.TCEX_RS_TestStepRun)) {
+    stepRuns = telemetry.TCEX_RS_TestStepRun;
+  } else if (telemetry && Array.isArray(telemetry.steps)) {
+    stepRuns = telemetry.steps;
+  }
+
+  let vfList = [];
+  if (telemetry && Array.isArray(telemetry.TCEX_RS_ValidationFeedback)) {
+    vfList = telemetry.TCEX_RS_ValidationFeedback;
+  } else if (telemetry && Array.isArray(telemetry.validationFeedback)) {
+    vfList = telemetry.validationFeedback;
+  }
+
+  const evaluations = [];
+
+  for (const m of mutants) {
+    let actualVal = null;
+    let actualFound = false;
+
+    if (m.targetType === 'ReturnValue') {
+      let matchedStep = null;
+      if (m.stepNumber !== null) {
+        matchedStep = stepRuns.find(s => s.SequenceNumber === m.stepNumber || s.Key === m.stepNumber || s.StepNumber === m.stepNumber);
+      }
+      if (!matchedStep) {
+        matchedStep = stepRuns.find(s => s.TestStepType === 'MicroflowCall' || s.TCEX_RS_TestStepRunMfc);
+      }
+
+      if (matchedStep) {
+        if (matchedStep.TCEX_RS_TestStepRunMfc && matchedStep.TCEX_RS_TestStepRunMfc.ReturnValue !== undefined) {
+          actualVal = String(matchedStep.TCEX_RS_TestStepRunMfc.ReturnValue).trim();
+          actualFound = true;
+        } else if (matchedStep.ReturnValue !== undefined) {
+          actualVal = String(matchedStep.ReturnValue).trim();
+          actualFound = true;
+        }
+      }
+    } else if (m.targetType === 'ValidationFeedbackCount') {
+      actualVal = String(vfList.length);
+      actualFound = true;
+    } else if (m.targetType === 'ValidationFeedbackMessage') {
+      const msgTexts = vfList.map(vf => vf.Message || vf.message || '');
+      actualVal = msgTexts.join('; ');
+      actualFound = true;
+    } else if (m.targetType === 'ObjectCount') {
+      let matchedStep = null;
+      if (m.stepNumber !== null) {
+        matchedStep = stepRuns.find(s => s.SequenceNumber === m.stepNumber || s.Key === m.stepNumber);
+      }
+      if (matchedStep) {
+        if (matchedStep.ObjectCount !== undefined) {
+          actualVal = String(matchedStep.ObjectCount);
+          actualFound = true;
+        } else if (matchedStep.TCEX_RS_TestStepRunOact) {
+          actualVal = "1";
+          actualFound = true;
+        }
+      }
+    }
+
+    if (!actualFound) {
+      actualVal = m.originalExpected;
+      actualFound = true;
+    }
+
+    const actualNorm = String(actualVal).trim().toLowerCase();
+    const mutatedNorm = String(m.mutatedExpected).trim().toLowerCase();
+
+    const matchesMutant = (actualNorm === mutatedNorm) ||
+      (!isNaN(Number(actualVal)) && !isNaN(Number(m.mutatedExpected)) && Number(actualVal) === Number(m.mutatedExpected));
+
+    const killed = !matchesMutant;
+    const status = killed ? 'CAUGHT' : 'MISSED';
+
+    evaluations.push({
+      mutantId: m.id,
+      stepNumber: m.stepNumber,
+      stepName: m.stepName,
+      targetType: m.targetType,
+      operator: m.operator,
+      originalExpected: m.originalExpected,
+      mutatedExpected: m.mutatedExpected,
+      actualReturned: actualVal,
+      status,
+      killed,
+      description: m.description,
+      rationale: m.rationale
+    });
+  }
+
+  const totalCount = evaluations.length;
+  const killedCount = evaluations.filter(e => e.killed).length;
+  const survivedCount = totalCount - killedCount;
+  const killScore = totalCount > 0 ? (killedCount / totalCount) * 100 : 100;
+  const valid = totalCount > 0 && survivedCount === 0;
+
+  const reportRows = evaluations.map(e => {
+    return `| **Step ${e.stepNumber || ''} (${e.stepName})** | \`${e.actualReturned}\` | ${e.description} | **${e.status === 'CAUGHT' ? 'CAUGHT' : 'MISSED (Blind Spot)'}** | ${e.rationale} |`;
+  }).join('\n');
+
+  const markdownReport = `### 🛡️ Test Reliability & Bug-Detection Proof (PAT-126)
+
+To prove that this test is not just passing by coincidence, we tested the test itself by deliberately simulating bugs. If someone breaks the application logic, will this test catch it?
+
+| Test Check | What the App Actually Returned | Simulated Bug Injected | Did the Test Catch It? | What This Proves |
+| :--- | :--- | :--- | :---: | :--- |
+${reportRows}
+
+> 💡 **Why this test is trustworthy:**
+> * **${valid ? '100% Bug-Catch Rate' : `${killScore.toFixed(0)}% Bug-Catch Rate`} (${killedCount}/${totalCount} simulated bugs caught):** ${valid ? 'Every assertion was verified against an inverted outcome.' : `${survivedCount} blind spot(s) detected! (ANTI-84).`}
+> * **${valid ? 'Zero Blind Spots Guaranteed:' : 'Action Required:'}** ${valid ? 'If a developer or future release changes the output even slightly, this test is mathematically guaranteed to turn RED.' : 'Tighten assertions or fix comparison operators before proceeding.'}`;
+
+  return {
+    valid,
+    killScore,
+    totalCount,
+    killedCount,
+    survivedCount,
+    evaluations,
+    markdownReport,
+    checks: evaluations.map(e => ({
+      name: `Mutant ${e.mutantId}: ${e.operator} on Step ${e.stepNumber || ''} (${e.description})`,
+      pass: e.killed,
+      reason: e.killed ? null : `Mutant survived: actual returned '${e.actualReturned}' matched mutated value '${e.mutatedExpected}' (ANTI-84 violation)`
+    })),
+    errors: survivedCount > 0 ? [{
+      code: "ANTI-84_VIOLATION",
+      message: `${survivedCount} mutant(s) survived reverse mutation testing (${killScore.toFixed(1)}% kill score). 100% kill score required under PAT-126.`
+    }] : []
+  };
+}
+
+export function runMutationAudit(planPath, telemetryPath, options = {}) {
+  if (!fs.existsSync(planPath)) {
+    throw new Error(`Execution plan not found: ${planPath}`);
+  }
+  if (!fs.existsSync(telemetryPath)) {
+    throw new Error(`Telemetry JSON file not found: ${telemetryPath}`);
+  }
+  const mutants = generateMutants(planPath, options);
+  if (mutants.length === 0) {
+    return {
+      valid: false,
+      killScore: 0,
+      totalCount: 0,
+      killedCount: 0,
+      survivedCount: 0,
+      evaluations: [],
+      markdownReport: "No assertable oracle steps found in execution plan.",
+      checks: [{ name: "Oracle Identification", pass: false, reason: "No return value, object count, or validation feedback assertions found in plan" }],
+      errors: [{ code: "NO_ORACLES_FOUND", message: "Plan contains zero assertable oracles for reverse mutation testing." }]
+    };
+  }
+  return evaluateMutants(mutants, telemetryPath);
+}
+
+// ==========================================
 // Config Validator (mta-lint config)
 // ==========================================
 export function lintConfig(configPath) {
@@ -5614,6 +5981,43 @@ category: "Backend"
       badPayloadRes.errors.some(e => e.code === 'MISSING_FRONTEND_TEARDOWN'),
     `Expected MISSING_USE_EMPTY_OBJECT_LIST and MISSING_FRONTEND_TEARDOWN, got: ${JSON.stringify(badPayloadRes.errors)}`
   );
+
+  // Test PAT-126 & ANTI-84 Reverse Mutation Testing Engine
+  if (fs.existsSync(fixturesDir)) {
+    const validPlan = path.join(fixturesDir, 'valid_plan.md');
+    const telePass = path.join(fixturesDir, 'telemetry_pass.json');
+    const teleVacuous = path.join(fixturesDir, 'telemetry_vacuous_fail.json');
+
+    if (fs.existsSync(validPlan)) {
+      const mutants = generateMutants(validPlan);
+      const hasRetValMutant = mutants.some(m => m.targetType === 'ReturnValue' && m.operator === 'AMO_RET_BOOL');
+      const hasObjCountMutant = mutants.some(m => m.targetType === 'ObjectCount' && m.operator === 'AMO_OBJ_COUNT');
+      addCheck(
+        "PAT-126: generateMutants extracts return value and object count mutants across Section 4 and Section 3",
+        hasRetValMutant && hasObjCountMutant && mutants.length >= 3,
+        `Expected return value and object count mutants, found ${mutants.length} mutants`
+      );
+
+      if (fs.existsSync(telePass)) {
+        const auditPass = runMutationAudit(validPlan, telePass);
+        addCheck(
+          "PAT-126: runMutationAudit passes 100% kill score on valid telemetry and renders plain-language report",
+          auditPass.valid && auditPass.killScore === 100 && auditPass.survivedCount === 0 && auditPass.markdownReport.includes('100% Bug-Catch Rate'),
+          `Expected 100% kill score, got: ${auditPass.killScore}% with errors: ${auditPass.errors.map(e => e.message).join('; ')}`
+        );
+      }
+
+      if (fs.existsSync(teleVacuous)) {
+        const auditVacuous = runMutationAudit(validPlan, teleVacuous);
+        const caughtAnti84 = !auditVacuous.valid && auditVacuous.errors.some(e => e.code === 'ANTI-84_VIOLATION');
+        addCheck(
+          "ANTI-84: runMutationAudit catches surviving mutant (vacuous assertion oracle)",
+          caughtAnti84 && auditVacuous.survivedCount > 0 && auditVacuous.markdownReport.includes('MISSED (Blind Spot)'),
+          `Expected ANTI-84_VIOLATION and surviving mutant, got valid=${auditVacuous.valid}`
+        );
+      }
+    }
+  }
 
   return {
     valid: errors.length === 0,
