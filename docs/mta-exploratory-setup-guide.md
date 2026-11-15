@@ -132,7 +132,7 @@ The extension sets up everything needed for exploratory testing inside Studio Pr
 - Runs tests in-memory with automatic database rollback so your application data stays clean.
 
 ### Setup Steps
-1. **Import the Extension:** Add **Menditect MTA Agentic Tools & Skills** (`MenditectMtaAgenticToolsSkills.mxmodule`) to your Mendix project.
+1. **Import the Extension:** Add [Menditect MTA Agentic Tools & Skills](https://marketplace.mendix.com/link/component/305457) (`MenditectMtaAgenticToolsSkills.mxmodule`) to your Mendix project.
 2. **Open Configuration:** In Studio Pro, select **Extensions > Menditect MTA > MTA setup & configuration**.
 3. **Configure Free Edition Credentials:**
    - Select **MTA Exploratory Free Edition**.
