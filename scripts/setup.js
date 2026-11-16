@@ -1,5 +1,7 @@
 const {
-  isBack
+  isBack,
+  ask,
+  scriptVersion
 } = require('./lib/cli-prompt');
 
 const {
@@ -62,7 +64,11 @@ const {
   runWizardLoop
 } = require('./lib/wizard-steps');
 
-async function run(options = {}) {
+const {
+  startVisualSetupServer
+} = require('./lib/ui-server');
+
+async function runCliWizard(options = {}) {
   const skipSkills = options.skipSkills || process.argv.includes('--skip-skills') || process.argv.includes('--no-skills') || process.argv.includes('--skip-skills-sync');
 
   await showDisclaimerAndPreflight();
@@ -72,6 +78,33 @@ async function run(options = {}) {
   await runWizardLoop(state);
 
   await applyWorkspaceConfiguration(state, { skipSkills });
+}
+
+async function run(options = {}) {
+  const args = process.argv.slice(2);
+  const skipSkills = options.skipSkills || args.includes('--skip-skills') || args.includes('--no-skills') || args.includes('--skip-skills-sync');
+  const forceUi = options.ui || args.includes('--ui') || args.includes('--web');
+  const forceCli = options.cli || args.includes('--cli') || args.includes('--terminal');
+
+  if (forceUi) {
+    return startVisualSetupServer({ skipSkills });
+  }
+  if (forceCli || !process.stdin.isTTY) {
+    return runCliWizard({ skipSkills });
+  }
+
+  console.log('======================================================');
+  console.log(` Menditect Agent Workspace Setup${scriptVersion}`);
+  console.log('======================================================\n');
+  console.log('Choose how you would like to configure your workspace:\n');
+  console.log('  [1] Visual Browser Setup (Recommended — opens graphical form in your browser)');
+  console.log('  [2] Command-Line Setup (Interactive terminal wizard)\n');
+
+  const modeAns = await ask('Select setup interface: [1] Visual Browser Setup, [2] Command-Line Setup', '1', { allowBack: false });
+  if (modeAns.trim() === '2' || modeAns.trim().toLowerCase() === 'cli') {
+    return runCliWizard({ skipSkills });
+  }
+  return startVisualSetupServer({ skipSkills });
 }
 
 if (require.main === module) {

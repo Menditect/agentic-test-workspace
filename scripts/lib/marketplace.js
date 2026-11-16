@@ -682,13 +682,7 @@ async function syncProjectMarketplaceModules(state, askFn, mxcliBin, options = {
   }
 
   const isPaid = (state.licenseTier === 'paid_enterprise') || isPaidMtaServerUrl(state.mtaUrl);
-  const isMendixProjectWorkspace = (state.workspaceChoice === '2' || state.workspaceChoice === '3' || state.workspaceType === 'mendix_project');
-
   const modsToCheck = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
-
-  if (isMendixProjectWorkspace) {
-    modsToCheck.push(MENDITECT_MARKETPLACE_MODULES.Menditect_AgenticTestSkills);
-  }
 
   if (isPaid || installedInfo.modules.MenditectMxFrontendTestKit?.installed || installedInfo.modules.MenditectPlaywrightConnector?.installed || installedInfo.modules.MenditectMtaCommons?.installed) {
     modsToCheck.push(

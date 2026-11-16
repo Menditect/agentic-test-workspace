@@ -20,13 +20,12 @@ const {
   formatBearerToken,
   ensureExecutionPlanFolders
 } = require('./workspace-registry');
-const { detectMendixModule } = require('./mendix-model');
 const {
   initializeMxcli,
   buildProjectCatalog,
   deployMxcliWrappers
 } = require('./mxcli-manager');
-const { isPaidMtaServerUrl, syncAndVerifyMaiaSkills } = require('./marketplace');
+const { isPaidMtaServerUrl } = require('./marketplace');
 const { generateIdeConfigs } = require('./ide-configs');
 const { updateAgentDirectives } = require('./directives');
 
@@ -37,41 +36,21 @@ async function applyWorkspaceConfiguration(state, options = {}) {
 
   // --- SAVING AND CONFIGURATION PERSISTENCE ---
   const mcpSource = state.modelSource === '2' ? 'studiopro' : 'mxcli';
-  const workspaceType = (state.workspaceChoice === '2' || state.workspaceChoice === 'mendix_project' || state.workspaceType === 'mendix_project') ? 'mendix_project' : 'custom';
-  const workspaceDir = workspaceType === 'mendix_project'
-    ? path.resolve(state.projectDir || process.cwd())
-    : path.resolve(state.customWorkspaceDir || path.resolve(toolsRootDir, '..'));
+  const workspaceType = 'custom';
+  const workspaceDir = path.resolve(state.customWorkspaceDir || path.resolve(toolsRootDir, '..'));
 
   if (!fs.existsSync(workspaceDir)) {
     fs.mkdirSync(workspaceDir, { recursive: true });
   }
 
-  let skillsDir = path.join(workspaceDir, 'skills');
-  let toolsDir = null;
-  let skillsStyle = 'standard';
+  const skillsDir = path.join(toolsRootDir, 'skills');
+  const toolsDir = path.join(toolsRootDir, 'tools');
+  const skillsStyle = 'standard';
 
-  if (workspaceType === 'custom') {
-    skillsDir = path.join(toolsRootDir, 'skills');
-    toolsDir = path.join(toolsRootDir, 'tools');
-    skillsStyle = 'standard';
-    console.log(`\nWorkspace: App Workspace Directory (${workspaceDir})`);
-    console.log(`Central Tools Hub: ${toolsRootDir}`);
-    console.log(`Central Skills:    ${skillsDir} (shared, zero-copy)`);
-    console.log(`Central Tools:     ${toolsDir} (shared, zero-copy)`);
-  } else if (workspaceType === 'mendix_project') {
-    const detectedModule = detectMendixModule(workspaceDir);
-    if (detectedModule) {
-      skillsDir = detectedModule;
-    } else {
-      skillsDir = path.join(workspaceDir, 'skillssource', '_modules', 'menditect_agentictestskills');
-      if (!fs.existsSync(skillsDir)) {
-        fs.mkdirSync(skillsDir, { recursive: true });
-      }
-    }
-    skillsStyle = 'mendix_module';
-    console.log(`\nWorkspace: Direct Mendix Project Workspace (${workspaceDir})`);
-    console.log(`Skills destination: ${skillsDir}`);
-  }
+  console.log(`\nWorkspace: App Workspace Directory (${workspaceDir})`);
+  console.log(`Central Tools Hub: ${toolsRootDir}`);
+  console.log(`Central Skills:    ${skillsDir} (shared, zero-copy)`);
+  console.log(`Central Tools:     ${toolsDir} (shared, zero-copy)`);
 
   const { menditectOutputDir, plansDir } = ensureExecutionPlanFolders(workspaceDir, workspaceType);
 
@@ -131,28 +110,6 @@ async function applyWorkspaceConfiguration(state, options = {}) {
           console.log(`${PASS} Migrated execution plans to ${workspaceDir} and cleaned up ${state.projectDir}.`);
         } catch (e) {
           console.warn(`${WARN} Partial migration warning: ${e.message}`);
-        }
-      }
-    }
-  }
-
-  // 3. Switching from External Workspace -> Direct Mendix Project
-  if (workspaceType === 'mendix_project' && existingConfig.workspace_dir && fs.existsSync(existingConfig.workspace_dir) && path.resolve(existingConfig.workspace_dir) !== path.resolve(workspaceDir)) {
-    const prevOutputDir = path.join(existingConfig.workspace_dir, 'menditect-output');
-    if (fs.existsSync(prevOutputDir)) {
-      console.log(`\n[MIGRATION] Detected existing execution plans in previous workspace (${prevOutputDir}).`);
-      const copyAns = nonInteractive ? 'y' : await ask(`Copy existing menditect-output/ execution plans into ${workspaceDir}? (y/n)`, 'y', { allowBack: false });
-      if (copyAns.toLowerCase().startsWith('y')) {
-        try {
-          const prevPlans = path.join(prevOutputDir, 'execution-plans');
-          if (fs.existsSync(prevPlans)) {
-            fs.cpSync(prevPlans, plansDir, { recursive: true, force: false });
-          } else {
-            fs.cpSync(prevOutputDir, plansDir, { recursive: true, force: false });
-          }
-          console.log(`${PASS} Copied execution plans into ${plansDir}.`);
-        } catch (e) {
-          console.warn(`${WARN} Could not copy execution plans: ${e.message}`);
         }
       }
     }
@@ -297,25 +254,11 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
     }
   }
 
-  // Ensure MAIA skills and project-level skillssource/AGENTS.md are verified for mendix_project workspaces
-  if (workspaceType === 'mendix_project') {
-    const maiaVerify = syncAndVerifyMaiaSkills(workspaceDir, '', path.join(toolsRootDir, 'skills'));
-    if (maiaVerify.success) {
-      skillsSyncSuccess = true;
-      console.log(`${PASS} Verified MAIA skills in ${maiaVerify.targetSkillsDir} (${maiaVerify.verifiedCount}/${maiaVerify.expectedCount} skills + AGENTS.md).`);
-    }
-  }
-
   // Scaffolding & Runners
-  if (workspaceType === 'custom') {
-    initializeMxcli(workspaceDir, state.mprPath, null, { isMendixProject: false });
-    deployMxcliWrappers(workspaceDir, state.mprPath);
-    if (state.catalogChoice !== 'skip' && state.mprPath && fs.existsSync(state.mprPath)) {
-      await buildProjectCatalog(state.mprPath, null, { choice: state.catalogChoice });
-    }
-  } else {
-    console.log(`\n${INFO} Mendix Project Workspace configured for Studio Pro MCP and MAIA.`);
-    console.log(`       mxcli runners and catalog index omitted to keep Mendix project clean.`);
+  initializeMxcli(workspaceDir, state.mprPath, null, { isMendixProject: false });
+  deployMxcliWrappers(workspaceDir, state.mprPath);
+  if (state.catalogChoice !== 'skip' && state.mprPath && fs.existsSync(state.mprPath)) {
+    await buildProjectCatalog(state.mprPath, null, { choice: state.catalogChoice });
   }
 
   // IDE Configs

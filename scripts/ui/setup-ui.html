@@ -1,0 +1,1508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Menditect Agentic Test Workspace — Setup &amp; Configuration</title>
+  <style>
+    .sp-theme-light {
+      --sp-bg: #f5f6f8;
+      --sp-surface: #ffffff;
+      --sp-surface-alt: #f9fafb;
+      --sp-border: #d9dde3;
+      --sp-text: #1d2026;
+      --sp-text-muted: #5c6470;
+      --sp-placeholder: #9ca3af;
+      --sp-input-bg: #ffffff;
+      --sp-input-border: #c2c8d1;
+      --sp-input-focus: #1798dd;
+      --sp-btn-primary-bg: #1798dd;
+      --sp-btn-primary-hover: #1282be;
+      --sp-btn-primary-text: #ffffff;
+      --sp-btn-secondary-bg: #ffffff;
+      --sp-btn-secondary-hover: #f0f2f5;
+      --sp-btn-secondary-text: #1d2026;
+      --sp-btn-secondary-border: #c2c8d1;
+      --sp-tier-selected-bg: #eef9ff;
+      --sp-tier-selected-border: #1798dd;
+      --sp-tier-selected-title: #0d7ab5;
+      --sp-info-bg: #eef9ff;
+      --sp-info-border: #bae6fd;
+      --sp-info-text: #0369a1;
+      --sp-success-bg: #ecfdf5;
+      --sp-success-border: #a7f3d0;
+      --sp-success-text: #065f46;
+      --sp-warn-bg: #fff7ed;
+      --sp-warn-border: #fdba74;
+      --sp-warn-text: #c2410c;
+      --sp-err-bg: #fef2f2;
+      --sp-err-border: #f87171;
+      --sp-err-text: #dc2626;
+      --sp-tooltip-bg: #024568;
+      --sp-tooltip-text: #f9fafb;
+    }
+    .sp-theme-dark {
+      --sp-bg: #1e1e1e;
+      --sp-surface: #252526;
+      --sp-surface-alt: #2d2d30;
+      --sp-border: #3e3e42;
+      --sp-text: #e4e6eb;
+      --sp-text-muted: #9da3ae;
+      --sp-placeholder: #6b7280;
+      --sp-input-bg: #1e1e1e;
+      --sp-input-border: #4b5563;
+      --sp-input-focus: #1798dd;
+      --sp-btn-primary-bg: #1798dd;
+      --sp-btn-primary-hover: #38a8e8;
+      --sp-btn-primary-text: #ffffff;
+      --sp-btn-secondary-bg: #2d2d30;
+      --sp-btn-secondary-hover: #3e3e42;
+      --sp-btn-secondary-text: #e4e6eb;
+      --sp-btn-secondary-border: #4b5563;
+      --sp-tier-selected-bg: rgba(23, 152, 221, 0.14);
+      --sp-tier-selected-border: #1798dd;
+      --sp-tier-selected-title: #58b8f0;
+      --sp-info-bg: rgba(23, 152, 221, 0.14);
+      --sp-info-border: rgba(23, 152, 221, 0.45);
+      --sp-info-text: #7dd3fc;
+      --sp-success-bg: rgba(16, 185, 129, 0.14);
+      --sp-success-border: rgba(16, 185, 129, 0.45);
+      --sp-success-text: #6ee7b7;
+      --sp-warn-bg: rgba(245, 158, 11, 0.14);
+      --sp-warn-border: rgba(245, 158, 11, 0.45);
+      --sp-warn-text: #fcd34d;
+      --sp-err-bg: rgba(239, 68, 68, 0.15);
+      --sp-err-border: rgba(239, 68, 68, 0.5);
+      --sp-err-text: #fca5a5;
+      --sp-tooltip-bg: #024568;
+      --sp-tooltip-text: #ffffff;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      line-height: 1.45;
+      background: var(--sp-bg);
+      color: var(--sp-text);
+      min-height: 100vh;
+    }
+
+    .sp-page-shell {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 0 20px 100px 20px;
+    }
+
+    .sp-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--sp-surface);
+      border-bottom: 1px solid var(--sp-border);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      margin-bottom: 20px;
+    }
+    .sp-header-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .sp-logo {
+      height: 28px;
+      width: auto;
+      display: block;
+    }
+    .sp-header-divider {
+      width: 1px;
+      height: 22px;
+      background: var(--sp-border);
+    }
+    .sp-header-title {
+      font-size: 14.5px;
+      font-weight: 600;
+      margin: 0;
+      color: var(--sp-text);
+    }
+    .sp-header-subtitle {
+      font-size: 11.5px;
+      color: var(--sp-text-muted);
+      margin: 0;
+    }
+
+    .sp-card {
+      background: var(--sp-surface);
+      border: 1px solid var(--sp-border);
+      border-radius: 7px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+    }
+    .sp-card-header {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 12px;
+    }
+    .sp-card-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      margin: 0;
+      color: var(--sp-text);
+    }
+
+    .sp-tier-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    @media (max-width: 640px) {
+      .sp-tier-grid { grid-template-columns: 1fr; }
+    }
+    .sp-tier-option {
+      border: 1.5px solid var(--sp-border);
+      border-radius: 6px;
+      padding: 11px 13px;
+      cursor: pointer;
+      background: var(--sp-surface-alt);
+      transition: all 0.12s ease;
+    }
+    .sp-tier-option:hover {
+      border-color: var(--sp-input-focus);
+    }
+    .sp-tier-option.selected {
+      background: var(--sp-tier-selected-bg);
+      border-color: var(--sp-tier-selected-border);
+    }
+    .sp-tier-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .sp-tier-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .sp-tier-radio {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid var(--sp-input-border);
+      display: inline-block;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .sp-tier-option.selected .sp-tier-radio {
+      border-color: var(--sp-tier-selected-border);
+    }
+    .sp-tier-option.selected .sp-tier-radio::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--sp-tier-selected-border);
+    }
+    .sp-tier-title {
+      font-weight: 600;
+      font-size: 12.5px;
+    }
+    .sp-tier-option.selected .sp-tier-title {
+      color: var(--sp-tier-selected-title);
+    }
+    .sp-tier-badge {
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 1px 7px;
+      border-radius: 10px;
+      background: var(--sp-btn-primary-bg);
+      color: #fff;
+    }
+    .sp-tier-sub {
+      font-size: 11.5px;
+      color: var(--sp-text-muted);
+      padding-left: 22px;
+    }
+
+    .sp-field {
+      margin-bottom: 12px;
+    }
+    .sp-field:last-child {
+      margin-bottom: 0;
+    }
+    .sp-label-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 5px;
+    }
+    .sp-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--sp-text);
+    }
+    .sp-input, .sp-select {
+      width: 100%;
+      padding: 7px 10px;
+      font-size: 12.5px;
+      font-family: inherit;
+      color: var(--sp-text);
+      background: var(--sp-input-bg);
+      border: 1px solid var(--sp-input-border);
+      border-radius: 5px;
+      outline: none;
+      transition: border-color 0.12s;
+    }
+    .sp-input:focus, .sp-select:focus {
+      border-color: var(--sp-input-focus);
+      box-shadow: 0 0 0 2px rgba(23, 152, 221, 0.15);
+    }
+    .sp-input-error {
+      border-color: var(--sp-err-border) !important;
+    }
+    .sp-field-error {
+      color: var(--sp-err-text);
+      font-size: 11.5px;
+      margin-top: 4px;
+    }
+    .sp-field-hint {
+      font-size: 11.5px;
+      color: var(--sp-text-muted);
+      margin-top: 4px;
+    }
+
+    .sp-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 7px 13px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      border-radius: 5px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: background 0.12s, border-color 0.12s;
+      white-space: nowrap;
+    }
+    .sp-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .sp-btn-primary {
+      background: var(--sp-btn-primary-bg);
+      color: var(--sp-btn-primary-text);
+    }
+    .sp-btn-primary:hover:not(:disabled) {
+      background: var(--sp-btn-primary-hover);
+    }
+    .sp-btn-secondary {
+      background: var(--sp-btn-secondary-bg);
+      color: var(--sp-btn-secondary-text);
+      border-color: var(--sp-btn-secondary-border);
+    }
+    .sp-btn-secondary:hover:not(:disabled) {
+      background: var(--sp-btn-secondary-hover);
+    }
+
+    .sp-banner {
+      padding: 9px 12px;
+      border-radius: 5px;
+      font-size: 12px;
+      margin-top: 8px;
+      border: 1px solid transparent;
+    }
+    .sp-banner-info {
+      background: var(--sp-info-bg);
+      border-color: var(--sp-info-border);
+      color: var(--sp-info-text);
+    }
+    .sp-banner-success {
+      background: var(--sp-success-bg);
+      border-color: var(--sp-success-border);
+      color: var(--sp-success-text);
+    }
+    .sp-banner-warn {
+      background: var(--sp-warn-bg);
+      border-color: var(--sp-warn-border);
+      color: var(--sp-warn-text);
+    }
+    .sp-banner-err {
+      background: var(--sp-err-bg);
+      border-color: var(--sp-err-border);
+      color: var(--sp-err-text);
+    }
+
+    .sp-tooltip-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      cursor: help;
+      outline: none;
+    }
+    .sp-tooltip-icon {
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background: var(--sp-border);
+      color: var(--sp-text-muted);
+      font-size: 10.5px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .sp-tooltip-wrap:hover .sp-tooltip-icon,
+    .sp-tooltip-wrap:focus .sp-tooltip-icon {
+      background: var(--sp-btn-primary-bg);
+      color: #ffffff;
+    }
+    .sp-tooltip-popup {
+      visibility: hidden;
+      opacity: 0;
+      position: absolute;
+      left: 22px;
+      bottom: 50%;
+      transform: translateY(50%);
+      width: 310px;
+      background: var(--sp-tooltip-bg);
+      color: var(--sp-tooltip-text);
+      padding: 9px 11px;
+      border-radius: 5px;
+      font-size: 11.5px;
+      font-weight: 400;
+      line-height: 1.4;
+      z-index: 300;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+      pointer-events: none;
+      transition: opacity 0.14s ease;
+    }
+    .sp-tooltip-wrap:hover .sp-tooltip-popup,
+    .sp-tooltip-wrap:focus .sp-tooltip-popup {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    .sp-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .sp-badge-ok {
+      background: var(--sp-success-bg);
+      color: var(--sp-success-text);
+      border: 1px solid var(--sp-success-border);
+    }
+    .sp-badge-warn {
+      background: var(--sp-warn-bg);
+      color: var(--sp-warn-text);
+      border: 1px solid var(--sp-warn-border);
+    }
+
+    .sp-footer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--sp-surface);
+      border-top: 1px solid var(--sp-border);
+      padding: 12px 24px;
+      z-index: 100;
+      box-shadow: 0 -2px 8px rgba(0,0,0,0.05);
+    }
+    .sp-footer-inner {
+      max-width: 880px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    /* Modals */
+    .sp-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 500;
+      padding: 16px;
+    }
+    .sp-modal-backdrop.open {
+      display: flex;
+    }
+    .sp-modal {
+      background: var(--sp-surface);
+      border: 1px solid var(--sp-border);
+      border-radius: 8px;
+      width: 100%;
+      max-width: 540px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+    }
+    .sp-modal-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--sp-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .sp-modal-body {
+      padding: 16px 18px;
+      overflow-y: auto;
+    }
+    .sp-modal-footer {
+      padding: 12px 18px;
+      border-top: 1px solid var(--sp-border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .sp-log-box {
+      background: #14171c;
+      color: #d1d5db;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 11.5px;
+      padding: 12px;
+      border-radius: 6px;
+      height: 260px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+    .sp-log-warn { color: #fcd34d; }
+    .sp-log-err { color: #fca5a5; }
+    .sp-log-ok { color: #6ee7b7; }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 11.5px;
+      background: var(--sp-surface-alt);
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body class="sp-theme-light">
+
+  <!-- Top Header with Official Menditect Logo -->
+  <header class="sp-header">
+    <div class="sp-header-left">
+      <svg class="sp-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 758.67 159.86" role="img" aria-label="Menditect">
+        <defs>
+          <style>
+            .cls-1 { fill: #1798dd; }
+            .cls-2 { fill: #1799de; }
+            .cls-3 { fill: #fff; }
+            .cls-4 { fill: #024568; }
+          </style>
+        </defs>
+        <path class="cls-1" d="M190.37,116l8.93-76.17h16.83l16.53,55.74,16.42-55.74h16.63l9,76.17H257.6l-6.15-52.26,2.66.11L240.77,116H224.14L210.69,63.84l2.88-.11L207.51,116Z"/>
+        <rect class="cls-2" width="159.86" height="159.86" rx="22.12"/>
+        <path class="cls-1" d="M302.16,116.6a39.07,39.07,0,0,1-5.8-.51,19.23,19.23,0,0,1-6.42-2.21,13.51,13.51,0,0,1-5.13-5.23c-1.37-2.37-2.05-5.56-2.05-9.6v-41a21,21,0,0,1,1.64-8.88,14.66,14.66,0,0,1,4.31-5.6,16.79,16.79,0,0,1,6-2.92,24.88,24.88,0,0,1,6.37-.87q8.21,0,14.27.25t10.67.57c3.08.2,5.85.41,8.32.61v15H306.37a6.56,6.56,0,0,0-4.31,1.28,5,5,0,0,0-1.54,4.06V70l28.74,1V85l-28.74,1v7.91a7.31,7.31,0,0,0,.71,3.54,4.58,4.58,0,0,0,1.95,1.9,5.91,5.91,0,0,0,2.67.61h28.44v14.89c-3,.34-6.37.65-10.06.92s-7.44.48-11.24.62S305.58,116.6,302.16,116.6Z"/>
+        <path class="cls-1" d="M344.76,48.43V39.82h14.06L388,85.91V39.82h17.76V116H391.57L362.42,70m0,0v46H344.76V48.43"/>
+        <path class="cls-1" d="M417.54,116V39.82h32.95q8.11,0,13.3,2.87a21.9,21.9,0,0,1,8.26,8,35.28,35.28,0,0,1,4.31,12.11A87.75,87.75,0,0,1,477.59,78q0,13.14-3,21.51t-9,12.42q-6,4.06-15.15,4.06Zm17.76-15.92h13.45a9,9,0,0,0,6.62-2.36c1.61-1.57,2.75-4,3.44-7.29a62.68,62.68,0,0,0,1-12.42,75.24,75.24,0,0,0-.72-11.49A18.62,18.62,0,0,0,457,59.78a7.7,7.7,0,0,0-3.49-3.18,12,12,0,0,0-4.72-.87H435.3Z"/>
+        <path class="cls-1" d="M505.62,64.46V116H487.86V55.73m0,0V39.82h17.76V55.73"/>
+        <path class="cls-1" d="M533.23,116V55.73H513.32V39.82H571V55.73H551V116Z"/>
+        <path class="cls-1" d="M597.08,116.6a39.18,39.18,0,0,1-5.8-.51,19.25,19.25,0,0,1-6.41-2.21,13.38,13.38,0,0,1-5.13-5.23c-1.37-2.37-2.06-5.56-2.06-9.6v-41a21.18,21.18,0,0,1,1.64-8.88,14.68,14.68,0,0,1,4.32-5.6,16.71,16.71,0,0,1,6-2.92,24.81,24.81,0,0,1,6.36-.87q8.22,0,14.27.25t10.68.57c3.08.2,5.85.41,8.31.61v15H601.29A6.57,6.57,0,0,0,597,57.52a5,5,0,0,0-1.54,4.06V70l28.74,1V85l-28.74,1v7.91a7.3,7.3,0,0,0,.72,3.54,4.58,4.58,0,0,0,2,1.9,5.88,5.88,0,0,0,2.67.61h28.43v14.89q-4.51.51-10.06.92t-11.24.62C604.12,116.53,600.5,116.6,597.08,116.6Z"/>
+        <path class="cls-1" d="M665.25,116.6a40.62,40.62,0,0,1-11.71-1.54,18.39,18.39,0,0,1-8.72-5.64q-3.6-4.11-5.49-11.81t-1.9-19.91q0-11.91,2-19.46t5.64-11.7a19.32,19.32,0,0,1,8.78-5.8,37.76,37.76,0,0,1,11.5-1.64,81.59,81.59,0,0,1,10.47.61A73.68,73.68,0,0,1,684,41.2a42.4,42.4,0,0,1,5.75,1.8V56.75c-1.3-.27-3-.53-5-.77s-4.41-.44-7.08-.61-5.51-.26-8.52-.26a23,23,0,0,0-6.52.82,7.76,7.76,0,0,0-4.31,3.18A17.68,17.68,0,0,0,656,66a72.28,72.28,0,0,0-.77,11.81,87.09,87.09,0,0,0,.61,11.39,17.74,17.74,0,0,0,2.16,7,8.28,8.28,0,0,0,4.26,3.49,20,20,0,0,0,7,1q7.8,0,12.68-.31c3.25-.2,5.86-.44,7.85-.72v13.76a36,36,0,0,1-6.16,1.69,80.63,80.63,0,0,1-8,1.08Q671.1,116.6,665.25,116.6Z"/>
+        <polyline class="cls-3" points="114.43 65.45 144.77 115.42 122.98 115.42 101.04 79.27"/>
+        <polygon class="cls-2" points="76.87 115.42 73.29 102.4 67.87 100.59 65.57 105.22 76.87 115.42"/>
+        <polygon class="cls-3" points="35.88 115.82 14.03 115.82 52.67 39.77 64.98 59.94 35.88 115.82"/>
+        <polygon class="cls-4" points="68.36 65.51 77.83 81.09 103.64 30.08 115.89 50.75 82.23 115.44 76.87 115.42 54.92 79.26 68.36 65.51"/>
+        <path class="cls-1" d="M720.89,115.9V55.64H701V39.73h57.69V55.64h-20V115.9Z"/>
+      </svg>
+      <div class="sp-header-divider"></div>
+      <div>
+        <h1 class="sp-header-title">Agentic Test Workspace Setup</h1>
+        <p class="sp-header-subtitle" id="hdr_version">Central Tools Hub &amp; Project Workspace Configuration</p>
+      </div>
+    </div>
+    <div>
+      <button type="button" id="btn_theme_toggle" class="sp-btn sp-btn-secondary">Dark Theme</button>
+    </div>
+  </header>
+
+  <main class="sp-page-shell">
+
+    <!-- Notice Banner -->
+    <div class="sp-banner sp-banner-info" style="margin-bottom: 14px;">
+      <strong>Central Tools Hub Architecture:</strong> Skills and the linter engine stay in your central <code>agentic-test-workspace</code> folder. Each Mendix app gets a lightweight external project workspace folder containing <code>mta_config.json</code>, <code>.env</code>, and <code>menditect-output/</code>.
+    </div>
+
+    <!-- Card 1: Workspace Mode & Location -->
+    <div class="sp-card">
+      <div class="sp-card-header">
+        <h2 class="sp-card-title">1. Project Workspace Selection</h2>
+        <span class="sp-tooltip-wrap" tabindex="0">
+          <span class="sp-tooltip-icon">?</span>
+          <span class="sp-tooltip-popup">Choose whether to create a new external project workspace folder for a Mendix app or update an existing workspace configuration.</span>
+        </span>
+      </div>
+
+      <div class="sp-tier-grid" style="margin-bottom: 12px;">
+        <div id="mode_opt_new" class="sp-tier-option selected">
+          <div class="sp-tier-top">
+            <div class="sp-tier-title-wrap">
+              <span class="sp-tier-radio"></span>
+              <span class="sp-tier-title">Create New Project Workspace</span>
+            </div>
+            <span class="sp-tier-badge" id="badge_mode_new">Selected</span>
+          </div>
+          <div class="sp-tier-sub">Set up a clean project workspace folder for a Mendix application.</div>
+        </div>
+        <div id="mode_opt_existing" class="sp-tier-option">
+          <div class="sp-tier-top">
+            <div class="sp-tier-title-wrap">
+              <span class="sp-tier-radio"></span>
+              <span class="sp-tier-title">Update Existing Project Workspace</span>
+            </div>
+            <span class="sp-tier-badge" id="badge_mode_existing" style="display:none;">Selected</span>
+          </div>
+          <div class="sp-tier-sub">Load and modify an existing <code>mta_config.json</code> workspace.</div>
+        </div>
+      </div>
+
+      <div id="existing_workspace_selector_wrap" class="sp-field" style="display: none;">
+        <div class="sp-label-row">
+          <label class="sp-label" for="sel_existing_workspace">Registered Project Workspaces</label>
+        </div>
+        <select id="sel_existing_workspace" class="sp-select"></select>
+      </div>
+
+      <div class="sp-field">
+        <div class="sp-label-row">
+          <label class="sp-label" for="inp_workspace_dir">Project Workspace Folder Path</label>
+          <span class="sp-tooltip-wrap" tabindex="0">
+            <span class="sp-tooltip-icon">?</span>
+            <span class="sp-tooltip-popup">The folder you will open in VS Code, Cursor, Windsurf, or Antigravity when testing this Mendix app.</span>
+          </span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <input id="inp_workspace_dir" type="text" class="sp-input" placeholder="e.g. C:\Projecten\MyApp-test-workspace" />
+          <button type="button" id="btn_browse_workspace" class="sp-btn sp-btn-secondary">Browse...</button>
+        </div>
+        <div class="sp-field-hint">Tip: When you select a Mendix app folder in Step 3, this path automatically defaults to <code>&lt;AppName&gt;-test-workspace</code> if not customized yet.</div>
+      </div>
+    </div>
+
+    <!-- Card 2: MTA License Tier -->
+    <div class="sp-card">
+      <div class="sp-card-header">
+        <h2 class="sp-card-title">2. MTA License &amp; Edition</h2>
+        <span class="sp-tooltip-wrap" tabindex="0">
+          <span class="sp-tooltip-icon">?</span>
+          <span class="sp-tooltip-popup">Choose between <strong>MTA Exploratory (Free)</strong> (local in-memory rollback testing) and <strong>MTA Functional (Paid)</strong> (persistent test suites, Playwright UI testing, and CI/CD).</span>
+        </span>
+      </div>
+
+      <div class="sp-tier-grid">
+        <div id="tier_opt_free" class="sp-tier-option selected">
+          <div class="sp-tier-top">
+            <div class="sp-tier-title-wrap">
+              <span class="sp-tier-radio"></span>
+              <span class="sp-tier-title">MTA Exploratory (Free)</span>
+            </div>
+            <span class="sp-tier-badge" id="badge_tier_free">Selected</span>
+          </div>
+          <div class="sp-tier-sub">Local exploratory unit &amp; microflow testing with automatic database rollback via <code>services.menditect.com</code>.</div>
+        </div>
+        <div id="tier_opt_paid" class="sp-tier-option">
+          <div class="sp-tier-top">
+            <div class="sp-tier-title-wrap">
+              <span class="sp-tier-radio"></span>
+              <span class="sp-tier-title">MTA Functional / Enterprise (Paid)</span>
+            </div>
+            <span class="sp-tier-badge" id="badge_tier_paid" style="display:none;">Selected</span>
+          </div>
+          <div class="sp-tier-sub">Full access to MTA Server test suites, regression tests &amp; Playwright UI testing.</div>
+        </div>
+      </div>
+
+      <div id="free_license_cta_bar" class="sp-banner sp-banner-info" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px;">
+        <div>
+          <strong>Need a Free Exploratory License Key?</strong> Request one right here and it will automatically fill in your <code>ApplicationInstanceToken</code> below.
+        </div>
+        <button type="button" id="btn_open_free_license_modal" class="sp-btn sp-btn-primary">Request Free License Key...</button>
+      </div>
+      <div id="free_license_success_banner" class="sp-banner sp-banner-success" style="display: none;"></div>
+    </div>
+
+    <!-- Card 3: Mendix Project & Runtime Configuration -->
+    <div class="sp-card">
+      <div class="sp-card-header">
+        <h2 class="sp-card-title">3. Mendix Application &amp; Plugin Configuration</h2>
+        <span class="sp-tooltip-wrap" tabindex="0">
+          <span class="sp-tooltip-icon">?</span>
+          <span class="sp-tooltip-popup">Inspects your Mendix <code>.mpr</code> project, installs required Menditect Marketplace modules, and configures <code>MtaPluginModule</code> constants and <code>AfterStartup</code> microflow.</span>
+        </span>
+      </div>
+
+      <div class="sp-field">
+        <div class="sp-label-row">
+          <label class="sp-label" for="inp_project_dir">Mendix Application Folder (containing <code>.mpr</code>)</label>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <input id="inp_project_dir" type="text" class="sp-input" placeholder="e.g. C:\Users\you\Mendix\MyApp-main" />
+          <button type="button" id="btn_browse_project" class="sp-btn sp-btn-secondary">Browse...</button>
+          <button type="button" id="btn_inspect_project" class="sp-btn sp-btn-secondary">Inspect App</button>
+        </div>
+        <div id="project_error_msg" class="sp-field-error" style="display: none;"></div>
+      </div>
+
+      <!-- Live Inspection Status Box -->
+      <div id="project_inspection_panel" style="display: none; margin-bottom: 12px; padding: 11px 13px; background: var(--sp-surface-alt); border: 1px solid var(--sp-border); border-radius: 6px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <strong>Detected Mendix Project:</strong> <code id="lbl_mpr_name">-</code>
+            <span id="lbl_mendix_version" class="sp-badge sp-badge-ok" style="margin-left: 6px;">Mendix</span>
+          </div>
+          <div id="lbl_modules_badges" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+        </div>
+
+        <!-- Studio Pro Open Warning -->
+        <div id="studio_pro_lock_banner" class="sp-banner sp-banner-warn" style="display: none; margin-top: 10px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+            <div>
+              <strong>Warning — Studio Pro Has This Project Open:</strong> Close the project in Studio Pro before modifying <code>.mpr</code> constants or installing modules, or check "Skip .mpr writes" below.
+            </div>
+            <button type="button" id="btn_recheck_studiopro" class="sp-btn sp-btn-secondary">Re-check Studio Pro</button>
+          </div>
+        </div>
+
+        <div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 16px; align-items: center;">
+          <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="chk_install_modules" checked />
+            Automatically install/update Menditect Marketplace modules (<code>MtaPluginModule</code>, etc.)
+          </label>
+          <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="chk_skip_mpr_write" />
+            Skip writing to <code>.mpr</code> file (save to <code>mta_config.json</code> only)
+          </label>
+        </div>
+
+        <div id="pat_field_wrap" class="sp-field" style="margin-top: 10px; display: none;">
+          <div class="sp-label-row">
+            <label class="sp-label" for="inp_mendix_pat">Mendix Personal Access Token (PAT) for Marketplace Downloads (Optional)</label>
+            <span class="sp-tooltip-wrap" tabindex="0">
+              <span class="sp-tooltip-icon">?</span>
+              <span class="sp-tooltip-popup">Create at <strong>user-settings.mendix.com &gt; Personal Access Tokens</strong> with scope <code>mx:marketplace-content:read</code>. Leave blank to skip automatic Marketplace downloads.</span>
+            </span>
+          </div>
+          <input id="inp_mendix_pat" type="password" class="sp-input" placeholder="Paste Mendix PAT (or leave blank if modules are already installed)" />
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+        <div class="sp-field" style="margin-bottom: 0;">
+          <div class="sp-label-row">
+            <label class="sp-label" for="inp_app_name">Application Name</label>
+          </div>
+          <input id="inp_app_name" type="text" class="sp-input" placeholder="e.g. MyApp" />
+        </div>
+
+        <div class="sp-field" style="margin-bottom: 0;">
+          <div class="sp-label-row">
+            <label class="sp-label" for="sel_mendix_config">Target Mendix Configuration</label>
+            <span class="sp-tooltip-wrap" tabindex="0">
+              <span class="sp-tooltip-icon">?</span>
+              <span class="sp-tooltip-popup">Selects which Mendix Runtime Configuration under <strong>App &gt; Settings &gt; Configurations</strong> receives the <code>MtaPluginModule</code> constants.</span>
+            </span>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <select id="sel_mendix_config" class="sp-select">
+              <option value="Default">Default</option>
+            </select>
+            <button type="button" id="btn_toggle_new_cfg" class="sp-btn sp-btn-secondary">+ New</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Inline New Configuration Box -->
+      <div id="new_cfg_inline_box" style="display: none; background: var(--sp-surface-alt); border: 1px solid var(--sp-border); border-radius: 5px; padding: 10px 12px; margin-bottom: 12px;">
+        <div class="sp-label-row">
+          <label class="sp-label" for="inp_new_cfg_name">Create New Mendix Configuration Name</label>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <input id="inp_new_cfg_name" type="text" class="sp-input" placeholder="e.g. Default_MTA" />
+          <button type="button" id="btn_confirm_new_cfg" class="sp-btn sp-btn-primary">Use Name</button>
+          <button type="button" id="btn_cancel_new_cfg" class="sp-btn sp-btn-secondary">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Application Instance Token -->
+      <div class="sp-field">
+        <div class="sp-label-row">
+          <label class="sp-label" for="inp_app_token">Application Instance Token (<code>MtaPluginModule.ApplicationInstanceToken</code>)</label>
+          <span class="sp-tooltip-wrap" tabindex="0">
+            <span class="sp-tooltip-icon">?</span>
+            <span class="sp-tooltip-popup">For Free Exploratory: your personal license key (e.g. <code>mta_exploratory_free_...</code>). For Paid MTA: generated in MTA under <strong>Applications &gt; App Instances</strong>.</span>
+          </span>
+        </div>
+        <input id="inp_app_token" type="text" class="sp-input" placeholder="e.g. mta_exploratory_free_550e8400-e29b-41d4-a716-446655440000" />
+        <div id="err_app_token" class="sp-field-error" style="display: none;"></div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="sp-field" style="margin-bottom: 0;">
+          <div class="sp-label-row">
+            <label class="sp-label" for="inp_mcp_token">Plugin MCP Access Token (<code>McpServerAccessToken</code>)</label>
+            <span class="sp-tooltip-wrap" tabindex="0">
+              <span class="sp-tooltip-icon">?</span>
+              <span class="sp-tooltip-popup">Shared secret protecting <code>/plugin/mcp</code> in your running Mendix app. Configures both the Mendix constant and <code>PLUGIN_MCP_TOKEN</code> in <code>.env</code>. Default <code>1</code> is ideal for local testing.</span>
+            </span>
+          </div>
+          <input id="inp_mcp_token" type="text" class="sp-input" value="1" />
+        </div>
+
+        <div class="sp-field" style="margin-bottom: 0;">
+          <div class="sp-label-row">
+            <label class="sp-label" for="inp_plugin_url">Local Plugin MCP Endpoint URL</label>
+          </div>
+          <input id="inp_plugin_url" type="text" class="sp-input" value="http://localhost:8081/plugin/mcp" />
+        </div>
+      </div>
+
+      <!-- Paid MTA Server Section (shown only when Paid is selected) -->
+      <div id="paid_server_fields" style="display: none; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--sp-border);">
+        <div class="sp-card-header" style="margin-bottom: 10px;">
+          <h3 class="sp-card-title" style="font-size: 12.5px;">Paid MTA Server Settings &amp; Service Account</h3>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+          <div class="sp-field" style="margin-bottom: 0;">
+            <div class="sp-label-row">
+              <label class="sp-label" for="inp_mta_url">MTA Server URL (<code>MTAConnectionUrl</code>)</label>
+            </div>
+            <input id="inp_mta_url" type="text" class="sp-input" value="https://mta-trial.mendixcloud.com" />
+          </div>
+
+          <div class="sp-field" style="margin-bottom: 0;">
+            <div class="sp-label-row">
+              <label class="sp-label" for="inp_conn_password">MTA Connection Password (<code>MTAConnectionPassword</code>)</label>
+            </div>
+            <input id="inp_conn_password" type="text" class="sp-input" />
+          </div>
+        </div>
+
+        <div class="sp-field">
+          <div class="sp-label-row">
+            <label class="sp-label" for="inp_mta_bearer">Service Account Identification Token (Stored in <code>.env</code> as <code>MTA_MCP_AUTH_HEADER</code>)</label>
+            <span class="sp-tooltip-wrap" tabindex="0">
+              <span class="sp-tooltip-icon">?</span>
+              <span class="sp-tooltip-popup">Required for creating/updating persistent test suites in MTA Cloud. Created in MTA Portal under <strong>Service Accounts</strong> with <em>Call MCP primitive tools = Enabled</em>.</span>
+            </span>
+          </div>
+          <input id="inp_mta_bearer" type="password" class="sp-input" placeholder="Optional for local exploratory runs; required for persistent MTA server test building" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 4: AI Assistant & Execution Preferences -->
+    <div class="sp-card">
+      <div class="sp-card-header">
+        <h2 class="sp-card-title">4. AI Model Inspection &amp; Exploratory Mode</h2>
+      </div>
+
+      <div class="sp-field">
+        <div class="sp-label-row">
+          <label class="sp-label">Mendix Model Inspection Source</label>
+        </div>
+        <div class="sp-tier-grid">
+          <div id="src_opt_mxcli" class="sp-tier-option selected">
+            <div class="sp-tier-top">
+              <div class="sp-tier-title-wrap">
+                <span class="sp-tier-radio"></span>
+                <span class="sp-tier-title">mxcli (Recommended / Standalone)</span>
+              </div>
+            </div>
+            <div class="sp-tier-sub">Inspects your <code>.mpr</code> file directly from disk. Fast, works offline, and does not require Studio Pro to be open.</div>
+          </div>
+          <div id="src_opt_studiopro" class="sp-tier-option">
+            <div class="sp-tier-top">
+              <div class="sp-tier-title-wrap">
+                <span class="sp-tier-radio"></span>
+                <span class="sp-tier-title">Studio Pro Live MCP (Mendix 11.12+)</span>
+              </div>
+            </div>
+            <div class="sp-tier-sub">Connects live to an open Studio Pro session via port 7782.</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="catalog_index_wrap" class="sp-field">
+        <div class="sp-label-row">
+          <label class="sp-label" for="sel_catalog_choice">mxcli Project Search Index (<code>.mxcli/catalog.db</code>)</label>
+        </div>
+        <select id="sel_catalog_choice" class="sp-select">
+          <option value="fast" selected>Fast Index (Recommended — seconds, indexes entities, microflow signatures &amp; pages)</option>
+          <option value="full">Full Deep Index (1–5 minutes — indexes every microflow expression &amp; activity)</option>
+          <option value="skip">Skip Indexing Now</option>
+        </select>
+      </div>
+
+      <div id="studiopro_url_wrap" class="sp-field" style="display: none;">
+        <div class="sp-label-row">
+          <label class="sp-label" for="inp_studiopro_url">Studio Pro MCP Endpoint URL</label>
+        </div>
+        <input id="inp_studiopro_url" type="text" class="sp-input" value="http://localhost:7782/mcp" />
+      </div>
+
+      <div class="sp-field" style="margin-top: 12px;">
+        <div class="sp-label-row">
+          <label class="sp-label">Exploratory Testing Execution Mode</label>
+        </div>
+        <div class="sp-tier-grid">
+          <div id="exp_opt_auto" class="sp-tier-option selected">
+            <div class="sp-tier-top">
+              <div class="sp-tier-title-wrap">
+                <span class="sp-tier-radio"></span>
+                <span class="sp-tier-title">Auto-Execute (Recommended)</span>
+              </div>
+            </div>
+            <div class="sp-tier-sub">Writes <code>EP_*.md</code> and executes in-memory rollback tests in a single turn.</div>
+          </div>
+          <div id="exp_opt_prompt" class="sp-tier-option">
+            <div class="sp-tier-top">
+              <div class="sp-tier-title-wrap">
+                <span class="sp-tier-radio"></span>
+                <span class="sp-tier-title">Prompt Approval (2-Turn Gate)</span>
+              </div>
+            </div>
+            <div class="sp-tier-sub">Writes <code>EP_*.md</code> and pauses at Checkpoint 1 for manual user approval before running.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Sticky Footer -->
+  <footer class="sp-footer">
+    <div class="sp-footer-inner">
+      <div style="font-size: 12px; color: var(--sp-text-muted);">
+        Target Workspace: <strong id="ftr_workspace_lbl">-</strong> &bull; Edition: <strong id="ftr_edition_lbl">MTA Exploratory (Free)</strong>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button type="button" id="btn_save_setup" class="sp-btn sp-btn-primary" style="padding: 8px 20px; font-size: 13px;">Save &amp; Configure Workspace</button>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Modal 1: Request Free Exploratory License (HubSpot API) -->
+  <div id="modal_free_license" class="sp-modal-backdrop">
+    <div class="sp-modal">
+      <div class="sp-modal-header">
+        <h3 class="sp-card-title">Request Free Exploratory License Key</h3>
+        <button type="button" id="btn_close_free_modal" class="sp-btn sp-btn-secondary" style="padding: 3px 9px;">✕</button>
+      </div>
+      <div class="sp-modal-body">
+        <p style="margin-top: 0; font-size: 12px; color: var(--sp-text-muted);">
+          Complete the form below to generate your personal <strong>MTA Exploratory</strong> license key and activate it immediately.
+        </p>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="sp-field">
+            <div class="sp-label-row"><label class="sp-label" for="fl_first_name">First Name *</label></div>
+            <input id="fl_first_name" type="text" class="sp-input" />
+            <div id="err_fl_firstName" class="sp-field-error" style="display:none;"></div>
+          </div>
+          <div class="sp-field">
+            <div class="sp-label-row"><label class="sp-label" for="fl_last_name">Last Name *</label></div>
+            <input id="fl_last_name" type="text" class="sp-input" />
+            <div id="err_fl_lastName" class="sp-field-error" style="display:none;"></div>
+          </div>
+        </div>
+
+        <div class="sp-field">
+          <div class="sp-label-row"><label class="sp-label" for="fl_email">Business Email Address *</label></div>
+          <input id="fl_email" type="email" class="sp-input" placeholder="you@company.com (no Gmail/Outlook/Yahoo)" />
+          <div id="err_fl_email" class="sp-field-error" style="display:none;"></div>
+        </div>
+
+        <div class="sp-field">
+          <div class="sp-label-row"><label class="sp-label" for="fl_company">Company Name *</label></div>
+          <input id="fl_company" type="text" class="sp-input" />
+          <div id="err_fl_company" class="sp-field-error" style="display:none;"></div>
+        </div>
+
+        <div class="sp-field">
+          <div class="sp-label-row"><label class="sp-label" for="fl_country">Country *</label></div>
+          <select id="fl_country" class="sp-select">
+            <option value="">Select your country...</option>
+          </select>
+          <div id="err_fl_country" class="sp-field-error" style="display:none;"></div>
+        </div>
+
+        <div class="sp-field" style="margin-top: 10px;">
+          <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="fl_eula" style="margin-top: 2px;" />
+            <span>I agree to the <a href="https://documentation.menditect.com/legal/eula-mta-exploratory" target="_blank" rel="noopener noreferrer" style="color: var(--sp-input-focus);">Menditect EULA for MTA Exploratory</a> *</span>
+          </label>
+          <div id="err_fl_eulaAccepted" class="sp-field-error" style="display:none;"></div>
+        </div>
+
+        <div id="err_fl_general" class="sp-banner sp-banner-err" style="display:none;"></div>
+      </div>
+      <div class="sp-modal-footer">
+        <button type="button" id="btn_cancel_free_modal" class="sp-btn sp-btn-secondary">Cancel</button>
+        <button type="button" id="btn_submit_free_license" class="sp-btn sp-btn-primary">Generate &amp; Activate License Key</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 2: Execution Progress & Completion -->
+  <div id="modal_progress" class="sp-modal-backdrop">
+    <div class="sp-modal" style="max-width: 660px;">
+      <div class="sp-modal-header">
+        <h3 class="sp-card-title" id="prog_modal_title">Configuring Workspace &amp; Mendix Project...</h3>
+      </div>
+      <div class="sp-modal-body">
+        <div id="prog_log_box" class="sp-log-box"></div>
+        <div id="prog_result_banner" style="display: none; margin-top: 12px;"></div>
+      </div>
+      <div class="sp-modal-footer" id="prog_modal_footer" style="display: none;">
+        <button type="button" id="btn_keep_editing" class="sp-btn sp-btn-secondary">Back to Setup Form</button>
+        <button type="button" id="btn_finish_exit" class="sp-btn sp-btn-primary">Finish &amp; Close Setup Server</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const uiState = {
+      setupMode: 'new',
+      workspaceDirCustomized: false,
+      licenseTier: 'free_exploratory',
+      modelSource: 'mxcli',
+      exploratoryMode: 'auto_execute',
+      isNewConfig: false,
+      baseConfigName: 'Default',
+      existingWorkspaces: [],
+      gatewayDefaults: { idValue: '', keyValue: '' },
+      mxcliAuthed: false
+    };
+
+    const $ = id => document.getElementById(id);
+
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function updateFooterSummary() {
+      const wsDir = $('inp_workspace_dir').value.trim() || '(not set)';
+      $('ftr_workspace_lbl').textContent = wsDir;
+      $('ftr_edition_lbl').textContent = uiState.licenseTier === 'paid_enterprise'
+        ? 'MTA Functional / Enterprise (Paid)'
+        : 'MTA Exploratory (Free)';
+    }
+
+    function setSetupMode(mode) {
+      uiState.setupMode = mode;
+      const isNew = mode === 'new';
+      $('mode_opt_new').classList.toggle('selected', isNew);
+      $('mode_opt_existing').classList.toggle('selected', !isNew);
+      $('badge_mode_new').style.display = isNew ? 'inline-block' : 'none';
+      $('badge_mode_existing').style.display = !isNew ? 'inline-block' : 'none';
+      $('existing_workspace_selector_wrap').style.display = !isNew ? 'block' : 'none';
+
+      if (!isNew && uiState.existingWorkspaces.length > 0) {
+        hydrateFromSelectedWorkspace($('sel_existing_workspace').value);
+      }
+    }
+
+    function setLicenseTier(tier) {
+      uiState.licenseTier = tier;
+      const isPaid = tier === 'paid_enterprise';
+      $('tier_opt_free').classList.toggle('selected', !isPaid);
+      $('tier_opt_paid').classList.toggle('selected', isPaid);
+      $('badge_tier_free').style.display = !isPaid ? 'inline-block' : 'none';
+      $('badge_tier_paid').style.display = isPaid ? 'inline-block' : 'none';
+      $('free_license_cta_bar').style.display = !isPaid ? 'flex' : 'none';
+      $('paid_server_fields').style.display = isPaid ? 'block' : 'none';
+      updateFooterSummary();
+    }
+
+    function setModelSource(src) {
+      uiState.modelSource = src;
+      const isMxcli = src === 'mxcli';
+      $('src_opt_mxcli').classList.toggle('selected', isMxcli);
+      $('src_opt_studiopro').classList.toggle('selected', !isMxcli);
+      $('catalog_index_wrap').style.display = isMxcli ? 'block' : 'none';
+      $('studiopro_url_wrap').style.display = !isMxcli ? 'block' : 'none';
+    }
+
+    function setExploratoryMode(mode) {
+      uiState.exploratoryMode = mode;
+      const isAuto = mode === 'auto_execute';
+      $('exp_opt_auto').classList.toggle('selected', isAuto);
+      $('exp_opt_prompt').classList.toggle('selected', !isAuto);
+    }
+
+    async function hydrateFromSelectedWorkspace(workspaceDir) {
+      if (!workspaceDir) return;
+      try {
+        const res = await fetch('/api/hydrate-workspace', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspaceDir })
+        });
+        const data = await res.json();
+        if (data.ok && data.state) {
+          const st = data.state;
+          $('inp_workspace_dir').value = st.customWorkspaceDir || workspaceDir;
+          uiState.workspaceDirCustomized = true;
+          if (st.projectDir) $('inp_project_dir').value = st.projectDir;
+          if (st.appName) $('inp_app_name').value = st.appName;
+          if (st.defaultInstanceToken) $('inp_app_token').value = st.defaultInstanceToken;
+          if (st.rawPluginToken) $('inp_mcp_token').value = st.rawPluginToken.replace(/^Bearer\s+/i, '');
+          if (st.pluginUrl) $('inp_plugin_url').value = st.pluginUrl;
+          if (st.mtaUrl && st.licenseTier === 'paid_enterprise') $('inp_mta_url').value = st.mtaUrl;
+          if (st.rawMtaToken) $('inp_mta_bearer').value = st.rawMtaToken;
+          setLicenseTier(st.licenseTier || 'free_exploratory');
+          setModelSource(st.modelSource === '2' ? 'studiopro' : 'mxcli');
+          setExploratoryMode(st.exploratoryMode || 'auto_execute');
+          if (data.projectInspection) {
+            renderProjectInspection(data.projectInspection, st.defaultInstanceName);
+          }
+          updateFooterSummary();
+        }
+      } catch (e) {}
+    }
+
+    function renderProjectInspection(insp, preferredConfigName) {
+      const errEl = $('project_error_msg');
+      const panel = $('project_inspection_panel');
+      if (!insp || !insp.valid) {
+        panel.style.display = 'none';
+        errEl.textContent = (insp && insp.error) ? insp.error : 'Invalid Mendix project folder.';
+        errEl.style.display = 'block';
+        return;
+      }
+      errEl.style.display = 'none';
+      panel.style.display = 'block';
+      $('lbl_mpr_name').textContent = insp.mprFileName || '.mpr';
+      $('lbl_mendix_version').textContent = insp.detectedVersion ? `Mendix ${insp.detectedVersion}` : 'Mendix Project';
+
+      if (!$('inp_app_name').value.trim() && insp.appNameSuggestion) {
+        $('inp_app_name').value = insp.appNameSuggestion;
+      }
+      if (!uiState.workspaceDirCustomized && insp.defaultWorkspaceDirSuggestion && uiState.setupMode === 'new') {
+        $('inp_workspace_dir').value = insp.defaultWorkspaceDirSuggestion;
+        updateFooterSummary();
+      }
+
+      // Studio Pro lock check
+      $('studio_pro_lock_banner').style.display = (insp.studioProCheck && insp.studioProCheck.isOpen) ? 'block' : 'none';
+
+      // Modules status badges
+      const modBadges = [];
+      const mods = insp.installedModules && insp.installedModules.modules ? insp.installedModules.modules : {};
+      const pluginMod = mods.MtaPluginModule;
+      if (pluginMod && pluginMod.installed) {
+        modBadges.push(`<span class="sp-badge sp-badge-ok">MtaPluginModule v${escapeHtml(pluginMod.version || 'installed')}</span>`);
+      } else {
+        modBadges.push(`<span class="sp-badge sp-badge-warn">MtaPluginModule (will install)</span>`);
+        if (!uiState.mxcliAuthed) {
+          $('pat_field_wrap').style.display = 'block';
+        }
+      }
+      $('lbl_modules_badges').innerHTML = modBadges.join('');
+
+      // Configurations dropdown
+      const selCfg = $('sel_mendix_config');
+      const cfgNames = Array.isArray(insp.configurationNames) && insp.configurationNames.length ? insp.configurationNames : ['Default'];
+      selCfg.innerHTML = cfgNames.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+      if (preferredConfigName && cfgNames.includes(preferredConfigName)) {
+        selCfg.value = preferredConfigName;
+      }
+
+      // Pre-fill discovered tokens if currently empty
+      if (insp.discoveredMta) {
+        const instances = insp.discoveredMta.instances || [];
+        const matchInst = instances.find(i => i.name === selCfg.value) || instances[0];
+        if (matchInst) {
+          if (!$('inp_app_token').value.trim() && matchInst.token) {
+            $('inp_app_token').value = matchInst.token;
+          }
+          if (matchInst.pluginUrl) {
+            $('inp_plugin_url').value = matchInst.pluginUrl;
+          }
+        }
+        if (insp.discoveredMta.globalRawMcpServerAccessToken && $('inp_mcp_token').value === '1') {
+          $('inp_mcp_token').value = insp.discoveredMta.globalRawMcpServerAccessToken;
+        }
+      }
+    }
+
+    async function inspectCurrentProjectDir() {
+      const projectDir = $('inp_project_dir').value.trim();
+      if (!projectDir) return;
+      try {
+        const res = await fetch('/api/inspect-project', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectDir })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          renderProjectInspection(data.inspection);
+        }
+      } catch (e) {}
+    }
+
+    async function initBootstrap() {
+      try {
+        const res = await fetch('/api/init');
+        const data = await res.json();
+        if (!data.ok) return;
+
+        if (data.scriptVersion) {
+          $('hdr_version').textContent = `Central Tools Hub & Project Workspace Setup (${data.scriptVersion})`;
+        }
+        uiState.gatewayDefaults = data.gatewayDefaults || { idValue: '', keyValue: '' };
+        uiState.mxcliAuthed = Boolean(data.mxcliAuthed);
+        $('inp_conn_password').value = uiState.gatewayDefaults.keyValue || '';
+        $('inp_workspace_dir').value = data.defaultWorkspaceParentDir
+          ? `${data.defaultWorkspaceParentDir}\\MyApp-test-workspace`
+          : '';
+
+        // Populate countries
+        const countries = Array.isArray(data.countries) ? data.countries : [];
+        const countrySel = $('fl_country');
+        countrySel.innerHTML = `<option value="">Select your country...</option>` +
+          countries.map(c => `<option value="${escapeHtml(c.value)}">${escapeHtml(c.label)}</option>`).join('');
+
+        // Populate existing workspaces
+        uiState.existingWorkspaces = Array.isArray(data.existingWorkspaces) ? data.existingWorkspaces : [];
+        const wsSel = $('sel_existing_workspace');
+        if (uiState.existingWorkspaces.length > 0) {
+          wsSel.innerHTML = uiState.existingWorkspaces
+            .map(w => `<option value="${escapeHtml(w.dir)}">${escapeHtml(w.appName)} — ${escapeHtml(w.dir)}</option>`)
+            .join('');
+        } else {
+          wsSel.innerHTML = `<option value="">(No existing project workspaces discovered)</option>`;
+        }
+
+        if (!uiState.mxcliAuthed) {
+          $('pat_field_wrap').style.display = 'block';
+        }
+
+        updateFooterSummary();
+      } catch (e) {}
+    }
+
+    // Event Listeners
+    $('btn_theme_toggle').addEventListener('click', () => {
+      const isDark = document.body.classList.toggle('sp-theme-dark');
+      document.body.classList.toggle('sp-theme-light', !isDark);
+      $('btn_theme_toggle').textContent = isDark ? 'Light Theme' : 'Dark Theme';
+    });
+
+    $('mode_opt_new').addEventListener('click', () => setSetupMode('new'));
+    $('mode_opt_existing').addEventListener('click', () => setSetupMode('existing'));
+    $('sel_existing_workspace').addEventListener('change', e => hydrateFromSelectedWorkspace(e.target.value));
+
+    $('inp_workspace_dir').addEventListener('input', () => {
+      uiState.workspaceDirCustomized = true;
+      updateFooterSummary();
+    });
+
+    $('tier_opt_free').addEventListener('click', () => setLicenseTier('free_exploratory'));
+    $('tier_opt_paid').addEventListener('click', () => setLicenseTier('paid_enterprise'));
+
+    $('src_opt_mxcli').addEventListener('click', () => setModelSource('mxcli'));
+    $('src_opt_studiopro').addEventListener('click', () => setModelSource('studiopro'));
+
+    $('exp_opt_auto').addEventListener('click', () => setExploratoryMode('auto_execute'));
+    $('exp_opt_prompt').addEventListener('click', () => setExploratoryMode('prompt_approval'));
+
+    $('btn_browse_workspace').addEventListener('click', async () => {
+      $('btn_browse_workspace').disabled = true;
+      try {
+        const res = await fetch('/api/pick-folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Select Project Workspace Folder',
+            initialDir: $('inp_workspace_dir').value.trim()
+          })
+        });
+        const data = await res.json();
+        if (data.ok && !data.cancelled && data.folderPath) {
+          $('inp_workspace_dir').value = data.folderPath;
+          uiState.workspaceDirCustomized = true;
+          updateFooterSummary();
+        }
+      } finally {
+        $('btn_browse_workspace').disabled = false;
+      }
+    });
+
+    $('btn_browse_project').addEventListener('click', async () => {
+      $('btn_browse_project').disabled = true;
+      try {
+        const res = await fetch('/api/pick-folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Select Mendix Project Folder (containing .mpr)',
+            initialDir: $('inp_project_dir').value.trim()
+          })
+        });
+        const data = await res.json();
+        if (data.ok && !data.cancelled && data.folderPath) {
+          $('inp_project_dir').value = data.folderPath;
+          await inspectCurrentProjectDir();
+        }
+      } finally {
+        $('btn_browse_project').disabled = false;
+      }
+    });
+
+    $('btn_inspect_project').addEventListener('click', inspectCurrentProjectDir);
+    $('inp_project_dir').addEventListener('change', inspectCurrentProjectDir);
+    $('btn_recheck_studiopro').addEventListener('click', inspectCurrentProjectDir);
+
+    // New Configuration Inline Bar
+    $('btn_toggle_new_cfg').addEventListener('click', () => {
+      uiState.baseConfigName = $('sel_mendix_config').value || 'Default';
+      $('inp_new_cfg_name').value = `${uiState.baseConfigName}_MTA`;
+      $('new_cfg_inline_box').style.display = 'block';
+    });
+    $('btn_cancel_new_cfg').addEventListener('click', () => {
+      $('new_cfg_inline_box').style.display = 'none';
+    });
+    $('btn_confirm_new_cfg').addEventListener('click', () => {
+      const newName = $('inp_new_cfg_name').value.trim();
+      if (!newName) return;
+      const sel = $('sel_mendix_config');
+      const opt = document.createElement('option');
+      opt.value = newName;
+      opt.textContent = `${newName} (New)`;
+      sel.appendChild(opt);
+      sel.value = newName;
+      uiState.isNewConfig = true;
+      $('new_cfg_inline_box').style.display = 'none';
+    });
+
+    // Free License Modal
+    function closeFreeModal() {
+      $('modal_free_license').classList.remove('open');
+    }
+    $('btn_open_free_license_modal').addEventListener('click', () => {
+      $('modal_free_license').classList.add('open');
+    });
+    $('btn_close_free_modal').addEventListener('click', closeFreeModal);
+    $('btn_cancel_free_modal').addEventListener('click', closeFreeModal);
+
+    $('btn_submit_free_license').addEventListener('click', async () => {
+      ['firstName', 'lastName', 'email', 'company', 'country', 'eulaAccepted'].forEach(f => {
+        const el = $(`err_fl_${f}`);
+        if (el) el.style.display = 'none';
+      });
+      $('err_fl_general').style.display = 'none';
+
+      const payload = {
+        firstName: $('fl_first_name').value.trim(),
+        lastName: $('fl_last_name').value.trim(),
+        email: $('fl_email').value.trim(),
+        company: $('fl_company').value.trim(),
+        country: $('fl_country').value,
+        eulaAccepted: $('fl_eula').checked
+      };
+
+      const btn = $('btn_submit_free_license');
+      btn.disabled = true;
+      btn.textContent = 'Submitting to Menditect...';
+      try {
+        const res = await fetch('/api/request-free-license', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          if (data.field && $(`err_fl_${data.field}`)) {
+            const errEl = $(`err_fl_${data.field}`);
+            errEl.textContent = data.error;
+            errEl.style.display = 'block';
+          } else {
+            $('err_fl_general').textContent = data.error || 'Failed to request license.';
+            $('err_fl_general').style.display = 'block';
+          }
+          return;
+        }
+
+        $('inp_app_token').value = data.token;
+        $('err_app_token').style.display = 'none';
+        $('inp_app_token').classList.remove('sp-input-error');
+        const banner = $('free_license_success_banner');
+        banner.innerHTML = `<strong>Free Exploratory License Activated!</strong> Your license token <code>${escapeHtml(data.token)}</code> has been registered for <strong>${escapeHtml(data.email)}</strong> and filled in below.`;
+        banner.style.display = 'block';
+        closeFreeModal();
+      } catch (err) {
+        $('err_fl_general').textContent = err.message || 'Network error.';
+        $('err_fl_general').style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate & Activate License Key';
+      }
+    });
+
+    // Save & Apply Setup
+    $('btn_save_setup').addEventListener('click', async () => {
+      const projectDir = $('inp_project_dir').value.trim();
+      const workspaceDir = $('inp_workspace_dir').value.trim();
+      const appToken = $('inp_app_token').value.trim();
+
+      $('project_error_msg').style.display = 'none';
+      $('err_app_token').style.display = 'none';
+      $('inp_app_token').classList.remove('sp-input-error');
+
+      if (!projectDir) {
+        $('project_error_msg').textContent = 'Please select your Mendix Application Folder (.mpr).';
+        $('project_error_msg').style.display = 'block';
+        $('inp_project_dir').focus();
+        return;
+      }
+      if (!appToken) {
+        $('err_app_token').textContent = 'Application Instance Token is required (click "Request Free License Key..." above if you need one).';
+        $('err_app_token').style.display = 'block';
+        $('inp_app_token').classList.add('sp-input-error');
+        $('inp_app_token').focus();
+        return;
+      }
+
+      const payload = {
+        workspaceDir,
+        licenseTier: uiState.licenseTier,
+        projectDir,
+        appName: $('inp_app_name').value.trim(),
+        targetConfigName: $('sel_mendix_config').value || 'Default',
+        isNewConfig: uiState.isNewConfig,
+        baseConfigName: uiState.baseConfigName,
+        skipMprConfigWrite: $('chk_skip_mpr_write').checked,
+        installMarketplaceModules: $('chk_install_modules').checked,
+        mendixPat: $('inp_mendix_pat').value.trim(),
+        appInstanceToken: appToken,
+        mcpServerAccessToken: $('inp_mcp_token').value.trim() || '1',
+        pluginUrl: $('inp_plugin_url').value.trim() || 'http://localhost:8081/plugin/mcp',
+        mtaUrl: uiState.licenseTier === 'paid_enterprise'
+          ? $('inp_mta_url').value.trim()
+          : 'https://services.menditect.com',
+        connectionPassword: $('inp_conn_password').value.trim(),
+        rawMtaToken: $('inp_mta_bearer').value.trim(),
+        modelSource: uiState.modelSource,
+        catalogChoice: $('sel_catalog_choice').value,
+        studioproMcpUrl: $('inp_studiopro_url').value.trim() || 'http://localhost:7782/mcp',
+        exploratoryMode: uiState.exploratoryMode
+      };
+
+      const logBox = $('prog_log_box');
+      const resBanner = $('prog_result_banner');
+      logBox.innerHTML = '';
+      resBanner.style.display = 'none';
+      $('prog_modal_footer').style.display = 'none';
+      $('prog_modal_title').textContent = 'Configuring Workspace & Mendix Project...';
+      $('modal_progress').classList.add('open');
+
+      try {
+        const response = await fetch('/api/apply-setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const evt = JSON.parse(line);
+              if (evt.type === 'log') {
+                const div = document.createElement('div');
+                if (evt.level === 'warn') div.className = 'sp-log-warn';
+                else if (evt.level === 'error') div.className = 'sp-log-err';
+                div.textContent = evt.message;
+                logBox.appendChild(div);
+                logBox.scrollTop = logBox.scrollHeight;
+              } else if (evt.type === 'result') {
+                $('prog_modal_footer').style.display = 'flex';
+                if (evt.ok && evt.result) {
+                  $('prog_modal_title').textContent = 'Workspace Setup Complete!';
+                  resBanner.className = 'sp-banner sp-banner-success';
+                  resBanner.innerHTML =
+                    `<strong>Success! Your project workspace is configured and ready.</strong><br/>` +
+                    `&bull; <strong>Open this folder in your AI IDE (VS Code / Cursor / Windsurf / Antigravity):</strong> <code>${escapeHtml(evt.result.workspaceDir)}</code><br/>` +
+                    `&bull; <strong>Mendix Project:</strong> <code>${escapeHtml(evt.result.projectDir)}</code> (Configuration: <code>${escapeHtml(evt.result.defaultInstanceName || 'Default')}</code>)`;
+                  resBanner.style.display = 'block';
+                } else {
+                  $('prog_modal_title').textContent = 'Setup Encountered an Error';
+                  resBanner.className = 'sp-banner sp-banner-err';
+                  resBanner.textContent = evt.error || 'Unknown error occurred during setup.';
+                  resBanner.style.display = 'block';
+                }
+              }
+            } catch (e) {}
+          }
+        }
+      } catch (err) {
+        $('prog_modal_footer').style.display = 'flex';
+        resBanner.className = 'sp-banner sp-banner-err';
+        resBanner.textContent = err.message || 'Failed to communicate with local setup server.';
+        resBanner.style.display = 'block';
+      }
+    });
+
+    $('btn_keep_editing').addEventListener('click', () => {
+      $('modal_progress').classList.remove('open');
+    });
+
+    $('btn_finish_exit').addEventListener('click', async () => {
+      try {
+        await fetch('/api/shutdown', { method: 'POST' });
+      } catch (e) {}
+      document.body.innerHTML = `
+        <div style="max-width: 600px; margin: 80px auto; text-align: center; padding: 24px;" class="sp-card">
+          <h2 style="margin-top:0; color: #1798dd;">Workspace Setup Complete</h2>
+          <p>The local setup server has been closed. You can now close this browser tab and open your configured project workspace in your AI IDE.</p>
+        </div>
+      `;
+    });
+
+    initBootstrap();
+  </script>
+</body>
+</html>

@@ -4,6 +4,8 @@
   "description": "Menditect Agent Workspace Template",
   "scripts": {
     "setup": "node scripts/setup.js",
+    "setup:ui": "node scripts/setup.js --ui",
+    "setup:cli": "node scripts/setup.js --cli",
     "setup:directives": "node scripts/setup.js --directives-only",
     "update": "node scripts/sync-upstream.js",
     "update:check": "node scripts/sync-upstream.js --check",
