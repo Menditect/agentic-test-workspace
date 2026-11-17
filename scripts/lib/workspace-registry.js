@@ -1,6 +1,64 @@
+/**
+ * Workspace Registry & Configuration Normalization Module
+ *
+ * Responsibilities:
+ * - Normalizes `mta_config.json` schema aliases across CLI, Visual Setup, and Verifier.
+ * - Safely loads `.env` / `.env.local` files while blocking OS/runtime environment hijacking.
+ * - Maintains the Central Tools Hub workspace registry (`.mxcli/workspaces.json`).
+ * - Discovers active `mta_config.json` candidates in strict priority order.
+ */
+
 const fs = require('fs');
 const path = require('path');
 const { toolsRootDir } = require('./cli-prompt');
+
+/**
+ * Environment variables that must NEVER be overwritten by a workspace `.env` file
+ * to prevent OS command hijacking, dynamic linker injection, or proxy interception (SEC-03).
+ */
+const BLOCKED_ENV_KEYS = new Set([
+  'PATH',
+  'PATHEXT',
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'NODE_EXTRA_CA_CERTS',
+  'NODE_TLS_REJECT_UNAUTHORIZED',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'DYLD_FRAMEWORK_PATH',
+  'COMSPEC',
+  'SYSTEMROOT',
+  'WINDIR',
+  'SHELL',
+  'BASH_ENV',
+  'ENV',
+  'CDPATH',
+  'IFS',
+  'PERL5OPT',
+  'PYTHONSTARTUP',
+  'PYTHONPATH',
+  'RUBYOPT',
+  'GIT_SSH',
+  'GIT_SSH_COMMAND',
+  'GIT_EXEC_PATH',
+  'GIT_TEMPLATE_DIR',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR'
+]);
+
+function isSafeEnvKey(key) {
+  if (!key || typeof key !== 'string') return false;
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) return false;
+  if (key === '__proto__' || key === 'constructor' || key === 'prototype') return false;
+  if (BLOCKED_ENV_KEYS.has(key.toUpperCase())) return false;
+  return true;
+}
 
 function normalizeConfigAliases(cfg) {
   if (!cfg || typeof cfg !== 'object') return {};
@@ -37,6 +95,7 @@ function loadEnvFile(filePath, override = false) {
       const match = trimmed.match(/^([^=]+)=(.*)$/);
       if (match) {
         const key = match[1].trim();
+        if (!isSafeEnvKey(key)) continue;
         let val = match[2].trim();
         if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
           val = val.slice(1, -1);
@@ -310,6 +369,8 @@ function ensureExecutionPlanFolders(targetDir, workspaceType = 'custom') {
 }
 
 module.exports = {
+  BLOCKED_ENV_KEYS,
+  isSafeEnvKey,
   normalizeConfigAliases,
   loadEnvFile,
   registerWorkspaceInHub,

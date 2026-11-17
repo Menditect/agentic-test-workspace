@@ -28,29 +28,7 @@ const NOTICE = `${colors.orange}[NOTICE]${colors.reset}`;
 const INFO = `${colors.cyan}[INFO]${colors.reset}`;
 const TIP = `${colors.cyan}[TIP]${colors.reset}`;
 
-function loadEnvFile(filePath, override = false) {
-  if (!filePath || !fs.existsSync(filePath)) return;
-  try {
-    const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const match = trimmed.match(/^([^=]+)=(.*)$/);
-      if (match) {
-        const key = match[1].trim();
-        let val = match[2].trim();
-        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-          val = val.slice(1, -1);
-        }
-        if (override || !process.env[key]) {
-          process.env[key] = val;
-        }
-      }
-    }
-  } catch (e) {}
-}
-
-const { normalizeConfigAliases, discoverWorkspaceConfigCandidates } = require('./setup');
+const { normalizeConfigAliases, discoverWorkspaceConfigCandidates, loadEnvFile } = require('./setup');
 
 const cliArg = process.argv.slice(2).find(a => !a.startsWith('-'));
 const candidateConfigPaths = discoverWorkspaceConfigCandidates

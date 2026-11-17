@@ -1,7 +1,23 @@
+/**
+ * Mendix Model CLI (`mxcli`) Binary Discovery, Safe Execution & Catalog Manager
+ *
+ * Security Invariants (SEC-09):
+ * - Provides `execMxcliSync(mxcliBin, args, options)` which executes `mxcli` via
+ *   `execFileSync` (`shell: false`) so `.mpr` paths, MDL file paths, and Marketplace
+ *   PAT tokens are never interpolated into a shell command string.
+ */
+
 const fs = require('fs');
 const path = require('path');
-const { execSync, spawn } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const { toolsRootDir, PASS, WARN, NOTICE, INFO } = require('./cli-prompt');
+
+function execMxcliSync(mxcliBin, args = [], options = {}) {
+  return execFileSync(mxcliBin, args, {
+    windowsHide: true,
+    ...options
+  });
+}
 
 function findMxcliBinary(mprPath) {
   const candidates = [
@@ -13,9 +29,10 @@ function findMxcliBinary(mprPath) {
       return c;
     }
   }
+  const fallbackBin = process.platform === 'win32' ? 'mxcli.exe' : 'mxcli';
   try {
-    execSync('mxcli --version', { stdio: 'ignore' });
-    return 'mxcli';
+    execFileSync(fallbackBin, ['--version'], { stdio: 'ignore', windowsHide: true });
+    return fallbackBin;
   } catch (e) {
     return null;
   }
@@ -58,7 +75,7 @@ function initializeMxcli(targetDir, mprPath, optionalBin, options = {}) {
   try {
     if (!isAlreadyInitialized || options.forceFull) {
       console.log(`\nInitializing Mendix AI scaffolding in ${targetDir}...`);
-      execSync(`"${mxcliBin}" init "${targetDir}" --all-tools`, {
+      execMxcliSync(mxcliBin, ['init', targetDir, '--all-tools'], {
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: 45000
       });
@@ -81,7 +98,7 @@ function initializeMxcli(targetDir, mprPath, optionalBin, options = {}) {
         const brainDir = path.join(targetDir, 'docs', 'brain');
         if (!fs.existsSync(brainDir)) {
           try {
-            execSync(`"${mxcliBin}" brain init -p "${mprPath}"`, {
+            execMxcliSync(mxcliBin, ['brain', 'init', '-p', mprPath], {
               stdio: ['ignore', 'ignore', 'ignore'],
               timeout: 15000
             });
@@ -91,7 +108,7 @@ function initializeMxcli(targetDir, mprPath, optionalBin, options = {}) {
       }
     } else {
       console.log(`\nRefreshing Mendix AI skills in ${targetDir}...`);
-      execSync(`"${mxcliBin}" init "${targetDir}" --sync-skills`, {
+      execMxcliSync(mxcliBin, ['init', targetDir, '--sync-skills'], {
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: 30000
       });
@@ -331,6 +348,7 @@ node ${linterMcpShScript} --http "$@"
 }
 
 module.exports = {
+  execMxcliSync,
   findMxcliBinary,
   initializeMxcli,
   buildProjectCatalog,

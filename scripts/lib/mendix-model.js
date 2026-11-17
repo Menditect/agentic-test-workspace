@@ -1,10 +1,22 @@
+/**
+ * Mendix Project Model (`.mpr`) Inspection & Configuration Module
+ *
+ * Responsibilities:
+ * - Inspects Mendix `.mpr` settings, configurations, and constants via `mxcli`.
+ * - Safely duplicates/creates runtime configurations and writes `MtaPluginModule` constants.
+ * - Detects active Mendix Studio Pro locks (`.mpr.lock` and running process inspection).
+ * - Uses `execMxcliSync` (`execFileSync`) and random temporary MDL filenames (`crypto.randomUUID()`)
+ *   to prevent shell command injection and predictable temp file races (SEC-09, SEC-11).
+ */
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync } = require('child_process');
+const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 const { PASS, WARN } = require('./cli-prompt');
 const { ensureGitIgnoreEntries, formatBearerToken } = require('./workspace-registry');
-const { findMxcliBinary } = require('./mxcli-manager');
+const { findMxcliBinary, execMxcliSync } = require('./mxcli-manager');
 
 function cleanDeploymentDirectory(projectDir) {
   if (!projectDir || !fs.existsSync(projectDir)) {
@@ -32,10 +44,11 @@ function prepareMendixGitRepo(projectDir) {
 
   let isGit = false;
   try {
-    const gitOut = execSync('git rev-parse --is-inside-work-tree', {
+    const gitOut = execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
       cwd: projectDir,
       stdio: ['ignore', 'pipe', 'ignore'],
-      encoding: 'utf8'
+      encoding: 'utf8',
+      windowsHide: true
     });
     isGit = gitOut.trim() === 'true';
   } catch (e) {
@@ -59,9 +72,10 @@ function prepareMendixGitRepo(projectDir) {
 
   for (const pat of patternsToUntrack) {
     try {
-      execSync(`git rm -r --cached --ignore-unmatch "${pat}"`, {
+      execFileSync('git', ['rm', '-r', '--cached', '--ignore-unmatch', pat], {
         cwd: projectDir,
-        stdio: ['ignore', 'ignore', 'ignore']
+        stdio: ['ignore', 'ignore', 'ignore'],
+        windowsHide: true
       });
     } catch (e) {}
   }
@@ -113,11 +127,21 @@ function isMendixProjectOpenInStudioPro(mprPath, projectDir) {
 
   if (process.platform === 'win32') {
     try {
-      const out = execSync('powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter \\"Name like \'%studiopro%\'\\" | Select-Object ProcessId, CommandLine | ConvertTo-Json"', {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 5000
-      });
+      const out = execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          "Get-CimInstance Win32_Process -Filter \"Name like '%studiopro%'\" | Select-Object ProcessId, CommandLine | ConvertTo-Json"
+        ],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 5000,
+          windowsHide: true
+        }
+      );
       if (out && out.trim()) {
         const parsed = JSON.parse(out.trim());
         const procs = Array.isArray(parsed) ? parsed : [parsed];
@@ -210,7 +234,7 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
   if (!mxcliBin) return null;
 
   try {
-    const output = execSync(`"${mxcliBin}" describe settings Settings -p "${mprPath}"`, {
+    const output = execMxcliSync(mxcliBin, ['describe', 'settings', 'Settings', '-p', mprPath], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 25000
@@ -421,7 +445,7 @@ function tryDuplicateConfigurationInMpr(mprPath, mxcliBin, sourceConfigName, new
 
   let settingsOutput = '';
   try {
-    settingsOutput = execSync(`"${mxcliBin}" -c "describe settings;" -p "${mprPath}"`, {
+    settingsOutput = execMxcliSync(mxcliBin, ['-c', 'describe settings;', '-p', mprPath], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 30000
@@ -480,10 +504,10 @@ function tryDuplicateConfigurationInMpr(mprPath, mxcliBin, sourceConfigName, new
     mdlLines.push(`ALTER SETTINGS CONSTANT '${constName}' VALUE '${constVal}' IN CONFIGURATION '${safeNewCfg}';`);
   }
 
-  const tmpMdl = path.join(os.tmpdir(), `mta-dup-cfg-${Date.now()}.mdl`);
+  const tmpMdl = path.join(os.tmpdir(), `mta-dup-cfg-${crypto.randomUUID()}.mdl`);
   try {
-    fs.writeFileSync(tmpMdl, mdlLines.join('\n') + '\n', 'utf8');
-    execSync(`"${mxcliBin}" exec "${tmpMdl}" -p "${mprPath}"`, {
+    fs.writeFileSync(tmpMdl, mdlLines.join('\n') + '\n', { encoding: 'utf8', mode: 0o600 });
+    execMxcliSync(mxcliBin, ['exec', tmpMdl, '-p', mprPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30000
     });
@@ -507,10 +531,10 @@ function tryCreateConfigurationInMpr(mprPath, mxcliBin, configName, sourceConfig
 
   const escapeMdlStr = (val) => String(val ?? '').replace(/'/g, "''");
   const safeCfg = escapeMdlStr(configName.trim());
-  const tmpMdl = path.join(os.tmpdir(), `mta-create-cfg-${Date.now()}.mdl`);
+  const tmpMdl = path.join(os.tmpdir(), `mta-create-cfg-${crypto.randomUUID()}.mdl`);
   try {
-    fs.writeFileSync(tmpMdl, `CREATE OR MODIFY CONFIGURATION '${safeCfg}' HttpPortNumber = ${effectivePort}, ApplicationRootUrl = 'http://localhost:${effectivePort}/';\n`, 'utf8');
-    execSync(`"${mxcliBin}" exec "${tmpMdl}" -p "${mprPath}"`, {
+    fs.writeFileSync(tmpMdl, `CREATE OR MODIFY CONFIGURATION '${safeCfg}' HttpPortNumber = ${effectivePort}, ApplicationRootUrl = 'http://localhost:${effectivePort}/';\n`, { encoding: 'utf8', mode: 0o600 });
+    execMxcliSync(mxcliBin, ['exec', tmpMdl, '-p', mprPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30000
     });
@@ -548,7 +572,7 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
   if (currentAfterStartup && currentAfterStartup !== 'MtaPluginModule.ASU_Setup_Connection_MTA') {
     targetAfterStartupMicroflow = currentAfterStartup;
     try {
-      const mfOutput = execSync(`"${mxcliBin}" describe microflow "${currentAfterStartup}" -p "${mprPath}"`, {
+      const mfOutput = execMxcliSync(mxcliBin, ['describe', 'microflow', currentAfterStartup, '-p', mprPath], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: 20000
@@ -578,7 +602,7 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
 
   let existingInternalModule = false;
   try {
-    const modulesOutput = execSync(`"${mxcliBin}" -c "SHOW MODULES;" -p "${mprPath}"`, {
+    const modulesOutput = execMxcliSync(mxcliBin, ['-c', 'SHOW MODULES;', '-p', mprPath], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 25000
@@ -652,10 +676,10 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
     mdlLines.push('DROP MODULE MtaPluginModule;');
   }
 
-  const tmpMdlPath = path.join(os.tmpdir(), `mta-plugin-config-${Date.now()}.mdl`);
+  const tmpMdlPath = path.join(os.tmpdir(), `mta-plugin-config-${crypto.randomUUID()}.mdl`);
   try {
-    fs.writeFileSync(tmpMdlPath, mdlLines.join('\n') + '\n', 'utf8');
-    execSync(`"${mxcliBin}" exec "${tmpMdlPath}" -p "${mprPath}"`, {
+    fs.writeFileSync(tmpMdlPath, mdlLines.join('\n') + '\n', { encoding: 'utf8', mode: 0o600 });
+    execMxcliSync(mxcliBin, ['exec', tmpMdlPath, '-p', mprPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30000
     });
@@ -681,6 +705,10 @@ function removeSourceModuleFromMpr(mprPath, moduleName, optionalBin) {
   if (!mprPath || !fs.existsSync(mprPath) || !moduleName) {
     return { removed: false, existed: false };
   }
+  const cleanModName = String(moduleName).trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(cleanModName)) {
+    return { removed: false, existed: false, error: 'Invalid module identifier' };
+  }
   const mxcliBin = optionalBin || findMxcliBinary(mprPath);
   if (!mxcliBin) {
     return { removed: false, existed: false };
@@ -688,12 +716,12 @@ function removeSourceModuleFromMpr(mprPath, moduleName, optionalBin) {
 
   let existed = false;
   try {
-    const modulesOutput = execSync(`"${mxcliBin}" -c "SHOW MODULES;" -p "${mprPath}"`, {
+    const modulesOutput = execMxcliSync(mxcliBin, ['-c', 'SHOW MODULES;', '-p', mprPath], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 25000
     });
-    const re = new RegExp(`\\|\\s*${moduleName}\\s*\\|`, 'i');
+    const re = new RegExp(`\\|\\s*${cleanModName}\\s*\\|`, 'i');
     existed = re.test(modulesOutput);
   } catch (e) {}
 
@@ -702,7 +730,7 @@ function removeSourceModuleFromMpr(mprPath, moduleName, optionalBin) {
   }
 
   try {
-    execSync(`"${mxcliBin}" -c "DROP MODULE ${moduleName};" -p "${mprPath}"`, {
+    execMxcliSync(mxcliBin, ['-c', `DROP MODULE ${cleanModName};`, '-p', mprPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30000
     });
@@ -711,7 +739,7 @@ function removeSourceModuleFromMpr(mprPath, moduleName, optionalBin) {
   }
 
   const projectDir = path.dirname(mprPath);
-  const lowerMod = moduleName.toLowerCase();
+  const lowerMod = cleanModName.toLowerCase();
   const cleanupDirs = [
     path.join(projectDir, 'themesource', lowerMod),
     path.join(projectDir, 'javasource', lowerMod),

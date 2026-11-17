@@ -1,7 +1,21 @@
+/**
+ * Visual Workspace Setup Local HTTP Server
+ *
+ * Security Invariants:
+ * - Binds strictly to `127.0.0.1` (loopback only).
+ * - Generates a 256-bit cryptographic per-session CSRF token (`X-MTA-Setup-Token`)
+ *   injected into `setup-ui.html` and required on all `/api/*` endpoints (SEC-01).
+ * - Enforces `Host` header validation (`127.0.0.1` / `localhost`) to block DNS rebinding.
+ * - Enforces `Origin` and `Content-Type: application/json` on all POST requests.
+ * - Uses `execFileSync` / `execFile` with argument arrays (`shell: false`) for OS dialogs
+ *   and browser launching to eliminate shell command injection (SEC-02).
+ */
+
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { execSync, exec } = require('child_process');
+const crypto = require('crypto');
+const { execFileSync, execFile } = require('child_process');
 const {
   PASS,
   INFO,
@@ -21,21 +35,36 @@ const {
 
 /**
  * Opens a native OS folder selection dialog and returns the selected directory path.
+ * Uses `execFileSync` (`shell: false`) so paths containing spaces, `&`, `$`, or quotes
+ * are never interpreted by a command shell (SEC-02).
  */
 function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') {
-  const cleanTitle = String(promptTitle || 'Select Folder').replace(/["'`$]/g, '');
+  const cleanTitle = String(promptTitle || 'Select Folder').replace(/["'`$\r\n]/g, '');
   const cleanInit = initialDir && fs.existsSync(initialDir) ? path.resolve(initialDir) : '';
 
   if (process.platform === 'win32') {
     const psScriptPath = path.join(__dirname, 'modern-folder-picker.ps1');
     if (fs.existsSync(psScriptPath)) {
       try {
-        const out = execSync(
-          `powershell -NoProfile -Sta -ExecutionPolicy Bypass -File "${psScriptPath}" -Title "${cleanTitle.replace(/"/g, '`"')}" -InitialFolder "${cleanInit.replace(/"/g, '`"')}"`,
+        const out = execFileSync(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-Sta',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            psScriptPath,
+            '-Title',
+            cleanTitle,
+            '-InitialFolder',
+            cleanInit
+          ],
           {
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'ignore'],
-            timeout: 120000
+            timeout: 120000,
+            windowsHide: true
           }
         ).trim();
         if (out) {
@@ -67,11 +96,16 @@ function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') 
     ].filter(Boolean).join(' ');
 
     try {
-      const out = execSync(`powershell -NoProfile -Sta -Command "${psScript}"`, {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 120000
-      }).trim();
+      const out = execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-Sta', '-Command', psScript],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 120000,
+          windowsHide: true
+        }
+      ).trim();
       if (out) {
         return { cancelled: false, folderPath: out };
       }
@@ -83,11 +117,15 @@ function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') 
 
   if (process.platform === 'darwin') {
     try {
-      const out = execSync(`osascript -e 'POSIX path of (choose folder with prompt "${cleanTitle}")'`, {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 120000
-      }).trim();
+      const out = execFileSync(
+        'osascript',
+        ['-e', `POSIX path of (choose folder with prompt "${cleanTitle}")`],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 120000
+        }
+      ).trim();
       if (out) {
         return { cancelled: false, folderPath: out };
       }
@@ -98,11 +136,15 @@ function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') 
   }
 
   try {
-    const out = execSync(`zenity --file-selection --directory --title="${cleanTitle}"`, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 120000
-    }).trim();
+    const out = execFileSync(
+      'zenity',
+      ['--file-selection', '--directory', `--title=${cleanTitle}`],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 120000
+      }
+    ).trim();
     if (out) {
       return { cancelled: false, folderPath: out };
     }
@@ -116,25 +158,32 @@ function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') 
 }
 
 /**
- * Opens the given URL in the user's default desktop browser.
+ * Opens the given localhost URL in the user's default desktop browser without shell interpolation.
  */
 function openBrowserUrl(url) {
+  if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(String(url || ''))) {
+    return;
+  }
   try {
     if (process.platform === 'win32') {
-      exec(`start "" "${url}"`);
+      execFile('cmd.exe', ['/c', 'start', '', url], { windowsHide: true });
     } else if (process.platform === 'darwin') {
-      exec(`open "${url}"`);
+      execFile('open', [url]);
     } else {
-      exec(`xdg-open "${url}"`);
+      execFile('xdg-open', [url]);
     }
   } catch (e) {}
 }
 
 /**
- * Reads JSON request body from an IncomingMessage.
+ * Reads JSON request body from an IncomingMessage and enforces Content-Type: application/json.
  */
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
+    const contentType = String(req.headers['content-type'] || '').toLowerCase();
+    if (contentType && !contentType.includes('application/json')) {
+      return reject(new Error('Unsupported Content-Type (expected application/json)'));
+    }
     let raw = '';
     req.on('data', chunk => {
       raw += chunk.toString('utf8');
@@ -155,15 +204,50 @@ function readJsonBody(req) {
 }
 
 /**
- * Sends a JSON HTTP response.
+ * Sends a JSON HTTP response with security headers.
  */
 function sendJson(res, statusCode, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store'
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY'
   });
   res.end(body);
+}
+
+/**
+ * Validates that the HTTP request originates from the local browser session and not
+ * from a cross-origin website or DNS-rebinding attack (SEC-01).
+ */
+function verifyLocalRequestSecurity(req, sessionToken) {
+  const hostHeader = String(req.headers.host || '').trim().toLowerCase();
+  if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(hostHeader)) {
+    return { valid: false, status: 403, error: 'Forbidden Host header (DNS rebinding protection).' };
+  }
+
+  const originHeader = String(req.headers.origin || '').trim().toLowerCase();
+  if (originHeader && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(originHeader)) {
+    return { valid: false, status: 403, error: 'Forbidden cross-origin request.' };
+  }
+
+  const secFetchSite = String(req.headers['sec-fetch-site'] || '').trim().toLowerCase();
+  if (secFetchSite && secFetchSite !== 'same-origin' && secFetchSite !== 'none') {
+    return { valid: false, status: 403, error: 'Cross-site requests are prohibited.' };
+  }
+
+  const providedToken = String(req.headers['x-mta-setup-token'] || '').trim();
+  if (!providedToken || !sessionToken) {
+    return { valid: false, status: 403, error: 'Missing setup session CSRF token.' };
+  }
+  const bufA = Buffer.from(providedToken, 'utf8');
+  const bufB = Buffer.from(sessionToken, 'utf8');
+  if (bufA.length !== bufB.length || !crypto.timingSafeEqual(bufA, bufB)) {
+    return { valid: false, status: 403, error: 'Invalid setup session CSRF token.' };
+  }
+
+  return { valid: true };
 }
 
 /**
@@ -176,18 +260,40 @@ function startVisualSetupServer(options = {}) {
       return reject(new Error(`Visual UI template not found at ${htmlPath}`));
     }
 
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    let isApplyingSetup = false;
+
     const server = http.createServer(async (req, res) => {
       try {
+        const hostHeader = String(req.headers.host || '').trim().toLowerCase();
+        if (hostHeader && !/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(hostHeader)) {
+          return sendJson(res, 403, { ok: false, error: 'Forbidden Host header' });
+        }
+
         const parsedUrl = new URL(req.url, 'http://127.0.0.1');
         const pathname = parsedUrl.pathname;
 
         if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
-          const html = fs.readFileSync(htmlPath, 'utf8');
+          const rawHtml = fs.readFileSync(htmlPath, 'utf8');
+          const injectedHtml = rawHtml.replace(
+            '<head>',
+            `<head>\n  <meta name="mta-csrf-token" content="${sessionToken}" />`
+          );
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'no-store'
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
+            'X-Frame-Options': 'DENY',
+            'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
           });
-          return res.end(html);
+          return res.end(injectedHtml);
+        }
+
+        if (pathname.startsWith('/api/')) {
+          const secCheck = verifyLocalRequestSecurity(req, sessionToken);
+          if (!secCheck.valid) {
+            return sendJson(res, secCheck.status, { ok: false, error: secCheck.error });
+          }
         }
 
         if (req.method === 'GET' && pathname === '/api/init') {
@@ -250,10 +356,22 @@ function startVisualSetupServer(options = {}) {
         }
 
         if (req.method === 'POST' && pathname === '/api/apply-setup') {
-          const body = await readJsonBody(req);
+          if (isApplyingSetup) {
+            return sendJson(res, 409, { ok: false, error: 'A setup operation is already in progress.' });
+          }
+          isApplyingSetup = true;
+          let body;
+          try {
+            body = await readJsonBody(req);
+          } catch (parseErr) {
+            isApplyingSetup = false;
+            throw parseErr;
+          }
+
           res.writeHead(200, {
             'Content-Type': 'application/x-ndjson; charset=utf-8',
             'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
             'Transfer-Encoding': 'chunked'
           });
 
@@ -273,6 +391,8 @@ function startVisualSetupServer(options = {}) {
             writeEvent({ type: 'result', ok: true, result });
           } catch (err) {
             writeEvent({ type: 'result', ok: false, error: err.message || String(err) });
+          } finally {
+            isApplyingSetup = false;
           }
           return res.end();
         }
@@ -324,5 +444,6 @@ function startVisualSetupServer(options = {}) {
 
 module.exports = {
   startVisualSetupServer,
-  pickFolderNativeDialog
+  pickFolderNativeDialog,
+  verifyLocalRequestSecurity
 };

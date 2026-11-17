@@ -4,6 +4,7 @@ const path = require('path');
 const readline = require('readline');
 const { execSync } = require('child_process');
 const os = require('os');
+const crypto = require('crypto');
 
 const rootDir = path.join(__dirname, '..');
 const defaultBinDir = path.join(rootDir, 'bin');
@@ -157,14 +158,38 @@ function saveConfig(config) {
   } catch (e) {}
 }
 
-function apiRequest(url) {
+function isAllowedUpstreamUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== 'https:') return false;
+    const h = parsed.hostname.toLowerCase();
+    return (
+      h === 'github.com' ||
+      h.endsWith('.github.com') ||
+      h.endsWith('.githubusercontent.com') ||
+      h === 'repo1.maven.org' ||
+      h.endsWith('.maven.org')
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+function apiRequest(url, redirectsRemaining = 5) {
   return new Promise((resolve, reject) => {
+    if (!isAllowedUpstreamUrl(url)) {
+      return reject(new Error(`Blocked request to untrusted or non-HTTPS URL: ${url}`));
+    }
     const options = {
       headers: { 'User-Agent': 'Menditect-Workspace-Setup' }
     };
     https.get(url, options, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return apiRequest(res.headers.location).then(resolve).catch(reject);
+        if (redirectsRemaining <= 0) {
+          return reject(new Error(`Too many redirects for ${url}`));
+        }
+        const nextUrl = new URL(res.headers.location, url).toString();
+        return apiRequest(nextUrl, redirectsRemaining - 1).then(resolve).catch(reject);
       }
       if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
       let data = '';
@@ -180,12 +205,19 @@ function apiRequest(url) {
   });
 }
 
-function fetchRawText(url) {
+function fetchRawText(url, redirectsRemaining = 5) {
   return new Promise((resolve, reject) => {
+    if (!isAllowedUpstreamUrl(url)) {
+      return reject(new Error(`Blocked fetch from untrusted or non-HTTPS URL: ${url}`));
+    }
     const options = { headers: { 'User-Agent': 'Menditect-Workspace-Setup' } };
     https.get(url, options, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchRawText(res.headers.location).then(resolve).catch(reject);
+        if (redirectsRemaining <= 0) {
+          return reject(new Error(`Too many redirects for ${url}`));
+        }
+        const nextUrl = new URL(res.headers.location, url).toString();
+        return fetchRawText(nextUrl, redirectsRemaining - 1).then(resolve).catch(reject);
       }
       if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
       let data = '';
@@ -885,12 +917,19 @@ function printVersionTable(report) {
   console.log('--------------------------------------------------------------------------------\n');
 }
 
-function downloadFile(url, dest) {
+function downloadFile(url, dest, redirectsRemaining = 5) {
   return new Promise((resolve, reject) => {
+    if (!isAllowedUpstreamUrl(url)) {
+      return reject(new Error(`Blocked download from untrusted or non-HTTPS URL: ${url}`));
+    }
     const options = { headers: { 'User-Agent': 'Menditect-Workspace-Setup' } };
     https.get(url, options, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return downloadFile(res.headers.location, dest).then(resolve).catch(reject);
+        if (redirectsRemaining <= 0) {
+          return reject(new Error(`Too many redirects while downloading ${url}`));
+        }
+        const nextUrl = new URL(res.headers.location, url).toString();
+        return downloadFile(nextUrl, dest, redirectsRemaining - 1).then(resolve).catch(reject);
       }
       if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
       const file = fs.createWriteStream(dest);
@@ -1064,7 +1103,7 @@ async function syncSkills(options = {}) {
   console.log(`          Any inline modifications to MTA skills will be erased.`);
   console.log(`          Custom skills should be added as separate, new skills rather than editing MTA skills inline.\n`);
 
-  const tmpDir = path.join(os.tmpdir(), 'agentic-test-skills-tmp-' + Date.now());
+  const tmpDir = path.join(os.tmpdir(), 'agentic-test-skills-tmp-' + crypto.randomUUID());
   try {
     execSync(`git clone --depth 1 https://github.com/Menditect/agentic-test-skills.git "${tmpDir}"`, { stdio: 'ignore' });
     

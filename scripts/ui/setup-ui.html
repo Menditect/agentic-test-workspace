@@ -1051,6 +1051,29 @@
   </div>
 
   <script>
+    // Attach per-session CSRF token to all local /api/* requests (SEC-01)
+    (function installCsrfFetchInterceptor() {
+      const origFetch = window.fetch.bind(window);
+      window.fetch = function(input, init) {
+        const urlStr = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+        if (urlStr.startsWith('/api/')) {
+          const meta = document.querySelector('meta[name="mta-csrf-token"]');
+          const token = meta ? (meta.getAttribute('content') || '') : '';
+          const nextInit = Object.assign({}, init || {});
+          const headers = new Headers(nextInit.headers || {});
+          if (token) {
+            headers.set('X-MTA-Setup-Token', token);
+          }
+          if (nextInit.body && !headers.has('Content-Type')) {
+            headers.set('Content-Type', 'application/json');
+          }
+          nextInit.headers = headers;
+          return origFetch(input, nextInit);
+        }
+        return origFetch(input, init);
+      };
+    })();
+
     const uiState = {
       setupMode: 'new',
       workspaceDirCustomized: false,
@@ -1063,7 +1086,8 @@
       baseConfigName: 'Default',
       existingWorkspaces: [],
       gatewayDefaults: { idValue: '', keyValue: '' },
-      mxcliAuthed: false
+      mxcliAuthed: false,
+      freeEmailDomains: null
     };
 
     const $ = id => document.getElementById(id);
@@ -1361,7 +1385,10 @@
           ? `${data.defaultWorkspaceParentDir}\\MyApp-test-workspace`
           : '';
 
-        // Populate countries
+        // Populate countries & free email domain list from server SSOT
+        if (Array.isArray(data.freeEmailDomains) && data.freeEmailDomains.length > 0) {
+          uiState.freeEmailDomains = new Set(data.freeEmailDomains.map(d => String(d).toLowerCase()));
+        }
         const countries = Array.isArray(data.countries) ? data.countries : [];
         const countrySel = $('fl_country');
         countrySel.innerHTML = `<option value="">Select your country...</option>` +
@@ -1657,7 +1684,7 @@
       } else {
         const domainMatch = email.match(emailRegex);
         const domain = domainMatch ? domainMatch[1].toLowerCase() : '';
-        const freeDomains = new Set([
+        const freeDomains = uiState.freeEmailDomains || new Set([
           'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'yahoo.fr', 'yahoo.de',
           'ymail.com', 'rocketmail.com', 'outlook.com', 'hotmail.com', 'hotmail.co.uk',
           'hotmail.fr', 'hotmail.de', 'live.com', 'live.nl', 'live.co.uk', 'msn.com',

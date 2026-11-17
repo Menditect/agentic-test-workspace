@@ -1,11 +1,24 @@
+/**
+ * Mendix Marketplace Module Discovery, Version Resolution & Installation Module
+ *
+ * Security Invariants:
+ * - Enforces Zip-Slip path traversal confinement (`path.resolve(targetSkillsDir, relPath)`)
+ *   when extracting `.mxmodule` archives (SEC-04).
+ * - Uses `execMxcliSync` (`execFileSync`) for `mxcli auth` and `mxcli marketplace` calls
+ *   so Mendix PAT tokens and paths are never passed through a command shell (SEC-09).
+ * - Enforces HTTPS-only redirect validation (`maxRedirects = 5`) on Maven Central
+ *   driver-bundle downloads (SEC-10).
+ */
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const https = require('https');
 const zlib = require('zlib');
-const { execSync } = require('child_process');
 const { toolsRootDir, PASS, WARN, NOTICE, INFO, ask, isBack } = require('./cli-prompt');
 const { findMpr, removeSourceModuleFromMpr } = require('./mendix-model');
+const { execMxcliSync } = require('./mxcli-manager');
 
 const MENDITECT_MARKETPLACE_MODULES = {
   MtaPluginModule: {
@@ -156,14 +169,16 @@ function syncAndVerifyMaiaSkills(projectDir, mxmodulePath = '', fallbackSkillsDi
       const buf = fs.readFileSync(effectiveMxModule);
       const entries = readZipEntriesFromBuffer(buf);
       const prefix = 'skillssource/_modules/menditect_agentictestskills/';
+      const resolvedBaseDir = path.resolve(targetSkillsDir);
       for (const [entryName, entryMeta] of entries.entries()) {
         const normalized = entryName.replace(/\\/g, '/');
         if (normalized.startsWith(prefix) && !normalized.endsWith('/')) {
           const relPath = normalized.slice(prefix.length);
-          if (!relPath) continue;
+          if (!relPath || relPath.split('/').some(seg => seg === '..' || seg === '.')) continue;
+          const destPath = path.resolve(targetSkillsDir, relPath);
+          if (!destPath.startsWith(resolvedBaseDir + path.sep)) continue;
           const fileBuf = extractZipEntryFromBuffer(buf, entryMeta);
           if (fileBuf) {
-            const destPath = path.join(targetSkillsDir, relPath);
             const destDir = path.dirname(destPath);
             if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
             fs.writeFileSync(destPath, fileBuf);
@@ -341,7 +356,7 @@ function isMendixVersionCompatible(minSupported, projectMendixVersion) {
 function checkMxcliAuthStatus(mxcliBin) {
   if (!mxcliBin) return false;
   try {
-    execSync(`"${mxcliBin}" auth status`, {
+    execMxcliSync(mxcliBin, ['auth', 'status'], {
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 10000,
       env: { ...process.env }
@@ -359,7 +374,7 @@ async function ensureMxcliAuth(mxcliBin, askFn = null) {
   const envPat = process.env.MENDIX_PAT || process.env.MXCLI_PAT || '';
   if (envPat) {
     try {
-      execSync(`"${mxcliBin}" auth login --token "${envPat.trim()}"`, {
+      execMxcliSync(mxcliBin, ['auth', 'login', '--token', envPat.trim()], {
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: 15000
       });
@@ -394,7 +409,7 @@ async function ensureMxcliAuth(mxcliBin, askFn = null) {
   }
 
   try {
-    execSync(`"${mxcliBin}" auth login --token "${pat.trim()}"`, {
+    execMxcliSync(mxcliBin, ['auth', 'login', '--token', pat.trim()], {
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 15000
     });
@@ -413,7 +428,7 @@ function resolveCompatibleModuleVersion(packageId, mendixVersion, mxcliBin) {
   const major = cleanMxVer.split('.')[0] || '11';
 
   try {
-    const out = execSync(`"${mxcliBin}" marketplace versions ${packageId} --json`, {
+    const out = execMxcliSync(mxcliBin, ['marketplace', 'versions', String(packageId), '--json'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 25000,
@@ -460,12 +475,38 @@ function resolveCompatibleModuleVersion(packageId, mendixVersion, mxcliBin) {
   }
 }
 
-function downloadBinaryFile(url, destPath) {
+function isAllowedDownloadRedirectUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== 'https:') return false;
+    const h = parsed.hostname.toLowerCase();
+    return (
+      h === 'repo1.maven.org' ||
+      h.endsWith('.maven.org') ||
+      h === 'github.com' ||
+      h.endsWith('.github.com') ||
+      h.endsWith('.githubusercontent.com') ||
+      h === 'mendix.com' ||
+      h.endsWith('.mendix.com')
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+function downloadBinaryFile(url, destPath, redirectsRemaining = 5) {
   return new Promise((resolve, reject) => {
+    if (!isAllowedDownloadRedirectUrl(url)) {
+      return reject(new Error(`Blocked download from untrusted or non-HTTPS URL: ${url}`));
+    }
     const options = { headers: { 'User-Agent': 'Menditect-Workspace-Setup' } };
     https.get(url, options, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return downloadBinaryFile(res.headers.location, destPath).then(resolve).catch(reject);
+        if (redirectsRemaining <= 0) {
+          return reject(new Error(`Too many redirects while downloading ${url}`));
+        }
+        const nextUrl = new URL(res.headers.location, url).toString();
+        return downloadBinaryFile(nextUrl, destPath, redirectsRemaining - 1).then(resolve).catch(reject);
       }
       if (res.statusCode >= 400) {
         return reject(new Error(`HTTP ${res.statusCode} when downloading ${url}`));
@@ -556,14 +597,18 @@ async function installMxModuleFromMarketplace(modSpec, projectDir, mendixVersion
     }
   }
 
-  const tmpDownloadPath = path.join(os.tmpdir(), `${modSpec.moduleName}-${resolved.version}-${Date.now()}.mpk`);
+  const tmpDownloadPath = path.join(os.tmpdir(), `${modSpec.moduleName}-${resolved.version}-${crypto.randomUUID()}.mpk`);
   try {
     console.log(`  Downloading ${modSpec.moduleName} v${resolved.version} (Marketplace ID ${modSpec.id})...`);
-    execSync(`"${mxcliBin}" marketplace download ${modSpec.id} --version "${resolved.version}" -o "${tmpDownloadPath}"`, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 120000,
-      env: { ...process.env }
-    });
+    execMxcliSync(
+      mxcliBin,
+      ['marketplace', 'download', String(modSpec.id), '--version', String(resolved.version), '-o', tmpDownloadPath],
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 120000,
+        env: { ...process.env }
+      }
+    );
 
     if (!fs.existsSync(tmpDownloadPath)) {
       throw new Error('Download command completed but output file was not created');
@@ -813,6 +858,7 @@ module.exports = {
   checkMxcliAuthStatus,
   ensureMxcliAuth,
   resolveCompatibleModuleVersion,
+  isAllowedDownloadRedirectUrl,
   downloadBinaryFile,
   ensurePlaywrightDriverBundle,
   installMxModuleFromMarketplace,
