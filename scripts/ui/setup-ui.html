@@ -269,6 +269,7 @@
     }
     .sp-input-error {
       border-color: var(--sp-err-border) !important;
+      box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18) !important;
     }
     .sp-field-error {
       color: var(--sp-err-text);
@@ -279,6 +280,22 @@
       font-size: 11.5px;
       color: var(--sp-text-muted);
       margin-top: 4px;
+    }
+    .sp-legal-notices {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 5px;
+      background: var(--sp-surface-alt);
+      border: 1px solid var(--sp-border);
+      font-size: 11.5px;
+      color: var(--sp-text-muted);
+      line-height: 1.45;
+    }
+    .sp-legal-notices p {
+      margin: 0 0 8px 0;
+    }
+    .sp-legal-notices p:last-child {
+      margin-bottom: 0;
     }
 
     .sp-btn {
@@ -387,6 +404,13 @@
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
       pointer-events: none;
       transition: opacity 0.14s ease;
+    }
+    .sp-tooltip-popup code {
+      background: rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 1px 4px;
+      border-radius: 3px;
     }
     .sp-tooltip-wrap:hover .sp-tooltip-popup,
     .sp-tooltip-wrap:focus .sp-tooltip-popup {
@@ -544,11 +568,6 @@
 
   <main class="sp-page-shell">
 
-    <!-- Notice Banner -->
-    <div class="sp-banner sp-banner-info" style="margin-bottom: 14px;">
-      <strong>Central Tools Hub Architecture:</strong> Skills and the linter engine stay in your central <code>agentic-test-workspace</code> folder. Each Mendix app gets a lightweight external project workspace folder containing <code>mta_config.json</code>, <code>.env</code>, and <code>menditect-output/</code>.
-    </div>
-
     <!-- Card 1: Workspace Mode & Location -->
     <div class="sp-card">
       <div class="sp-card-header">
@@ -611,8 +630,11 @@
         <h2 class="sp-card-title">2. MTA License &amp; Edition</h2>
         <span class="sp-tooltip-wrap" tabindex="0">
           <span class="sp-tooltip-icon">?</span>
-          <span class="sp-tooltip-popup">Choose between <strong>MTA Exploratory (Free)</strong> (local in-memory rollback testing) and <strong>MTA Functional (Paid)</strong> (persistent test suites, Playwright UI testing, and CI/CD).</span>
+          <span class="sp-tooltip-popup">Choose between <strong>MTA Exploratory (Free)</strong> (local in-memory rollback testing) and <strong>MTA Functional (Paid)</strong> (persistent test suites, Playwright UI testing, and CI/CD). Required modules are downloaded, configured, and kept up to date automatically.</span>
         </span>
+      </div>
+      <div style="font-size: 12px; color: var(--sp-text-muted); margin-bottom: 10px;">
+        Required modules are downloaded, configured and automatically kept up-to-date. The configuration can be modified later. Choose an option below:
       </div>
 
       <div class="sp-tier-grid">
@@ -620,29 +642,32 @@
           <div class="sp-tier-top">
             <div class="sp-tier-title-wrap">
               <span class="sp-tier-radio"></span>
-              <span class="sp-tier-title">MTA Exploratory (Free)</span>
+              <span class="sp-tier-title">I have a token for exploratory testing (Free)</span>
             </div>
             <span class="sp-tier-badge" id="badge_tier_free">Selected</span>
           </div>
-          <div class="sp-tier-sub">Local exploratory unit &amp; microflow testing with automatic database rollback via <code>services.menditect.com</code>.</div>
+          <div class="sp-tier-sub">You can use exploratory testing after you fill in the token.</div>
         </div>
         <div id="tier_opt_paid" class="sp-tier-option">
           <div class="sp-tier-top">
             <div class="sp-tier-title-wrap">
               <span class="sp-tier-radio"></span>
-              <span class="sp-tier-title">MTA Functional / Enterprise (Paid)</span>
+              <span class="sp-tier-title">I have an MTA license (Paid)</span>
             </div>
             <span class="sp-tier-badge" id="badge_tier_paid" style="display:none;">Selected</span>
           </div>
-          <div class="sp-tier-sub">Full access to MTA Server test suites, regression tests &amp; Playwright UI testing.</div>
+          <div class="sp-tier-sub">You can use both exploratory testing and create tests in MTA.</div>
         </div>
       </div>
 
       <div id="free_license_cta_bar" class="sp-banner sp-banner-info" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px;">
         <div>
-          <strong>Need a Free Exploratory License Key?</strong> Request one right here and it will automatically fill in your <code>ApplicationInstanceToken</code> below.
+          <strong>I want to request a token for exploratory testing:</strong> Enter your information to receive your free <code>ApplicationInstanceToken</code> by email.
         </div>
         <button type="button" id="btn_open_free_license_modal" class="sp-btn sp-btn-primary">Request Free License Key...</button>
+      </div>
+      <div style="font-size: 12px; color: var(--sp-text-muted); margin-top: 8px;">
+        <a href="https://menditect.com/contact/" target="_blank" rel="noopener noreferrer" style="color: var(--sp-input-focus); text-decoration: underline;">Contact Menditect Sales</a> for an MTA license.
       </div>
       <div id="free_license_success_banner" class="sp-banner sp-banner-success" style="display: none;"></div>
     </div>
@@ -660,13 +685,23 @@
       <div class="sp-field">
         <div class="sp-label-row">
           <label class="sp-label" for="inp_project_dir">Mendix Application Folder (containing <code>.mpr</code>)</label>
+          <span class="sp-tooltip-wrap" tabindex="0">
+            <span class="sp-tooltip-icon">?</span>
+            <span class="sp-tooltip-popup">Select the root directory of your Mendix project where the <code>.mpr</code> file resides. Click <strong>Inspect App</strong> to read project settings, runtime configurations, and installed modules.</span>
+          </span>
         </div>
-        <div style="display: flex; gap: 8px;">
+        <div style="display: flex; gap: 8px; align-items: center;">
           <input id="inp_project_dir" type="text" class="sp-input" placeholder="e.g. C:\Users\you\Mendix\MyApp-main" />
           <button type="button" id="btn_browse_project" class="sp-btn sp-btn-secondary">Browse...</button>
-          <button type="button" id="btn_inspect_project" class="sp-btn sp-btn-secondary">Inspect App</button>
+          <div style="display: inline-flex; align-items: center; gap: 4px;">
+            <button type="button" id="btn_inspect_project" class="sp-btn sp-btn-secondary" title="Scan folder to detect .mpr, Mendix version, configurations, and MTA tokens">Inspect App</button>
+            <span class="sp-tooltip-wrap" tabindex="0">
+              <span class="sp-tooltip-icon">?</span>
+              <span class="sp-tooltip-popup"><strong>Inspect App:</strong> Scans the selected folder to locate the <code>.mpr</code>, detect Mendix version, check Studio Pro lock status, discover runtime configurations, and pre-fill existing MTA tokens.</span>
+            </span>
+          </div>
         </div>
-        <div id="project_error_msg" class="sp-field-error" style="display: none;"></div>
+        <div id="project_error_msg" class="sp-field-error" style="display: none; margin-top: 6px;"></div>
       </div>
 
       <!-- Live Inspection Status Box -->
@@ -712,7 +747,7 @@
         </div>
       </div>
 
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+      <div id="app_name_and_config_grid" style="display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px;">
         <div class="sp-field" style="margin-bottom: 0;">
           <div class="sp-label-row">
             <label class="sp-label" for="inp_app_name">Application Name</label>
@@ -720,7 +755,7 @@
           <input id="inp_app_name" type="text" class="sp-input" placeholder="e.g. MyApp" />
         </div>
 
-        <div class="sp-field" style="margin-bottom: 0;">
+        <div id="target_config_wrap" class="sp-field" style="margin-bottom: 0; display: none;">
           <div class="sp-label-row">
             <label class="sp-label" for="sel_mendix_config">Target Mendix Configuration</label>
             <span class="sp-tooltip-wrap" tabindex="0">
@@ -732,19 +767,20 @@
             <select id="sel_mendix_config" class="sp-select">
               <option value="Default">Default</option>
             </select>
-            <button type="button" id="btn_toggle_new_cfg" class="sp-btn sp-btn-secondary">+ New</button>
+            <button type="button" id="btn_toggle_new_cfg" class="sp-btn sp-btn-secondary" title="Duplicate selected configuration with all database and server settings">Duplicate...</button>
           </div>
         </div>
       </div>
 
-      <!-- Inline New Configuration Box -->
+      <!-- Inline Duplicate Configuration Box -->
       <div id="new_cfg_inline_box" style="display: none; background: var(--sp-surface-alt); border: 1px solid var(--sp-border); border-radius: 5px; padding: 10px 12px; margin-bottom: 12px;">
         <div class="sp-label-row">
-          <label class="sp-label" for="inp_new_cfg_name">Create New Mendix Configuration Name</label>
+          <label class="sp-label" for="inp_new_cfg_name" id="lbl_new_cfg_name">Duplicate Configuration</label>
         </div>
+        <p style="font-size: 11.5px; color: var(--sp-text-muted); margin: 0 0 8px 0;">Clones all database, server, and constant settings from the selected configuration.</p>
         <div style="display: flex; gap: 8px;">
           <input id="inp_new_cfg_name" type="text" class="sp-input" placeholder="e.g. Default_MTA" />
-          <button type="button" id="btn_confirm_new_cfg" class="sp-btn sp-btn-primary">Use Name</button>
+          <button type="button" id="btn_confirm_new_cfg" class="sp-btn sp-btn-primary">Duplicate</button>
           <button type="button" id="btn_cancel_new_cfg" class="sp-btn sp-btn-secondary">Cancel</button>
         </div>
       </div>
@@ -768,17 +804,19 @@
             <label class="sp-label" for="inp_mcp_token">Plugin MCP Access Token (<code>McpServerAccessToken</code>)</label>
             <span class="sp-tooltip-wrap" tabindex="0">
               <span class="sp-tooltip-icon">?</span>
-              <span class="sp-tooltip-popup">Shared secret protecting <code>/plugin/mcp</code> in your running Mendix app. Configures both the Mendix constant and <code>PLUGIN_MCP_TOKEN</code> in <code>.env</code>. Default <code>1</code> is ideal for local testing.</span>
+              <span class="sp-tooltip-popup">A secret value that you choose/invent yourself (this does <strong>not</strong> come from Menditect) protecting <code>/plugin/mcp</code> in your running Mendix app. Configures both the Mendix constant (<code>MtaPluginModule.McpServerAccessToken</code>) and <code>PLUGIN_MCP_TOKEN</code> in <code>.env</code>. A simple value (such as <code>1</code> or <code>local-dev</code>) is recommended for local use, and a more complex secret (e.g. a UUID or SHA256 token) for use in a cloud or shared runtime.</span>
             </span>
           </div>
-          <input id="inp_mcp_token" type="text" class="sp-input" value="1" />
+          <input id="inp_mcp_token" type="text" class="sp-input" placeholder="Choose your own value (e.g. 1 or local-dev) — not from Menditect" />
+          <div class="sp-field-hint">Choose any secret value yourself (e.g. <code>1</code> for local testing) — this token does <strong>not</strong> come from Menditect.</div>
+          <div id="err_mcp_token" class="sp-field-error" style="display: none; margin-top: 4px;"></div>
         </div>
 
         <div class="sp-field" style="margin-bottom: 0;">
           <div class="sp-label-row">
             <label class="sp-label" for="inp_plugin_url">Local Plugin MCP Endpoint URL</label>
           </div>
-          <input id="inp_plugin_url" type="text" class="sp-input" value="http://localhost:8081/plugin/mcp" />
+          <input id="inp_plugin_url" type="text" class="sp-input" placeholder="e.g. http://localhost:8081/plugin/mcp" value="" />
         </div>
       </div>
 
@@ -793,7 +831,8 @@
             <div class="sp-label-row">
               <label class="sp-label" for="inp_mta_url">MTA Server URL (<code>MTAConnectionUrl</code>)</label>
             </div>
-            <input id="inp_mta_url" type="text" class="sp-input" value="https://mta-trial.mendixcloud.com" />
+            <input id="inp_mta_url" type="text" class="sp-input" value="" placeholder="https://mta.menditect.com" />
+            <div id="err_mta_url" class="sp-field-error" style="display: none; margin-top: 4px;"></div>
           </div>
 
           <div class="sp-field" style="margin-bottom: 0;">
@@ -915,57 +954,81 @@
         <h3 class="sp-card-title">Request Free Exploratory License Key</h3>
         <button type="button" id="btn_close_free_modal" class="sp-btn sp-btn-secondary" style="padding: 3px 9px;">✕</button>
       </div>
-      <div class="sp-modal-body">
-        <p style="margin-top: 0; font-size: 12px; color: var(--sp-text-muted);">
-          Complete the form below to generate your personal <strong>MTA Exploratory</strong> license key and activate it immediately.
-        </p>
+      <div class="sp-modal-body" id="fl_modal_body">
+        <div id="fl_form_view">
+          <p style="margin-top: 0; font-size: 12px; color: var(--sp-text-muted);">
+            Complete the form below to request your free <strong>MTA Exploratory</strong> license key. It will be sent to your email address.
+          </p>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-          <div class="sp-field">
-            <div class="sp-label-row"><label class="sp-label" for="fl_first_name">First Name *</label></div>
-            <input id="fl_first_name" type="text" class="sp-input" />
-            <div id="err_fl_firstName" class="sp-field-error" style="display:none;"></div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="sp-field">
+              <div class="sp-label-row"><label class="sp-label" for="fl_first_name">First Name *</label></div>
+              <input id="fl_first_name" type="text" class="sp-input" />
+              <div id="err_fl_firstName" class="sp-field-error" style="display:none;"></div>
+            </div>
+            <div class="sp-field">
+              <div class="sp-label-row"><label class="sp-label" for="fl_last_name">Last Name *</label></div>
+              <input id="fl_last_name" type="text" class="sp-input" />
+              <div id="err_fl_lastName" class="sp-field-error" style="display:none;"></div>
+            </div>
           </div>
+
           <div class="sp-field">
-            <div class="sp-label-row"><label class="sp-label" for="fl_last_name">Last Name *</label></div>
-            <input id="fl_last_name" type="text" class="sp-input" />
-            <div id="err_fl_lastName" class="sp-field-error" style="display:none;"></div>
+            <div class="sp-label-row"><label class="sp-label" for="fl_email">Business Email Address *</label></div>
+            <input id="fl_email" type="email" class="sp-input" placeholder="you@company.com (no Gmail/Outlook/Yahoo)" />
+            <div id="err_fl_email" class="sp-field-error" style="display:none;"></div>
+          </div>
+
+          <div class="sp-field">
+            <div class="sp-label-row"><label class="sp-label" for="fl_company">Company Name *</label></div>
+            <input id="fl_company" type="text" class="sp-input" />
+            <div id="err_fl_company" class="sp-field-error" style="display:none;"></div>
+          </div>
+
+          <div class="sp-field">
+            <div class="sp-label-row"><label class="sp-label" for="fl_country">Country *</label></div>
+            <select id="fl_country" class="sp-select">
+              <option value="">Select your country...</option>
+            </select>
+            <div id="err_fl_country" class="sp-field-error" style="display:none;"></div>
+          </div>
+
+          <div class="sp-field" style="margin-top: 10px;">
+            <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 12px; cursor: pointer;">
+              <input type="checkbox" id="fl_eula" style="margin-top: 2px;" />
+              <span>I agree with the terms of the <a href="https://documentation.menditect.com/legal/eula-free" target="_blank" rel="noopener noreferrer" style="color: var(--sp-input-focus);">MTA exploratory EULA</a> *</span>
+            </label>
+            <div id="err_fl_eulaAccepted" class="sp-field-error" style="display:none;"></div>
+            <div class="sp-legal-notices">
+              <p>
+                Menditect needs the contact information you provide to us to provide this free service and to contact you about our products and services. You may unsubscribe from these communications at anytime. For information on how to unsubscribe, as well as our privacy practices and commitment to protecting your privacy, check out our <a href="https://documentation.menditect.com/legal/pp" target="_blank" rel="noopener noreferrer" style="color: var(--sp-input-focus); text-decoration: underline;">Privacy Policy.</a>
+              </p>
+              <p>
+                Unsubscribing to the MTA exploratory subscription will lead to a revoke of your free MTA exploratory license.
+              </p>
+            </div>
+          </div>
+
+          <div id="err_fl_general" class="sp-banner sp-banner-err" style="display:none;"></div>
+        </div>
+
+        <div id="fl_success_view" style="display: none; padding: 14px 6px; text-align: center;">
+          <div style="width: 44px; height: 44px; border-radius: 50%; margin: 0 auto 12px auto; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; background: var(--sp-success-bg); color: var(--sp-success-text); border: 2px solid var(--sp-success-border);">&#10003;</div>
+          <h3 style="margin: 0 0 8px 0; font-size: 17px; font-weight: 700; color: var(--sp-text);">Request Received</h3>
+          <p id="fl_success_msg" style="margin: 0 0 14px 0; font-size: 13px; color: var(--sp-text-muted); line-height: 1.5;">
+            Thank you for requesting the MTA Exploratory Free Edition. Your license request was received and further instructions will be sent to you by email.
+          </p>
+          <div class="sp-banner sp-banner-info" style="margin: 0 auto; text-align: left;">
+            <strong>Next step:</strong> Check your inbox at <code id="fl_success_email"></code> for your Free Exploratory <code>ApplicationInstanceToken</code>, then paste it into the <code>ApplicationInstanceToken</code> field below.
           </div>
         </div>
-
-        <div class="sp-field">
-          <div class="sp-label-row"><label class="sp-label" for="fl_email">Business Email Address *</label></div>
-          <input id="fl_email" type="email" class="sp-input" placeholder="you@company.com (no Gmail/Outlook/Yahoo)" />
-          <div id="err_fl_email" class="sp-field-error" style="display:none;"></div>
-        </div>
-
-        <div class="sp-field">
-          <div class="sp-label-row"><label class="sp-label" for="fl_company">Company Name *</label></div>
-          <input id="fl_company" type="text" class="sp-input" />
-          <div id="err_fl_company" class="sp-field-error" style="display:none;"></div>
-        </div>
-
-        <div class="sp-field">
-          <div class="sp-label-row"><label class="sp-label" for="fl_country">Country *</label></div>
-          <select id="fl_country" class="sp-select">
-            <option value="">Select your country...</option>
-          </select>
-          <div id="err_fl_country" class="sp-field-error" style="display:none;"></div>
-        </div>
-
-        <div class="sp-field" style="margin-top: 10px;">
-          <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 12px; cursor: pointer;">
-            <input type="checkbox" id="fl_eula" style="margin-top: 2px;" />
-            <span>I agree to the <a href="https://documentation.menditect.com/legal/eula-mta-exploratory" target="_blank" rel="noopener noreferrer" style="color: var(--sp-input-focus);">Menditect EULA for MTA Exploratory</a> *</span>
-          </label>
-          <div id="err_fl_eulaAccepted" class="sp-field-error" style="display:none;"></div>
-        </div>
-
-        <div id="err_fl_general" class="sp-banner sp-banner-err" style="display:none;"></div>
       </div>
-      <div class="sp-modal-footer">
+      <div class="sp-modal-footer" id="fl_modal_footer">
         <button type="button" id="btn_cancel_free_modal" class="sp-btn sp-btn-secondary">Cancel</button>
-        <button type="button" id="btn_submit_free_license" class="sp-btn sp-btn-primary">Generate &amp; Activate License Key</button>
+        <button type="button" id="btn_submit_free_license" class="sp-btn sp-btn-primary">Submit</button>
+      </div>
+      <div class="sp-modal-footer" id="fl_success_footer" style="display: none;">
+        <button type="button" id="btn_close_success_modal" class="sp-btn sp-btn-primary" style="padding: 7px 20px;">Continue Setup</button>
       </div>
     </div>
   </div>
@@ -991,6 +1054,8 @@
     const uiState = {
       setupMode: 'new',
       workspaceDirCustomized: false,
+      pluginUrlCustomized: false,
+      lastInspection: null,
       licenseTier: 'free_exploratory',
       modelSource: 'mxcli',
       exploratoryMode: 'auto_execute',
@@ -1033,9 +1098,18 @@
       }
     }
 
-    function setLicenseTier(tier) {
+    function setLicenseTier(tier, options = {}) {
+      const tierChanged = uiState.licenseTier !== tier;
       uiState.licenseTier = tier;
       const isPaid = tier === 'paid_enterprise';
+      if (tierChanged && !options.preserveInputs) {
+        $('inp_app_token').value = '';
+        $('inp_mta_url').value = '';
+        $('err_app_token').style.display = 'none';
+        $('inp_app_token').classList.remove('sp-input-error');
+        if ($('err_mta_url')) $('err_mta_url').style.display = 'none';
+        $('inp_mta_url').classList.remove('sp-input-error');
+      }
       $('tier_opt_free').classList.toggle('selected', !isPaid);
       $('tier_opt_paid').classList.toggle('selected', isPaid);
       $('badge_tier_free').style.display = !isPaid ? 'inline-block' : 'none';
@@ -1078,10 +1152,17 @@
           if (st.appName) $('inp_app_name').value = st.appName;
           if (st.defaultInstanceToken) $('inp_app_token').value = st.defaultInstanceToken;
           if (st.rawPluginToken) $('inp_mcp_token').value = st.rawPluginToken.replace(/^Bearer\s+/i, '');
-          if (st.pluginUrl) $('inp_plugin_url').value = st.pluginUrl;
-          if (st.mtaUrl && st.licenseTier === 'paid_enterprise') $('inp_mta_url').value = st.mtaUrl;
+          if (st.pluginUrl) {
+            $('inp_plugin_url').value = st.pluginUrl;
+            uiState.pluginUrlCustomized = true;
+          }
+          if (st.mtaUrl && st.licenseTier === 'paid_enterprise' && !st.mtaUrl.toLowerCase().includes('services.menditect.com')) {
+            $('inp_mta_url').value = st.mtaUrl;
+          } else {
+            $('inp_mta_url').value = '';
+          }
           if (st.rawMtaToken) $('inp_mta_bearer').value = st.rawMtaToken;
-          setLicenseTier(st.licenseTier || 'free_exploratory');
+          setLicenseTier(st.licenseTier || 'free_exploratory', { preserveInputs: true });
           setModelSource(st.modelSource === '2' ? 'studiopro' : 'mxcli');
           setExploratoryMode(st.exploratoryMode || 'auto_execute');
           if (data.projectInspection) {
@@ -1093,16 +1174,32 @@
     }
 
     function renderProjectInspection(insp, preferredConfigName) {
+      uiState.lastInspection = insp;
       const errEl = $('project_error_msg');
       const panel = $('project_inspection_panel');
+      const inp = $('inp_project_dir');
+      const targetConfigWrap = $('target_config_wrap');
+      const nameConfigGrid = $('app_name_and_config_grid');
+      const pluginUrlInp = $('inp_plugin_url');
+
       if (!insp || !insp.valid) {
         panel.style.display = 'none';
-        errEl.textContent = (insp && insp.error) ? insp.error : 'Invalid Mendix project folder.';
+        if (targetConfigWrap) targetConfigWrap.style.display = 'none';
+        if (nameConfigGrid) nameConfigGrid.style.gridTemplateColumns = '1fr';
+        $('new_cfg_inline_box').style.display = 'none';
+        if (pluginUrlInp && !uiState.pluginUrlCustomized) {
+          pluginUrlInp.value = '';
+        }
+        if (inp) inp.classList.add('sp-input-error');
+        errEl.textContent = (insp && insp.error) ? insp.error : 'Invalid Mendix project folder. Please ensure the directory contains a .mpr file.';
         errEl.style.display = 'block';
         return;
       }
+      if (inp) inp.classList.remove('sp-input-error');
       errEl.style.display = 'none';
       panel.style.display = 'block';
+      if (targetConfigWrap) targetConfigWrap.style.display = 'block';
+      if (nameConfigGrid) nameConfigGrid.style.gridTemplateColumns = '1fr 1fr';
       $('lbl_mpr_name').textContent = insp.mprFileName || '.mpr';
       $('lbl_mendix_version').textContent = insp.detectedVersion ? `Mendix ${insp.detectedVersion}` : 'Mendix Project';
 
@@ -1139,38 +1236,113 @@
         selCfg.value = preferredConfigName;
       }
 
-      // Pre-fill discovered tokens if currently empty
+      // Pre-fill discovered tokens and Plugin MCP URL if currently empty
       if (insp.discoveredMta) {
         const instances = insp.discoveredMta.instances || [];
         const matchInst = instances.find(i => i.name === selCfg.value) || instances[0];
         if (matchInst) {
-          if (!$('inp_app_token').value.trim() && matchInst.token) {
+          const instUrl = String(matchInst.mtaUrl || insp.discoveredMta.globalMtaUrl || '').toLowerCase();
+          const instIsPaid = Boolean(instUrl && !instUrl.includes('services.menditect.com'));
+          const tierMatchesInst = (uiState.licenseTier === 'paid_enterprise') === instIsPaid;
+          if (!$('inp_app_token').value.trim() && matchInst.token && tierMatchesInst) {
             $('inp_app_token').value = matchInst.token;
           }
-          if (matchInst.pluginUrl) {
+          if (!$('inp_mta_url').value.trim() && uiState.licenseTier === 'paid_enterprise' && instIsPaid) {
+            $('inp_mta_url').value = matchInst.mtaUrl || insp.discoveredMta.globalMtaUrl || '';
+          }
+          if (matchInst.pluginUrl && !uiState.pluginUrlCustomized) {
             $('inp_plugin_url').value = matchInst.pluginUrl;
           }
         }
-        if (insp.discoveredMta.globalRawMcpServerAccessToken && $('inp_mcp_token').value === '1') {
+        if (insp.discoveredMta.globalPluginUrl && !$('inp_plugin_url').value.trim() && !uiState.pluginUrlCustomized) {
+          $('inp_plugin_url').value = insp.discoveredMta.globalPluginUrl;
+        }
+        if (insp.discoveredMta.globalRawMcpServerAccessToken && (!$('inp_mcp_token').value.trim() || $('inp_mcp_token').value === '1')) {
           $('inp_mcp_token').value = insp.discoveredMta.globalRawMcpServerAccessToken;
         }
       }
+      if (!$('inp_plugin_url').value.trim() && !uiState.pluginUrlCustomized) {
+        const port = (insp.discoveredMta && insp.discoveredMta.globalPluginPort) ? insp.discoveredMta.globalPluginPort : '8081';
+        $('inp_plugin_url').value = `http://localhost:${port}/plugin/mcp`;
+      }
     }
 
-    async function inspectCurrentProjectDir() {
-      const projectDir = $('inp_project_dir').value.trim();
-      if (!projectDir) return;
+    async function inspectCurrentProjectDir(isManual = false) {
+      const inp = $('inp_project_dir');
+      const errEl = $('project_error_msg');
+      const panel = $('project_inspection_panel');
+      const btn = $('btn_inspect_project');
+
+      let projectDir = (inp ? inp.value : '').trim().replace(/^["']|["']$/g, '');
+      if (inp) inp.value = projectDir;
+
+      if (!projectDir) {
+        if (panel) panel.style.display = 'none';
+        if ($('target_config_wrap')) $('target_config_wrap').style.display = 'none';
+        if ($('app_name_and_config_grid')) $('app_name_and_config_grid').style.gridTemplateColumns = '1fr';
+        $('new_cfg_inline_box').style.display = 'none';
+        if ($('inp_plugin_url') && !uiState.pluginUrlCustomized) {
+          $('inp_plugin_url').value = '';
+        }
+        if (isManual) {
+          if (inp) {
+            inp.classList.add('sp-input-error');
+            inp.focus();
+          }
+          if (errEl) {
+            errEl.textContent = 'Please specify a Mendix Application Folder first (click "Browse..." or paste the path to your project folder containing .mpr).';
+            errEl.style.display = 'block';
+          }
+        }
+        return;
+      }
+
+      if (errEl) errEl.style.display = 'none';
+      if (inp) inp.classList.remove('sp-input-error');
+
+      const origBtnText = btn ? btn.textContent : 'Inspect App';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Inspecting...';
+      }
+
       try {
         const res = await fetch('/api/inspect-project', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectDir })
         });
-        const data = await res.json();
-        if (data.ok) {
-          renderProjectInspection(data.inspection);
+        if (!res.ok) {
+          throw new Error(`Server returned HTTP ${res.status}`);
         }
-      } catch (e) {}
+        const data = await res.json();
+        if (data && data.ok && data.inspection) {
+          renderProjectInspection(data.inspection);
+        } else {
+          renderProjectInspection({
+            valid: false,
+            error: data?.error || 'Could not inspect the specified Mendix project directory.'
+          });
+        }
+      } catch (err) {
+        if (panel) panel.style.display = 'none';
+        if ($('target_config_wrap')) $('target_config_wrap').style.display = 'none';
+        if ($('app_name_and_config_grid')) $('app_name_and_config_grid').style.gridTemplateColumns = '1fr';
+        $('new_cfg_inline_box').style.display = 'none';
+        if ($('inp_plugin_url') && !uiState.pluginUrlCustomized) {
+          $('inp_plugin_url').value = '';
+        }
+        if (inp) inp.classList.add('sp-input-error');
+        if (errEl) {
+          errEl.textContent = `Inspection error: ${err.message || String(err)}`;
+          errEl.style.display = 'block';
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = origBtnText;
+        }
+      }
     }
 
     async function initBootstrap() {
@@ -1282,15 +1454,58 @@
       }
     });
 
-    $('btn_inspect_project').addEventListener('click', inspectCurrentProjectDir);
-    $('inp_project_dir').addEventListener('change', inspectCurrentProjectDir);
-    $('btn_recheck_studiopro').addEventListener('click', inspectCurrentProjectDir);
+    $('btn_inspect_project').addEventListener('click', () => inspectCurrentProjectDir(true));
+    $('inp_project_dir').addEventListener('change', () => inspectCurrentProjectDir(false));
+    $('inp_project_dir').addEventListener('input', () => {
+      const err = $('project_error_msg');
+      if (err) err.style.display = 'none';
+      $('inp_project_dir').classList.remove('sp-input-error');
+    });
+    $('inp_app_token').addEventListener('input', () => {
+      const err = $('err_app_token');
+      if (err) err.style.display = 'none';
+      $('inp_app_token').classList.remove('sp-input-error');
+    });
+    $('inp_mcp_token').addEventListener('input', () => {
+      const err = $('err_mcp_token');
+      if (err) err.style.display = 'none';
+      $('inp_mcp_token').classList.remove('sp-input-error');
+    });
+    $('inp_mta_url').addEventListener('input', () => {
+      const err = $('err_mta_url');
+      if (err) err.style.display = 'none';
+      $('inp_mta_url').classList.remove('sp-input-error');
+    });
+    $('inp_plugin_url').addEventListener('input', () => {
+      uiState.pluginUrlCustomized = true;
+    });
+    $('sel_mendix_config').addEventListener('change', () => {
+      if (uiState.lastInspection && uiState.lastInspection.discoveredMta) {
+        const instances = uiState.lastInspection.discoveredMta.instances || [];
+        const matchInst = instances.find(i => i.name === $('sel_mendix_config').value);
+        if (matchInst) {
+          const instUrl = String(matchInst.mtaUrl || uiState.lastInspection.discoveredMta.globalMtaUrl || '').toLowerCase();
+          const instIsPaid = Boolean(instUrl && !instUrl.includes('services.menditect.com'));
+          const tierMatchesInst = (uiState.licenseTier === 'paid_enterprise') === instIsPaid;
+          if (matchInst.token && !$('inp_app_token').value.trim() && tierMatchesInst) {
+            $('inp_app_token').value = matchInst.token;
+          }
+          if (matchInst.pluginUrl && !uiState.pluginUrlCustomized) {
+            $('inp_plugin_url').value = matchInst.pluginUrl;
+          }
+        }
+      }
+    });
+    $('btn_recheck_studiopro').addEventListener('click', () => inspectCurrentProjectDir(true));
 
-    // New Configuration Inline Bar
+    // Duplicate Configuration Inline Bar
     $('btn_toggle_new_cfg').addEventListener('click', () => {
       uiState.baseConfigName = $('sel_mendix_config').value || 'Default';
+      const lbl = $('lbl_new_cfg_name');
+      if (lbl) lbl.textContent = `Duplicate '${uiState.baseConfigName}' to New Configuration:`;
       $('inp_new_cfg_name').value = `${uiState.baseConfigName}_MTA`;
       $('new_cfg_inline_box').style.display = 'block';
+      $('inp_new_cfg_name').focus();
     });
     $('btn_cancel_new_cfg').addEventListener('click', () => {
       $('new_cfg_inline_box').style.display = 'none';
@@ -1301,7 +1516,7 @@
       const sel = $('sel_mendix_config');
       const opt = document.createElement('option');
       opt.value = newName;
-      opt.textContent = `${newName} (New)`;
+      opt.textContent = `${newName} (Duplicate of ${uiState.baseConfigName})`;
       sel.appendChild(opt);
       sel.value = newName;
       uiState.isNewConfig = true;
@@ -1309,34 +1524,193 @@
     });
 
     // Free License Modal
+    function clearFreeLicenseErrors() {
+      ['firstName', 'lastName', 'email', 'company', 'country', 'eulaAccepted'].forEach(f => {
+        const el = $(`err_fl_${f}`);
+        if (el) {
+          el.textContent = '';
+          el.style.display = 'none';
+        }
+      });
+      ['fl_first_name', 'fl_last_name', 'fl_email', 'fl_company', 'fl_country'].forEach(id => {
+        const inp = $(id);
+        if (inp) inp.classList.remove('sp-input-error');
+      });
+      const gen = $('err_fl_general');
+      if (gen) {
+        gen.textContent = '';
+        gen.style.display = 'none';
+      }
+    }
+
+    function setFreeLicenseFieldError(fieldKey, inputId, message) {
+      const errEl = $(`err_fl_${fieldKey}`);
+      if (errEl) {
+        errEl.textContent = message;
+        errEl.style.display = 'block';
+      }
+      if (inputId) {
+        const inp = $(inputId);
+        if (inp) inp.classList.add('sp-input-error');
+      }
+    }
+
+    function resetFreeModal() {
+      clearFreeLicenseErrors();
+      $('fl_form_view').style.display = 'block';
+      $('fl_modal_footer').style.display = 'flex';
+      $('fl_success_view').style.display = 'none';
+      $('fl_success_footer').style.display = 'none';
+    }
+
     function closeFreeModal() {
       $('modal_free_license').classList.remove('open');
     }
+
+    // Clear field errors as user interacts
+    [
+      { id: 'fl_first_name', key: 'firstName' },
+      { id: 'fl_last_name', key: 'lastName' },
+      { id: 'fl_email', key: 'email' },
+      { id: 'fl_company', key: 'company' }
+    ].forEach(item => {
+      const el = $(item.id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        el.classList.remove('sp-input-error');
+        const errEl = $(`err_fl_${item.key}`);
+        if (errEl) {
+          errEl.textContent = '';
+          errEl.style.display = 'none';
+        }
+      });
+    });
+
+    $('fl_country').addEventListener('change', () => {
+      $('fl_country').classList.remove('sp-input-error');
+      const errEl = $('err_fl_country');
+      if (errEl) {
+        errEl.textContent = '';
+        errEl.style.display = 'none';
+      }
+    });
+
+    $('fl_eula').addEventListener('change', () => {
+      const errEl = $('err_fl_eulaAccepted');
+      if (errEl) {
+        errEl.textContent = '';
+        errEl.style.display = 'none';
+      }
+    });
+
     $('btn_open_free_license_modal').addEventListener('click', () => {
+      resetFreeModal();
       $('modal_free_license').classList.add('open');
     });
     $('btn_close_free_modal').addEventListener('click', closeFreeModal);
     $('btn_cancel_free_modal').addEventListener('click', closeFreeModal);
+    $('btn_close_success_modal').addEventListener('click', closeFreeModal);
 
     $('btn_submit_free_license').addEventListener('click', async () => {
-      ['firstName', 'lastName', 'email', 'company', 'country', 'eulaAccepted'].forEach(f => {
-        const el = $(`err_fl_${f}`);
-        if (el) el.style.display = 'none';
-      });
-      $('err_fl_general').style.display = 'none';
+      clearFreeLicenseErrors();
+
+      const firstName = $('fl_first_name').value.trim();
+      const lastName = $('fl_last_name').value.trim();
+      const email = $('fl_email').value.trim();
+      const company = $('fl_company').value.trim();
+      const country = $('fl_country').value;
+      const eulaAccepted = $('fl_eula').checked;
+
+      let valid = true;
+      let firstInvalidEl = null;
+
+      // Validate on the frontend: all input fields are required
+      if (!firstName) {
+        setFreeLicenseFieldError('firstName', 'fl_first_name', 'First name is required.');
+        valid = false;
+        if (!firstInvalidEl) firstInvalidEl = $('fl_first_name');
+      } else if (firstName.length > 100) {
+        setFreeLicenseFieldError('firstName', 'fl_first_name', 'First name must be under 100 characters.');
+        valid = false;
+        if (!firstInvalidEl) firstInvalidEl = $('fl_first_name');
+      }
+
+      if (!lastName) {
+        setFreeLicenseFieldError('lastName', 'fl_last_name', 'Last name is required.');
+        valid = false;
+        if (!firstInvalidEl) firstInvalidEl = $('fl_last_name');
+      } else if (lastName.length > 100) {
+        setFreeLicenseFieldError('lastName', 'fl_last_name', 'Last name must be under 100 characters.');
+        valid = false;
+        if (!firstInvalidEl) firstInvalidEl = $('fl_last_name');
+      }
+
+      const emailRegex = /^[^\s@]+@([^\s@]+\.[^\s@]{2,})$/;
+      if (!email) {
+        setFreeLicenseFieldError('email', 'fl_email', 'Business email address is required.');
+        valid = false;
+        if (!firstInvalidEl) firstInvalidEl = $('fl_email');
+      } else if (!emailRegex.test(email)) {
+        setFreeLicenseFieldError('email', 'fl_email', 'Please enter a valid email address.');
+        valid = false;
+        if (!firstInvalidEl) firstInvalidEl = $('fl_email');
+      } else {
+        const domainMatch = email.match(emailRegex);
+        const domain = domainMatch ? domainMatch[1].toLowerCase() : '';
+        const freeDomains = new Set([
+          'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'yahoo.fr', 'yahoo.de',
+          'ymail.com', 'rocketmail.com', 'outlook.com', 'hotmail.com', 'hotmail.co.uk',
+          'hotmail.fr', 'hotmail.de', 'live.com', 'live.nl', 'live.co.uk', 'msn.com',
+          'icloud.com', 'me.com', 'mac.com', 'aol.com', 'protonmail.com', 'proton.me',
+          'pm.me', 'zoho.com', 'zohomail.com', 'gmx.com', 'gmx.de', 'gmx.net', 'web.de',
+          'mail.com', 'yandex.com', 'yandex.ru', 'mail.ru', 'tutanota.com', 'tuta.io', 'fastmail.com'
+        ]);
+        if (freeDomains.has(domain)) {
+          setFreeLicenseFieldError('email', 'fl_email', `Please enter a business email address (free email providers like @${domain} are not allowed).`);
+          valid = false;
+          if (!firstInvalidEl) firstInvalidEl = $('fl_email');
+        }
+      }
+
+      if (!company) {
+        setFreeLicenseFieldError('company', 'fl_company', 'Company name is required.');
+        valid = false;
+        if (!firstInvalidEl) firstInvalidEl = $('fl_company');
+      } else if (company.length > 150) {
+        setFreeLicenseFieldError('company', 'fl_company', 'Company name must be under 150 characters.');
+        valid = false;
+        if (!firstInvalidEl) firstInvalidEl = $('fl_company');
+      }
+
+      if (!country) {
+        setFreeLicenseFieldError('country', 'fl_country', 'Please select your country.');
+        valid = false;
+        if (!firstInvalidEl) firstInvalidEl = $('fl_country');
+      }
+
+      if (!eulaAccepted) {
+        setFreeLicenseFieldError('eulaAccepted', null, 'You must accept the Menditect EULA to receive a free license.');
+        valid = false;
+        if (!firstInvalidEl) firstInvalidEl = $('fl_eula');
+      }
+
+      if (!valid) {
+        if (firstInvalidEl) firstInvalidEl.focus();
+        return;
+      }
 
       const payload = {
-        firstName: $('fl_first_name').value.trim(),
-        lastName: $('fl_last_name').value.trim(),
-        email: $('fl_email').value.trim(),
-        company: $('fl_company').value.trim(),
-        country: $('fl_country').value,
-        eulaAccepted: $('fl_eula').checked
+        firstName,
+        lastName,
+        email,
+        company,
+        country,
+        eulaAccepted
       };
 
       const btn = $('btn_submit_free_license');
       btn.disabled = true;
-      btn.textContent = 'Submitting to Menditect...';
+      btn.textContent = 'Submitting...';
       try {
         const res = await fetch('/api/request-free-license', {
           method: 'POST',
@@ -1346,9 +1720,15 @@
         const data = await res.json();
         if (!data.ok) {
           if (data.field && $(`err_fl_${data.field}`)) {
-            const errEl = $(`err_fl_${data.field}`);
-            errEl.textContent = data.error;
-            errEl.style.display = 'block';
+            const fieldIdMap = {
+              firstName: 'fl_first_name',
+              lastName: 'fl_last_name',
+              email: 'fl_email',
+              company: 'fl_company',
+              country: 'fl_country',
+              eulaAccepted: null
+            };
+            setFreeLicenseFieldError(data.field, fieldIdMap[data.field], data.error);
           } else {
             $('err_fl_general').textContent = data.error || 'Failed to request license.';
             $('err_fl_general').style.display = 'block';
@@ -1356,19 +1736,25 @@
           return;
         }
 
-        $('inp_app_token').value = data.token;
-        $('err_app_token').style.display = 'none';
-        $('inp_app_token').classList.remove('sp-input-error');
         const banner = $('free_license_success_banner');
-        banner.innerHTML = `<strong>Free Exploratory License Activated!</strong> Your license token <code>${escapeHtml(data.token)}</code> has been registered for <strong>${escapeHtml(data.email)}</strong> and filled in below.`;
+        banner.innerHTML = `<strong>Request Received:</strong> Thank you for requesting the MTA Exploratory Free Edition. Your license request was received and your <code>ApplicationInstanceToken</code> will be sent to you by email at <code>${escapeHtml(data.email)}</code>. Once received, paste it into the <code>ApplicationInstanceToken</code> field below.`;
         banner.style.display = 'block';
-        closeFreeModal();
+
+        // Display success view in modal with email notice
+        $('fl_form_view').style.display = 'none';
+        $('fl_modal_footer').style.display = 'none';
+        if ($('fl_success_msg') && data.message) {
+          $('fl_success_msg').textContent = data.message;
+        }
+        $('fl_success_email').textContent = data.email;
+        $('fl_success_view').style.display = 'block';
+        $('fl_success_footer').style.display = 'flex';
       } catch (err) {
         $('err_fl_general').textContent = err.message || 'Network error.';
         $('err_fl_general').style.display = 'block';
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Generate & Activate License Key';
+        btn.textContent = 'Submit';
       }
     });
 
@@ -1377,23 +1763,50 @@
       const projectDir = $('inp_project_dir').value.trim();
       const workspaceDir = $('inp_workspace_dir').value.trim();
       const appToken = $('inp_app_token').value.trim();
+      const mcpToken = $('inp_mcp_token').value.trim();
+      const rawPaidUrl = $('inp_mta_url').value.trim();
 
       $('project_error_msg').style.display = 'none';
       $('err_app_token').style.display = 'none';
+      $('err_mcp_token').style.display = 'none';
+      if ($('err_mta_url')) $('err_mta_url').style.display = 'none';
       $('inp_app_token').classList.remove('sp-input-error');
+      $('inp_mcp_token').classList.remove('sp-input-error');
+      $('inp_mta_url').classList.remove('sp-input-error');
 
       if (!projectDir) {
         $('project_error_msg').textContent = 'Please select your Mendix Application Folder (.mpr).';
         $('project_error_msg').style.display = 'block';
+        $('inp_project_dir').classList.add('sp-input-error');
         $('inp_project_dir').focus();
         return;
       }
       if (!appToken) {
-        $('err_app_token').textContent = 'Application Instance Token is required (click "Request Free License Key..." above if you need one).';
+        $('err_app_token').textContent = uiState.licenseTier === 'paid_enterprise'
+          ? 'Application Instance Token is required (generated in MTA under Applications > App Instances > Details).'
+          : 'Application Instance Token is required (click "Request Free License Key..." above if you need one).';
         $('err_app_token').style.display = 'block';
         $('inp_app_token').classList.add('sp-input-error');
         $('inp_app_token').focus();
         return;
+      }
+      if (!mcpToken) {
+        $('err_mcp_token').textContent = 'Plugin MCP Access Token is required (choose your own secret value, e.g. 1 for local use — this token does not come from Menditect).';
+        $('err_mcp_token').style.display = 'block';
+        $('inp_mcp_token').classList.add('sp-input-error');
+        $('inp_mcp_token').focus();
+        return;
+      }
+      if (uiState.licenseTier === 'paid_enterprise') {
+        if (!rawPaidUrl || !/^(https?|wss?):\/\//i.test(rawPaidUrl) || rawPaidUrl.toLowerCase().includes('services.menditect.com')) {
+          if ($('err_mta_url')) {
+            $('err_mta_url').textContent = 'Please enter a valid Paid MTA Server URL (for example https://mta.menditect.com).';
+            $('err_mta_url').style.display = 'block';
+          }
+          $('inp_mta_url').classList.add('sp-input-error');
+          $('inp_mta_url').focus();
+          return;
+        }
       }
 
       const payload = {
@@ -1408,7 +1821,7 @@
         installMarketplaceModules: $('chk_install_modules').checked,
         mendixPat: $('inp_mendix_pat').value.trim(),
         appInstanceToken: appToken,
-        mcpServerAccessToken: $('inp_mcp_token').value.trim() || '1',
+        mcpServerAccessToken: mcpToken,
         pluginUrl: $('inp_plugin_url').value.trim() || 'http://localhost:8081/plugin/mcp',
         mtaUrl: uiState.licenseTier === 'paid_enterprise'
           ? $('inp_mta_url').value.trim()

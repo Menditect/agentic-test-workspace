@@ -28,6 +28,7 @@ const {
   isVersion1112OrHigher,
   isVersion1116OrHigher,
   inspectMendixMtaSettings,
+  tryDuplicateConfigurationInMpr,
   tryCreateConfigurationInMpr,
   configureMtaPluginInMpr
 } = require('./mendix-model');
@@ -48,7 +49,17 @@ const {
   applyMendixPluginConfigToState
 } = require('./setup-core');
 
-async function showDisclaimerAndPreflight() {
+let vibeDisclaimerAcknowledged = false;
+
+function setVibeDisclaimerAcknowledged(val = true) {
+  vibeDisclaimerAcknowledged = Boolean(val);
+}
+
+async function showVibeCodingDisclaimer() {
+  if (vibeDisclaimerAcknowledged) {
+    return true;
+  }
+
   console.log('======================================================');
   console.log(` Menditect Agent Workspace Setup${scriptVersion}`);
   console.log('======================================================\n');
@@ -72,7 +83,13 @@ async function showDisclaimerAndPreflight() {
     console.log('\nSetup aborted by user. Exiting without modifying any files.');
     process.exit(0);
   }
+  vibeDisclaimerAcknowledged = true;
   console.log('');
+  return true;
+}
+
+async function showDisclaimerAndPreflight() {
+  await showVibeCodingDisclaimer();
 
   console.log('======================================================');
   console.log(' NAVIGATION TIPS:');
@@ -205,16 +222,17 @@ async function runWizardLoop(state) {
       }
     } else if (currentStep === 'license_choice') {
       console.log('\n--- Menditect Test Automation (MTA) License ---');
-      console.log('Select your MTA License / Connection Type:\n');
-      console.log('  [1] Free (Free Exploratory License):');
+      console.log('Required modules are downloaded, configured and automatically kept up-to-date.');
+      console.log('The configuration can be modified later. Choose an option below:\n');
+      console.log('  [1] I have a token for exploratory testing (Free Exploratory):');
+      console.log('      • You can use exploratory testing after you fill in the token');
       console.log('      • Uses Menditect free license server (https://services.menditect.com)');
-      console.log('      • For users who already possess an ApplicationInstanceToken / exploratory license');
-      console.log('  [2] Paid (Paid MTA Server / Platform):');
-      console.log('      • Connects to your dedicated MTA server (e.g. https://mta-trial.mendixcloud.com)');
+      console.log('  [2] I have an MTA license (Paid MTA Server / Platform):');
+      console.log('      • You can use both exploratory testing and create tests in MTA');
       console.log('      • Full access to Frontend TestKit, Playwright Connector, and cloud test suites');
-      console.log('  [3] Request Free (Request MTA Exploratory Free Edition License):');
-      console.log('      • Register for a new free exploratory license right now in the CLI');
-      console.log('      • Generates your ApplicationInstanceToken and registers it via Menditect\n');
+      console.log('  [3] I want to request a token for exploratory testing:');
+      console.log('      • Enter your information to register for a free exploratory license right now in the CLI');
+      console.log('      • Contact Menditect Sales (https://menditect.com/contact/) for an MTA license\n');
 
       let defaultChoice = '1';
       if (state.licenseTier === 'paid_enterprise') {
@@ -227,12 +245,22 @@ async function runWizardLoop(state) {
 
       let ans = '';
       while (ans !== '1' && ans !== '2' && ans !== '3' && !isBack(ans)) {
-        ans = await ask('Select option: [1] Free, [2] Paid, [3] Request Free', defaultChoice);
+        ans = await ask('Select option: [1] Exploratory token, [2] MTA license, [3] Request exploratory token', defaultChoice);
       }
 
       if (isBack(ans)) {
         goBack = true;
       } else {
+        const prevTier = state.licenseTier;
+        const targetTier = ans === '2' ? 'paid_enterprise' : 'free_exploratory';
+        const tierSwitched = Boolean(prevTier && prevTier !== targetTier);
+        if (tierSwitched) {
+          state.tierSwitched = true;
+          state.defaultInstanceToken = '';
+          state.mtaUrl = targetTier === 'free_exploratory' ? 'https://services.menditect.com' : '';
+          state.appInstances = [];
+          state.activeConfig = null;
+        }
         state.licenseChoice = ans;
         if (ans === '1') {
           state.licenseTier = 'free_exploratory';
@@ -244,6 +272,10 @@ async function runWizardLoop(state) {
           nextStep = 'project_dir';
         } else if (ans === '2') {
           state.licenseTier = 'paid_enterprise';
+          if (state.mtaUrl && !isPaidMtaServerUrl(state.mtaUrl)) {
+            state.mtaUrl = '';
+            state.defaultInstanceToken = '';
+          }
           console.log(`\n${PASS} Paid MTA Server / Platform selected.`);
           nextStep = 'project_dir';
         } else if (ans === '3') {
@@ -252,7 +284,6 @@ async function runWizardLoop(state) {
             continue;
           } else if (reqRes.success) {
             state.licenseTier = 'free_exploratory';
-            state.defaultInstanceToken = reqRes.token;
             state.mtaUrl = 'https://services.menditect.com';
             nextStep = 'project_dir';
           } else {
@@ -267,9 +298,6 @@ async function runWizardLoop(state) {
               continue;
             } else {
               state.licenseTier = 'free_exploratory';
-              if (reqRes.token) {
-                state.defaultInstanceToken = reqRes.token;
-              }
               state.mtaUrl = 'https://services.menditect.com';
               nextStep = 'project_dir';
             }
@@ -451,7 +479,7 @@ async function runWizardLoop(state) {
                 const instTok = matchInst?.token ? (matchInst.token.length > 10 ? `${matchInst.token.slice(0, 6)}...` : matchInst.token) : '';
                 console.log(`  [${idx + 1}] ${cName}${instTok ? ` (Token: ${instTok})` : ''}`);
               });
-              console.log(`  [${currentConfigs.length + 1}] + Create New Configuration`);
+              console.log(`  [${currentConfigs.length + 1}] Duplicate an Existing Configuration...`);
 
               const configChoice = await ask(`Select a configuration to use/update (1-${currentConfigs.length + 1})`, '1');
               if (isBack(configChoice)) {
@@ -461,7 +489,20 @@ async function runWizardLoop(state) {
                 if (parsed === currentConfigs.length + 1) {
                   let newCfgCreated = false;
                   while (!newCfgCreated && !subGoBack) {
-                    const newNameAns = await ask('Enter new configuration name (e.g. MTA_Testing, MTA_demo)');
+                    let sourceConfig = currentConfigs[0] || 'Default';
+                    if (currentConfigs.length > 1) {
+                      console.log('\nSelect source configuration to duplicate:');
+                      currentConfigs.forEach((cName, idx) => console.log(`  [${idx + 1}] ${cName}`));
+                      const srcAns = await ask(`Select source configuration (1-${currentConfigs.length})`, '1');
+                      if (isBack(srcAns)) break;
+                      const srcIdx = parseInt(srcAns, 10) - 1;
+                      if (srcIdx >= 0 && srcIdx < currentConfigs.length) {
+                        sourceConfig = currentConfigs[srcIdx];
+                      }
+                    }
+
+                    const defaultNewName = `${sourceConfig}_MTA`;
+                    const newNameAns = await ask(`Enter new configuration name (duplicating '${sourceConfig}')`, defaultNewName);
                     if (isBack(newNameAns)) {
                       break;
                     }
@@ -479,10 +520,10 @@ async function runWizardLoop(state) {
                       break;
                     }
 
-                    console.log(`Attempting to create configuration '${candidateName}' in .mpr...`);
-                    const createRes = tryCreateConfigurationInMpr(state.mprPath, mxcliBin, candidateName);
+                    console.log(`Attempting to duplicate configuration '${sourceConfig}' to '${candidateName}' in .mpr...`);
+                    const createRes = tryDuplicateConfigurationInMpr(state.mprPath, mxcliBin, sourceConfig, candidateName, 8081);
                     if (createRes.success) {
-                      console.log(`${PASS} Successfully created configuration '${candidateName}' in Mendix project.`);
+                      console.log(`${PASS} Successfully duplicated configuration '${sourceConfig}' to '${candidateName}' (with all database and server settings).`);
                       targetConfigName = candidateName;
                       isNewConfig = true;
                       state.discoveredMta = inspectMendixMtaSettings(state.mprPath, mxcliBin);
@@ -493,17 +534,17 @@ async function runWizardLoop(state) {
                     const isProjectOpenInStudioPro = createRes.error && /Studio Pro has this project open/i.test(createRes.error);
                     console.log('\n┌──────────────────────────────────────────────────────────────────────────────┐');
                     if (isProjectOpenInStudioPro) {
-                      console.log('│ ⚠️  Cannot Auto-Create Configuration (.mpr Locked by Studio Pro)              │');
+                      console.log('│ ⚠️  Cannot Auto-Duplicate Configuration (.mpr Locked by Studio Pro)            │');
                       console.log('├──────────────────────────────────────────────────────────────────────────────┤');
                       console.log(`│ mxcli refused to write to the project because Mendix Studio Pro has this     │`);
                       console.log(`│ project open.                                                                │`);
                     } else {
-                      console.log('│ ⚠️  Cannot Auto-Create Configuration in .mpr                                  │');
+                      console.log('│ ⚠️  Cannot Auto-Duplicate Configuration in .mpr                                │');
                       console.log('├──────────────────────────────────────────────────────────────────────────────┤');
-                      console.log(`│ mxcli could not automatically create configuration '${candidateName}'.      │`);
+                      console.log(`│ mxcli could not automatically duplicate configuration '${sourceConfig}'.     │`);
                     }
                     console.log('│   1. In Studio Pro: App Explorer > App > Settings > Configurations tab       │');
-                    console.log(`│   2. Click 'Add', enter name '${candidateName}', set Port 8081 / http://...  │`);
+                    console.log(`│   2. Select '${sourceConfig}', click 'Duplicate', enter name '${candidateName}'  │`);
                     console.log('│   3. Save the project in Studio Pro and return here                          │');
                     console.log('└──────────────────────────────────────────────────────────────────────────────┘\n');
 
@@ -583,7 +624,19 @@ async function runWizardLoop(state) {
                 } else if (!isNaN(parsed) && parsed >= 1 && parsed <= currentConfigs.length) {
                   targetConfigName = currentConfigs[parsed - 1];
                   isNewConfig = false;
-                  const currentlyHasConfiguredConstants = Boolean(state.discoveredMta && state.discoveredMta.isPluginConfigured);
+                  const matchedDiscovered = state.discoveredMta?.instances?.find(
+                    x => x.name.toLowerCase() === targetConfigName.toLowerCase()
+                  );
+                  const discoveredUrl = matchedDiscovered?.mtaUrl || state.discoveredMta?.globalMtaUrl || '';
+                  const discoveredTierMatches = discoveredUrl
+                    ? (state.licenseTier === 'paid_enterprise') === isPaidMtaServerUrl(discoveredUrl)
+                    : false;
+                  const currentlyHasConfiguredConstants = Boolean(
+                    !state.tierSwitched &&
+                    discoveredTierMatches &&
+                    state.discoveredMta &&
+                    state.discoveredMta.isPluginConfigured
+                  );
                   if (currentlyHasConfiguredConstants) {
                     nextSubStep = 'reconfig_prompt';
                   } else {
@@ -641,27 +694,50 @@ async function runWizardLoop(state) {
           } else if (subStep === 'paid_url') {
             isPaidServer = true;
             console.log('\n--- Configure MTA Plugin Constants & AfterStartup ---');
-            const existingUrl = state.mtaUrl || state.discoveredMta?.globalMtaUrl || existingConfig.mta_base_url || '';
+            const existingUrl = !state.tierSwitched
+              ? (state.mtaUrl || state.discoveredMta?.globalMtaUrl || existingConfig.mta_base_url || '')
+              : (state.mtaUrl || '');
             const defaultPaidWsUrl = (existingUrl && isPaidMtaServerUrl(existingUrl))
               ? existingUrl.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://')
-              : 'wss://mta-trial.mendixcloud.com';
-            const wsAns = await ask('MtaPluginModule.MTAConnectionUrl (wss:// or https:// URL of your MTA Server)', defaultPaidWsUrl);
-            if (isBack(wsAns)) {
-              subGoBack = true;
-            } else {
-              const cleanedUrl = wsAns.trim() || 'wss://mta-trial.mendixcloud.com';
-              rawMtaConnectionUrl = cleanedUrl.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://');
+              : '';
+            let enteredPaidUrl = '';
+            while (!enteredPaidUrl && !subGoBack) {
+              const wsAns = await ask('MtaPluginModule.MTAConnectionUrl (wss:// or https:// URL of your Paid MTA Server)', defaultPaidWsUrl);
+              if (isBack(wsAns)) {
+                subGoBack = true;
+                break;
+              }
+              const cleanedUrl = wsAns.trim();
+              if (!cleanedUrl || cleanedUrl.toLowerCase().includes('services.menditect.com')) {
+                console.log(`${ERROR} Please enter a valid Paid MTA Server URL (for example https://mta.menditect.com).`);
+                continue;
+              }
+              enteredPaidUrl = cleanedUrl;
+            }
+            if (!subGoBack && enteredPaidUrl) {
+              rawMtaConnectionUrl = enteredPaidUrl.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://');
               if (!/^wss?:\/\//i.test(rawMtaConnectionUrl)) {
                 rawMtaConnectionUrl = `wss://${rawMtaConnectionUrl}`;
               }
               httpMtaUrl = rawMtaConnectionUrl.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
+              state.mtaUrl = httpMtaUrl;
               nextSubStep = 'instance_token';
             }
           } else if (subStep === 'instance_token') {
+            const matchedDiscoveredInst = state.discoveredMta?.instances?.find(
+              x => x.name.toLowerCase() === targetConfigName.toLowerCase()
+            ) || (state.discoveredMta?.instances && state.discoveredMta.instances[0]);
+            const discoveredInstUrl = matchedDiscoveredInst?.mtaUrl || state.discoveredMta?.globalMtaUrl || '';
+            const discoveredInstMatchesTier = discoveredInstUrl
+              ? isPaidServer === isPaidMtaServerUrl(discoveredInstUrl)
+              : false;
+            const existingCfgMatchesTier = existingConfig.mta_base_url
+              ? isPaidServer === isPaidMtaServerUrl(existingConfig.mta_base_url)
+              : false;
             const defaultInstToken = appInstanceToken
               || state.defaultInstanceToken
-              || (state.discoveredMta?.instances && state.discoveredMta.instances[0]?.token)
-              || existingConfig.default_app_instance_token
+              || (!state.tierSwitched && discoveredInstMatchesTier ? matchedDiscoveredInst?.token : '')
+              || (!state.tierSwitched && existingCfgMatchesTier ? existingConfig.default_app_instance_token : '')
               || '';
             const tokenLabel = isPaidServer
               ? 'MtaPluginModule.ApplicationInstanceToken (from MTA Portal > Application Instances)'
@@ -710,8 +786,11 @@ async function runWizardLoop(state) {
           } else if (subStep === 'mcp_token') {
             const existingRawPluginTok = (mcpServerAccessToken || state.rawPluginToken || state.discoveredMta?.globalRawMcpServerAccessToken || '').replace(/^Bearer\s+/i, '').trim();
             console.log('\n┌──────────────────────────────────────────────────────────────────────────────┐');
-            console.log('│ 🔑 MTA PLUGIN MCP ACCESS TOKEN (SHARED SECRET HANDSHAKE)                     │');
+            console.log('│ 🔑 MTA PLUGIN MCP ACCESS TOKEN (CHOOSE YOUR OWN SECRET VALUE)                │');
             console.log('├──────────────────────────────────────────────────────────────────────────────┤');
+            console.log('│ IMPORTANT: This token is a secret value that YOU choose/invent yourself      │');
+            console.log('│            (it does NOT come from Menditect!).                               │');
+            console.log('│                                                                              │');
             console.log('│ The MTA Plugin exposes an embedded MCP server at /plugin/mcp in your running │');
             console.log('│ Mendix runtime. To secure this endpoint against unauthorized access:         │');
             console.log('│                                                                              │');
@@ -726,7 +805,7 @@ async function runWizardLoop(state) {
             console.log('└──────────────────────────────────────────────────────────────────────────────┘\n');
             let enteredMcpTok = '';
             while (!enteredMcpTok && !subGoBack) {
-              const mcpTokAns = await ask('MtaPluginModule.McpServerAccessToken (secret token for plugin MCP endpoint)', existingRawPluginTok || '1');
+              const mcpTokAns = await ask('MtaPluginModule.McpServerAccessToken (choose your own secret value, not from Menditect)', existingRawPluginTok || '1');
               if (isBack(mcpTokAns)) {
                 subGoBack = true;
                 break;
@@ -1118,16 +1197,27 @@ async function runWizardLoop(state) {
         }
       }
     } else if (currentStep === 'mta_url') {
-      console.log('\n--- MTA URL ---');
-      console.log('Default is https://mta-trial.mendixcloud.com.');
-      console.log('*(Note: For free exploratory users, the cloud MTA URL is not relevant because all testing runs locally on your machine.');
-      console.log(' You can safely press Enter to accept the default or leave it empty.)*\n');
-      const defaultMtaUrl = state.mtaUrl || state.activeConfig?.mtaUrl || state.discoveredMta?.globalMtaUrl || existingConfig.mta_base_url || 'https://mta-trial.mendixcloud.com';
-      const ans = await ask('MTA URL', defaultMtaUrl);
-      if (isBack(ans)) {
-        goBack = true;
-      } else {
-        state.mtaUrl = ans;
+      console.log('\n--- Paid MTA Server URL ---');
+      const candidateUrl = !state.tierSwitched
+        ? (state.mtaUrl || state.activeConfig?.mtaUrl || state.discoveredMta?.globalMtaUrl || existingConfig.mta_base_url || '')
+        : (state.mtaUrl || '');
+      const defaultMtaUrl = (candidateUrl && isPaidMtaServerUrl(candidateUrl)) ? candidateUrl : '';
+      let validMtaUrl = '';
+      while (!validMtaUrl && !goBack) {
+        const ans = await ask('Paid MTA Server URL (e.g. https://mta.menditect.com)', defaultMtaUrl);
+        if (isBack(ans)) {
+          goBack = true;
+          break;
+        }
+        const cleaned = ans.trim();
+        if (!cleaned || cleaned.toLowerCase().includes('services.menditect.com')) {
+          console.log(`${ERROR} Please enter a valid Paid MTA Server URL (for example https://mta.menditect.com).`);
+          continue;
+        }
+        validMtaUrl = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned.replace(/^wss?:\/\//i, '')}`;
+      }
+      if (!goBack && validMtaUrl) {
+        state.mtaUrl = validMtaUrl;
         nextStep = 'mta_token';
       }
     } else if (currentStep === 'mta_token') {
@@ -1187,12 +1277,14 @@ async function runWizardLoop(state) {
         }
       }
     } else if (currentStep === 'plugin_token') {
-      console.log('\n--- App Under Test Plugin Token ---');
+      console.log('\n--- App Under Test Plugin Token (Choose Your Own Secret Value) ---');
+      console.log('  • IMPORTANT: This token is a secret value that YOU choose/invent yourself');
+      console.log('    (it does NOT come from Menditect!).');
       console.log('  • Purpose: Security token protecting the MtaPluginModule MCP endpoint in your running app.');
       console.log('    Configured in Studio Pro via constant MtaPluginModule.McpServerAccessToken.');
       console.log('  • Security Guideline:');
-      console.log('    - For short exploratory test runs on localhost, entering "1" or "Bearer 1" is acceptable.');
-      console.log('    - For apps running on non-local networks or cloud slots, a strong secret token is strongly advised.');
+      console.log('    - For short exploratory test runs on localhost, a simple value (e.g. "1") is acceptable.');
+      console.log('    - For cloud or shared runtime environments, a more complex secret token (e.g. a UUID or SHA256 token) is recommended.');
       console.log('  • 🔒 Where it is saved:');
       console.log('    Stored exclusively in your workspace local .env file as:');
       console.log('      PLUGIN_MCP_TOKEN="<token>" (with restricted 0600 file permissions).');
@@ -1205,7 +1297,7 @@ async function runWizardLoop(state) {
         || '';
       let enteredToken = '';
       while (!enteredToken && !goBack) {
-        const ans = await ask('App under test Plugin Token (Bearer token recommended, e.g. "Bearer 1" or secure secret)', defaultPluginToken);
+        const ans = await ask('App under test Plugin Token (choose your own secret value, e.g. "Bearer 1" — not from Menditect)', defaultPluginToken);
         if (isBack(ans)) {
           goBack = true;
           break;
@@ -1351,6 +1443,8 @@ async function runWizardLoop(state) {
 }
 
 module.exports = {
+  showVibeCodingDisclaimer,
+  setVibeDisclaimerAcknowledged,
   showDisclaimerAndPreflight,
   hydrateStateFromWorkspaceDir,
   createInitialWizardState,

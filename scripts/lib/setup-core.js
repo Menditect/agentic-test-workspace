@@ -27,6 +27,7 @@ const {
   isVersion1112OrHigher,
   isVersion1116OrHigher,
   inspectMendixMtaSettings,
+  tryDuplicateConfigurationInMpr,
   tryCreateConfigurationInMpr,
   configureMtaPluginInMpr
 } = require('./mendix-model');
@@ -194,18 +195,18 @@ function listExistingWorkspaces() {
 function inspectMendixProjectFolder(rawProjectDir, mxcliBinOverride = null) {
   const cleanedPath = String(rawProjectDir || '').trim().replace(/^["']|["']$/g, '');
   if (!cleanedPath) {
-    return { valid: false, error: 'Project directory path is empty.' };
+    return { valid: false, error: 'Mendix application folder path is empty. Please click "Browse..." or paste your folder path.' };
   }
   const resolvedDir = path.resolve(cleanedPath);
   if (!fs.existsSync(resolvedDir)) {
-    return { valid: false, error: `Directory does not exist: ${resolvedDir}` };
+    return { valid: false, error: `Directory does not exist: "${resolvedDir}". Please verify the folder path.` };
   }
   const mprPath = findMpr(resolvedDir);
   if (!mprPath) {
     return {
       valid: false,
       projectDir: resolvedDir,
-      error: `No .mpr file found in ${resolvedDir}. Please select a valid Mendix project directory.`
+      error: `No .mpr file found in "${resolvedDir}". Please select the root folder of your Mendix app (the folder containing the .mpr file).`
     };
   }
 
@@ -465,21 +466,25 @@ async function executeVisualSetupPayload(payload, logCallback = null) {
         const skipMprConfigWrite = Boolean(payload.skipMprConfigWrite);
 
         if (isNewConfig && !skipMprConfigWrite && mxcliBin) {
-          const createRes = tryCreateConfigurationInMpr(
+          const baseConfig = payload.baseConfigName || 'Default';
+          const createRes = tryDuplicateConfigurationInMpr(
             state.mprPath,
             mxcliBin,
-            targetConfigName,
-            payload.baseConfigName || 'Default'
+            baseConfig,
+            targetConfigName
           );
           if (createRes.success) {
-            console.log(`${PASS} Created configuration '${targetConfigName}' in ${path.basename(state.mprPath)}.`);
+            console.log(`${PASS} Duplicated configuration '${baseConfig}' to '${targetConfigName}' in ${path.basename(state.mprPath)}.`);
           } else {
-            console.warn(`${WARN} Could not create configuration '${targetConfigName}' directly in .mpr: ${createRes.error}`);
+            console.warn(`${WARN} Could not duplicate configuration '${targetConfigName}' in .mpr: ${createRes.error}`);
           }
         }
 
         const isPaid = state.licenseTier === 'paid_enterprise';
-        const cleanedPaidUrl = String(payload.mtaUrl || 'https://mta-trial.mendixcloud.com').trim();
+        const cleanedPaidUrl = String(payload.mtaUrl || '').trim();
+        if (isPaid && (!cleanedPaidUrl || cleanedPaidUrl.toLowerCase().includes('services.menditect.com'))) {
+          throw new Error('Please enter a valid Paid MTA Server URL (for example https://mta.menditect.com).');
+        }
         const rawMtaConnectionUrl = isPaid
           ? cleanedPaidUrl.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://')
           : 'wss://services.menditect.com';
@@ -492,7 +497,13 @@ async function executeVisualSetupPayload(payload, logCallback = null) {
           ? (String(payload.connectionPassword || '').trim() || gwDefaults.keyValue)
           : gwDefaults.keyValue;
         const appInstanceToken = String(payload.appInstanceToken || '').trim();
-        const mcpServerAccessToken = String(payload.mcpServerAccessToken || '1').replace(/^Bearer\s+/i, '').trim() || '1';
+        if (!appInstanceToken) {
+          throw new Error('Application Instance Token is required.');
+        }
+        const mcpServerAccessToken = String(payload.mcpServerAccessToken || '').replace(/^Bearer\s+/i, '').trim();
+        if (!mcpServerAccessToken) {
+          throw new Error('Plugin MCP Access Token is required.');
+        }
 
         applyMendixPluginConfigToState(state, mxcliBin, {
           targetConfigName,

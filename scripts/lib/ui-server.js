@@ -27,6 +27,30 @@ function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') 
   const cleanInit = initialDir && fs.existsSync(initialDir) ? path.resolve(initialDir) : '';
 
   if (process.platform === 'win32') {
+    const psScriptPath = path.join(__dirname, 'modern-folder-picker.ps1');
+    if (fs.existsSync(psScriptPath)) {
+      try {
+        const out = execSync(
+          `powershell -NoProfile -Sta -ExecutionPolicy Bypass -File "${psScriptPath}" -Title "${cleanTitle.replace(/"/g, '`"')}" -InitialFolder "${cleanInit.replace(/"/g, '`"')}"`,
+          {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 120000
+          }
+        ).trim();
+        if (out) {
+          const lines = out.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+          const selected = lines.length ? lines[lines.length - 1] : '';
+          if (selected) {
+            return { cancelled: false, folderPath: selected };
+          }
+        }
+        return { cancelled: true, folderPath: '' };
+      } catch (err) {
+        return { cancelled: true, folderPath: '', error: err.message };
+      }
+    }
+
     const psScript = [
       'Add-Type -AssemblyName System.Windows.Forms;',
       '[System.Windows.Forms.Application]::EnableVisualStyles();',
@@ -220,8 +244,8 @@ function startVisualSetupServer(options = {}) {
 
           return sendJson(res, 200, {
             ok: true,
-            token,
-            email: valRes.email
+            email: valRes.email,
+            message: 'Thank you for requesting the MTA Exploratory Free Edition. Your license request was received and further instructions will be sent to you by email.'
           });
         }
 

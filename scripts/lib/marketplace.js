@@ -667,6 +667,76 @@ async function installMxModuleFromMarketplace(modSpec, projectDir, mendixVersion
   }
 }
 
+function removePaidMarketplaceModulesAndDrivers(projectDir, mprPath, mxcliBin) {
+  if (!projectDir || !fs.existsSync(projectDir)) return 0;
+  const paidSpecs = [
+    MENDITECT_MARKETPLACE_MODULES.MenditectMxFrontendTestKit,
+    MENDITECT_MARKETPLACE_MODULES.MenditectPlaywrightConnector,
+    MENDITECT_MARKETPLACE_MODULES.MenditectMtaCommons
+  ];
+  const modulesDir = path.join(projectDir, 'modules');
+  let removedCount = 0;
+
+  for (const spec of paidSpecs) {
+    let removedThisMod = false;
+    if (fs.existsSync(modulesDir)) {
+      for (const fName of [spec.fileName, spec.infoFileName]) {
+        const fp = path.join(modulesDir, fName);
+        if (fs.existsSync(fp)) {
+          try {
+            fs.unlinkSync(fp);
+            removedThisMod = true;
+          } catch (e) {}
+        }
+      }
+    }
+    if (mprPath && fs.existsSync(mprPath)) {
+      const remSource = removeSourceModuleFromMpr(mprPath, spec.moduleName, mxcliBin);
+      if (remSource && remSource.removed) {
+        removedThisMod = true;
+      }
+    }
+    if (removedThisMod) {
+      console.log(`  ${PASS} Removed paid-only module ${spec.displayName} (${spec.fileName}) from project.`);
+      removedCount++;
+    }
+  }
+
+  const userlibDir = path.join(projectDir, 'userlib');
+  if (fs.existsSync(userlibDir)) {
+    try {
+      for (const f of fs.readdirSync(userlibDir)) {
+        if (/^driver-bundle-.*\.jar$/i.test(f)) {
+          try {
+            fs.unlinkSync(path.join(userlibDir, f));
+            console.log(`  ${PASS} Removed Playwright Driver Bundle (${f}) from userlib/.`);
+            removedCount++;
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+
+  const trackingFile = path.join(projectDir, 'menditect-output', '.installed-modules.json');
+  if (fs.existsSync(trackingFile)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(trackingFile, 'utf8'));
+      let changed = false;
+      for (const spec of paidSpecs) {
+        if (parsed && spec.moduleName in parsed) {
+          delete parsed[spec.moduleName];
+          changed = true;
+        }
+      }
+      if (changed) {
+        fs.writeFileSync(trackingFile, JSON.stringify(parsed, null, 2), 'utf8');
+      }
+    } catch (e) {}
+  }
+
+  return removedCount;
+}
+
 async function syncProjectMarketplaceModules(state, askFn, mxcliBin, options = {}) {
   if (!state.projectDir || !fs.existsSync(state.projectDir) || !state.mprPath || !fs.existsSync(state.mprPath)) {
     return { success: false, updatedCount: 0 };
@@ -675,16 +745,20 @@ async function syncProjectMarketplaceModules(state, askFn, mxcliBin, options = {
   const mxVer = state.detectedVersion || '11.0.0';
   let modulesUpdatedCount = 0;
 
+  const isPaid = (state.licenseTier === 'paid_enterprise') || isPaidMtaServerUrl(state.mtaUrl);
+  if (!isPaid) {
+    modulesUpdatedCount += removePaidMarketplaceModulesAndDrivers(state.projectDir, state.mprPath, mxcliBin);
+  }
+
   const authed = await ensureMxcliAuth(mxcliBin, askFn || ask);
   if (!authed) {
     console.warn(`  ${WARN} Skipping automated module updates from Mendix Marketplace (PAT not provided). Run "npm run update:modules" anytime.`);
-    return { success: false, updatedCount: 0 };
+    return { success: modulesUpdatedCount > 0, updatedCount: modulesUpdatedCount };
   }
 
-  const isPaid = (state.licenseTier === 'paid_enterprise') || isPaidMtaServerUrl(state.mtaUrl);
   const modsToCheck = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
 
-  if (isPaid || installedInfo.modules.MenditectMxFrontendTestKit?.installed || installedInfo.modules.MenditectPlaywrightConnector?.installed || installedInfo.modules.MenditectMtaCommons?.installed) {
+  if (isPaid) {
     modsToCheck.push(
       MENDITECT_MARKETPLACE_MODULES.MenditectMxFrontendTestKit,
       MENDITECT_MARKETPLACE_MODULES.MenditectPlaywrightConnector,
@@ -713,7 +787,7 @@ async function syncProjectMarketplaceModules(state, askFn, mxcliBin, options = {
   }
 
   const refreshedAfterSync = inspectInstalledMarketplaceModules(state.projectDir);
-  if (modsToCheck.some(m => m.hasDriverBundle) || refreshedAfterSync.modules.MenditectPlaywrightConnector?.installed) {
+  if (isPaid && (modsToCheck.some(m => m.hasDriverBundle) || refreshedAfterSync.modules.MenditectPlaywrightConnector?.installed)) {
     const connectorPath = refreshedAfterSync.modules.MenditectPlaywrightConnector?.mxmodulePath || '';
     const bundleRes = await ensurePlaywrightDriverBundle(state.projectDir, playwrightReleaseNotes, connectorPath);
     if (bundleRes.success && bundleRes.alreadyInstalled) {
@@ -742,6 +816,7 @@ module.exports = {
   downloadBinaryFile,
   ensurePlaywrightDriverBundle,
   installMxModuleFromMarketplace,
+  removePaidMarketplaceModulesAndDrivers,
   syncProjectMarketplaceModules,
   syncAndVerifyMaiaSkills
 };

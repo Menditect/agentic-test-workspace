@@ -410,15 +410,106 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
   }
 }
 
-function tryCreateConfigurationInMpr(mprPath, mxcliBin, configName, httpPort = 8081) {
+function tryDuplicateConfigurationInMpr(mprPath, mxcliBin, sourceConfigName, newConfigName, httpPort = 8081) {
+  if (!mprPath || !fs.existsSync(mprPath) || !mxcliBin || !newConfigName) {
+    return { success: false, error: 'Missing parameters' };
+  }
+  const cleanNewName = String(newConfigName).trim();
+  const cleanSourceName = String(sourceConfigName || 'Default').trim();
+  const escapeMdlStr = (val) => String(val ?? '').replace(/'/g, "''");
+  const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  let settingsOutput = '';
+  try {
+    settingsOutput = execSync(`"${mxcliBin}" -c "describe settings;" -p "${mprPath}"`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 30000
+    });
+  } catch (err) {
+    settingsOutput = '';
+  }
+
+  // Parse source configuration block: alter settings configuration '<source>' ... ;
+  const configBlockRegex = new RegExp(
+    `alter\\s+settings\\s+configuration\\s+'${escapeRegex(cleanSourceName)}'([\\s\\S]*?)(?:;|alter\\s+settings|create|drop|$)`,
+    'i'
+  );
+  const match = settingsOutput.match(configBlockRegex);
+
+  const attributes = {};
+  if (match && match[1]) {
+    const rawBody = match[1];
+    const lineRegex = /([a-zA-Z0-9_]+)\s*=\s*('[^']*'|[0-9]+|true|false)/gi;
+    let propMatch;
+    while ((propMatch = lineRegex.exec(rawBody)) !== null) {
+      const key = propMatch[1];
+      const val = propMatch[2];
+      attributes[key] = val;
+    }
+  }
+
+  // Set / override ports and root URL for the new duplicate configuration
+  const serverPort = Number(httpPort) + 10;
+  attributes.HttpPortNumber = String(httpPort);
+  attributes.ServerPortNumber = String(serverPort);
+  attributes.ApplicationRootUrl = `'http://localhost:${httpPort}/'`;
+
+  // Build CREATE OR MODIFY CONFIGURATION statement with all copied properties
+  const safeNewCfg = escapeMdlStr(cleanNewName);
+  const attrEntries = Object.entries(attributes);
+  let createStmt = '';
+  if (attrEntries.length > 0) {
+    const formattedProps = attrEntries.map(([k, v]) => `${k} = ${v}`).join(', ');
+    createStmt = `CREATE OR MODIFY CONFIGURATION '${safeNewCfg}' ${formattedProps};`;
+  } else {
+    createStmt = `CREATE OR MODIFY CONFIGURATION '${safeNewCfg}' HttpPortNumber = ${httpPort}, ServerPortNumber = ${serverPort}, ApplicationRootUrl = 'http://localhost:${httpPort}/';`;
+  }
+
+  const mdlLines = [createStmt];
+
+  // Copy any existing constants from source configuration to the duplicate
+  const constRegex = new RegExp(
+    `alter\\s+settings\\s+constant\\s+'([^']+)'\\s+value\\s+'([^']*)'\\s+in\\s+configuration\\s+'${escapeRegex(cleanSourceName)}'`,
+    'gi'
+  );
+  let cMatch;
+  while ((cMatch = constRegex.exec(settingsOutput)) !== null) {
+    const constName = escapeMdlStr(cMatch[1]);
+    const constVal = escapeMdlStr(cMatch[2]);
+    mdlLines.push(`ALTER SETTINGS CONSTANT '${constName}' VALUE '${constVal}' IN CONFIGURATION '${safeNewCfg}';`);
+  }
+
+  const tmpMdl = path.join(os.tmpdir(), `mta-dup-cfg-${Date.now()}.mdl`);
+  try {
+    fs.writeFileSync(tmpMdl, mdlLines.join('\n') + '\n', 'utf8');
+    execSync(`"${mxcliBin}" exec "${tmpMdl}" -p "${mprPath}"`, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30000
+    });
+    return { success: true, duplicatedFrom: cleanSourceName, createdName: cleanNewName };
+  } catch (err) {
+    const rawError = (err.stderr ? err.stderr.toString('utf8') : '') || (err.stdout ? err.stdout.toString('utf8') : '') || err.message || '';
+    return { success: false, error: rawError.trim() || err.message };
+  } finally {
+    try { if (fs.existsSync(tmpMdl)) fs.unlinkSync(tmpMdl); } catch (e) {}
+  }
+}
+
+function tryCreateConfigurationInMpr(mprPath, mxcliBin, configName, sourceConfigNameOrPort = 'Default', httpPort = 8081) {
   if (!mprPath || !fs.existsSync(mprPath) || !mxcliBin || !configName) {
     return { success: false, error: 'Missing parameters' };
   }
+  const sourceName = typeof sourceConfigNameOrPort === 'string' ? sourceConfigNameOrPort : 'Default';
+  const effectivePort = typeof sourceConfigNameOrPort === 'number' ? sourceConfigNameOrPort : httpPort;
+  const dupRes = tryDuplicateConfigurationInMpr(mprPath, mxcliBin, sourceName, configName, effectivePort);
+  if (dupRes.success) return dupRes;
+
   const escapeMdlStr = (val) => String(val ?? '').replace(/'/g, "''");
   const safeCfg = escapeMdlStr(configName.trim());
   const tmpMdl = path.join(os.tmpdir(), `mta-create-cfg-${Date.now()}.mdl`);
   try {
-    fs.writeFileSync(tmpMdl, `CREATE OR MODIFY CONFIGURATION '${safeCfg}' HttpPortNumber = ${httpPort}, ApplicationRootUrl = 'http://localhost:${httpPort}/';\n`, 'utf8');
+    fs.writeFileSync(tmpMdl, `CREATE OR MODIFY CONFIGURATION '${safeCfg}' HttpPortNumber = ${effectivePort}, ApplicationRootUrl = 'http://localhost:${effectivePort}/';\n`, 'utf8');
     execSync(`"${mxcliBin}" exec "${tmpMdl}" -p "${mprPath}"`, {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30000
@@ -648,6 +739,7 @@ module.exports = {
   isVersion1116OrHigher,
   detectMendixModule,
   inspectMendixMtaSettings,
+  tryDuplicateConfigurationInMpr,
   tryCreateConfigurationInMpr,
   configureMtaPluginInMpr,
   removeSourceModuleFromMpr

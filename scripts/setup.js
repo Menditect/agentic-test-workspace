@@ -59,6 +59,7 @@ const {
 } = require('./lib/post-setup');
 
 const {
+  showVibeCodingDisclaimer,
   showDisclaimerAndPreflight,
   createInitialWizardState,
   runWizardLoop
@@ -85,6 +86,11 @@ async function run(options = {}) {
   const skipSkills = options.skipSkills || args.includes('--skip-skills') || args.includes('--no-skills') || args.includes('--skip-skills-sync');
   const forceUi = options.ui || args.includes('--ui') || args.includes('--web');
   const forceCli = options.cli || args.includes('--cli') || args.includes('--terminal');
+  const assumeYes = args.includes('-y') || args.includes('--yes');
+
+  if (process.stdin.isTTY && !assumeYes) {
+    await showVibeCodingDisclaimer();
+  }
 
   if (forceUi) {
     return startVisualSetupServer({ skipSkills });
@@ -93,9 +99,6 @@ async function run(options = {}) {
     return runCliWizard({ skipSkills });
   }
 
-  console.log('======================================================');
-  console.log(` Menditect Agent Workspace Setup${scriptVersion}`);
-  console.log('======================================================\n');
   console.log('Choose how you would like to configure your workspace:\n');
   console.log('  [1] Visual Browser Setup (Recommended — opens graphical form in your browser)');
   console.log('  [2] Command-Line Setup (Interactive terminal wizard)\n');

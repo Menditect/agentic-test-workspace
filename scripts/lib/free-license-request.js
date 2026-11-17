@@ -14,6 +14,8 @@ const HUBSPOT_PORTAL_ID = '6434334';
 const HUBSPOT_FORM_GUID = '94ca5423-e161-4b0e-84b0-a8d1e1724bf9';
 const HUBSPOT_SUBMISSION_ENDPOINT = `https://api.hsforms.com/submissions/v3/integration/submit/${HUBSPOT_PORTAL_ID}/${HUBSPOT_FORM_GUID}`;
 const FREE_EULA_URL = 'https://documentation.menditect.com/legal/eula-free';
+const PRIVACY_POLICY_URL = 'https://documentation.menditect.com/legal/pp';
+const SUCCESS_CONFIRMATION_MESSAGE = 'Thank you for requesting the MTA Exploratory Free Edition. Your license request was received and further instructions will be sent to you by email.';
 
 const MAX_FIRSTNAME_LENGTH = 100;
 const MAX_LASTNAME_LENGTH = 100;
@@ -279,6 +281,13 @@ async function requestFreeLicenseInteractive(ask) {
 
   console.log('\nTerms & Conditions:');
   console.log(` • MTA Exploratory EULA: ${FREE_EULA_URL}`);
+  console.log(' • Privacy Policy: https://documentation.menditect.com/legal/pp');
+  console.log('   Menditect needs the contact information you provide to us to provide this free');
+  console.log('   service and to contact you about our products and services. You may unsubscribe');
+  console.log('   from these communications at anytime. For information on how to unsubscribe, as');
+  console.log('   well as our privacy practices and commitment to protecting your privacy, check out');
+  console.log('   our Privacy Policy: https://documentation.menditect.com/legal/pp');
+  console.log('   Unsubscribing to the MTA exploratory subscription will lead to a revoke of your free MTA exploratory license.\n');
   let eulaAccepted = false;
   while (!eulaAccepted) {
     const ans = await ask('Do you accept the terms of the MTA Exploratory EULA? (y/n)', 'y');
@@ -308,14 +317,11 @@ async function requestFreeLicenseInteractive(ask) {
 
     if (submitRes.success) {
       console.log('\n================================================================================');
-      console.log(`${PASS} FREE EXPLORATORY LICENSE GRANTED & REGISTERED!`);
+      console.log(`${PASS} Request Received`);
       console.log('================================================================================');
-      console.log(` Registered Email:         ${email}`);
-      console.log(` Company:                  ${company} (${country})`);
-      console.log(` ApplicationInstanceToken: ${generatedToken}`);
+      console.log(` ${SUCCESS_CONFIRMATION_MESSAGE}`);
       console.log('--------------------------------------------------------------------------------');
-      console.log(' A confirmation email has been dispatched by Menditect.');
-      console.log(' This token has been automatically saved for your workspace setup.');
+      console.log(` Next step: Check your inbox at ${email} for your Free Exploratory ApplicationInstanceToken, then paste it into your workspace configuration.`);
       console.log('================================================================================\n');
 
       return {
@@ -325,7 +331,8 @@ async function requestFreeLicenseInteractive(ask) {
         company,
         country,
         firstname: firstName,
-        lastname: lastName
+        lastname: lastName,
+        message: SUCCESS_CONFIRMATION_MESSAGE
       };
     } else {
       console.log(`\n${ERROR} License request could not be submitted: ${submitRes.error}`);
