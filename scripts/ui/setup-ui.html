@@ -1381,8 +1381,9 @@
         uiState.gatewayDefaults = data.gatewayDefaults || { idValue: '', keyValue: '' };
         uiState.mxcliAuthed = Boolean(data.mxcliAuthed);
         $('inp_conn_password').value = uiState.gatewayDefaults.keyValue || '';
+        const parentSep = (data.defaultWorkspaceParentDir && data.defaultWorkspaceParentDir.includes('/')) ? '/' : '\\';
         $('inp_workspace_dir').value = data.defaultWorkspaceParentDir
-          ? `${data.defaultWorkspaceParentDir}\\MyApp-test-workspace`
+          ? `${data.defaultWorkspaceParentDir.replace(/[\\/]+$/, '')}${parentSep}MyApp-test-workspace`
           : '';
 
         // Populate countries & free email domain list from server SSOT
@@ -1439,14 +1440,17 @@
     $('exp_opt_prompt').addEventListener('click', () => setExploratoryMode('prompt_approval'));
 
     $('btn_browse_workspace').addEventListener('click', async () => {
-      $('btn_browse_workspace').disabled = true;
+      const btn = $('btn_browse_workspace');
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Opening...';
       try {
         const res = await fetch('/api/pick-folder', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             title: 'Select Project Workspace Folder',
-            initialDir: $('inp_workspace_dir').value.trim()
+            initialDir: $('inp_workspace_dir').value.trim() || $('inp_project_dir').value.trim()
           })
         });
         const data = await res.json();
@@ -1456,12 +1460,17 @@
           updateFooterSummary();
         }
       } finally {
-        $('btn_browse_workspace').disabled = false;
+        btn.textContent = prevText;
+        btn.disabled = false;
       }
     });
 
     $('btn_browse_project').addEventListener('click', async () => {
-      $('btn_browse_project').disabled = true;
+      const btn = $('btn_browse_project');
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Opening...';
+      let pickedFolder = '';
       try {
         const res = await fetch('/api/pick-folder', {
           method: 'POST',
@@ -1473,11 +1482,15 @@
         });
         const data = await res.json();
         if (data.ok && !data.cancelled && data.folderPath) {
-          $('inp_project_dir').value = data.folderPath;
-          await inspectCurrentProjectDir();
+          pickedFolder = data.folderPath;
+          $('inp_project_dir').value = pickedFolder;
         }
       } finally {
-        $('btn_browse_project').disabled = false;
+        btn.textContent = prevText;
+        btn.disabled = false;
+      }
+      if (pickedFolder) {
+        await inspectCurrentProjectDir();
       }
     });
 

@@ -16,6 +16,7 @@ const os = require('os');
 const crypto = require('crypto');
 const https = require('https');
 const zlib = require('zlib');
+const { execFile } = require('child_process');
 const { toolsRootDir, PASS, WARN, NOTICE, INFO, ask, isBack } = require('./cli-prompt');
 const { findMpr, removeSourceModuleFromMpr } = require('./mendix-model');
 const { execMxcliSync } = require('./mxcli-manager');
@@ -58,12 +59,12 @@ const MENDITECT_MARKETPLACE_MODULES = {
     requiredFor: 'paid',
     role: 'MtaCommonsUser'
   },
-  Menditect_AgenticTestSkills: {
+  MenditectMtaAgenticToolsSkills: {
     id: '305457',
-    moduleName: 'Menditect_AgenticTestSkills',
-    displayName: 'Menditect Agentic Test Skills',
-    fileName: 'Menditect_AgenticTestSkills.mxmodule',
-    infoFileName: 'Menditect_AgenticTestSkills_AppStoreInfo.json',
+    moduleName: 'MenditectMtaAgenticToolsSkills',
+    displayName: 'MenditectMtaAgenticToolsSkills',
+    fileName: 'MenditectMtaAgenticToolsSkills.mxmodule',
+    infoFileName: 'MenditectMtaAgenticToolsSkills_AppStoreInfo.json',
     requiredFor: 'mendix_project',
     role: null
   }
@@ -127,8 +128,19 @@ function extractZipEntryFromBuffer(buf, entry) {
   return null;
 }
 
+const mxmoduleVersionCache = new Map();
+
 function extractVersionFromMxModule(mxmodulePath) {
   if (!mxmodulePath || !fs.existsSync(mxmodulePath)) return null;
+  let cacheKey = '';
+  try {
+    const st = fs.statSync(mxmodulePath);
+    cacheKey = `${path.resolve(mxmodulePath)}:${st.mtimeMs}:${st.size}`;
+    if (mxmoduleVersionCache.has(cacheKey)) {
+      return mxmoduleVersionCache.get(cacheKey);
+    }
+  } catch (e) {}
+
   try {
     const buf = fs.readFileSync(mxmodulePath);
     const entries = readZipEntriesFromBuffer(buf);
@@ -139,14 +151,19 @@ function extractVersionFromMxModule(mxmodulePath) {
         try {
           const manifestJson = JSON.parse(manifestBuf.toString('utf8'));
           if (manifestJson && manifestJson.package && manifestJson.package.version) {
-            return String(manifestJson.package.version).trim();
+            const ver = String(manifestJson.package.version).trim();
+            if (cacheKey) mxmoduleVersionCache.set(cacheKey, ver);
+            return ver;
           }
         } catch (e) {}
       }
     }
     for (const [name] of entries.entries()) {
       const m = name.match(/^userlib\/(?:mta-plugin|menditect-[a-z-]+)-([0-9]+\.[0-9]+\.[0-9]+)\.jar$/i);
-      if (m) return m[1];
+      if (m) {
+        if (cacheKey) mxmoduleVersionCache.set(cacheKey, m[1]);
+        return m[1];
+      }
     }
   } catch (e) {}
   return null;
@@ -156,24 +173,32 @@ function syncAndVerifyMaiaSkills(projectDir, mxmodulePath = '', fallbackSkillsDi
   if (!projectDir || !fs.existsSync(projectDir)) {
     return { success: false, error: 'Project directory does not exist' };
   }
-  const targetSkillsDir = path.join(projectDir, 'skillssource', '_modules', 'menditect_agentictestskills');
+  const targetSkillsDir = path.join(projectDir, 'skillssource', '_modules', 'menditectmtaagentictoolsskills');
   if (!fs.existsSync(targetSkillsDir)) {
     fs.mkdirSync(targetSkillsDir, { recursive: true });
   }
+  const legacySkillsDir = path.join(projectDir, 'skillssource', '_modules', 'menditect_agentictestskills');
+  if (fs.existsSync(legacySkillsDir)) {
+    try { fs.rmSync(legacySkillsDir, { recursive: true, force: true }); } catch (e) {}
+  }
 
-  const effectiveMxModule = mxmodulePath || path.join(projectDir, 'modules', 'Menditect_AgenticTestSkills.mxmodule');
+  const effectiveMxModule = mxmodulePath || path.join(projectDir, 'modules', 'MenditectMtaAgenticToolsSkills.mxmodule');
   let extractedCount = 0;
 
   if (fs.existsSync(effectiveMxModule)) {
     try {
       const buf = fs.readFileSync(effectiveMxModule);
       const entries = readZipEntriesFromBuffer(buf);
-      const prefix = 'skillssource/_modules/menditect_agentictestskills/';
+      const prefixes = [
+        'skillssource/_modules/menditectmtaagentictoolsskills/',
+        'skillssource/_modules/menditect_agentictestskills/'
+      ];
       const resolvedBaseDir = path.resolve(targetSkillsDir);
       for (const [entryName, entryMeta] of entries.entries()) {
         const normalized = entryName.replace(/\\/g, '/');
-        if (normalized.startsWith(prefix) && !normalized.endsWith('/')) {
-          const relPath = normalized.slice(prefix.length);
+        const matchedPrefix = prefixes.find(p => normalized.startsWith(p));
+        if (matchedPrefix && !normalized.endsWith('/')) {
+          const relPath = normalized.slice(matchedPrefix.length);
           if (!relPath || relPath.split('/').some(seg => seg === '..' || seg === '.')) continue;
           const destPath = path.resolve(targetSkillsDir, relPath);
           if (!destPath.startsWith(resolvedBaseDir + path.sep)) continue;
@@ -353,16 +378,27 @@ function isMendixVersionCompatible(minSupported, projectMendixVersion) {
   return true;
 }
 
+let mxcliAuthStatusCache = { bin: '', authed: false, timestamp: 0 };
+const marketplaceVersionsCache = new Map();
+
 function checkMxcliAuthStatus(mxcliBin) {
   if (!mxcliBin) return false;
+  if (
+    mxcliAuthStatusCache.bin === mxcliBin &&
+    Date.now() - mxcliAuthStatusCache.timestamp < 60000
+  ) {
+    return mxcliAuthStatusCache.authed;
+  }
   try {
     execMxcliSync(mxcliBin, ['auth', 'status'], {
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 10000,
       env: { ...process.env }
     });
+    mxcliAuthStatusCache = { bin: mxcliBin, authed: true, timestamp: Date.now() };
     return true;
   } catch (e) {
+    mxcliAuthStatusCache = { bin: mxcliBin, authed: false, timestamp: Date.now() };
     return false;
   }
 }
@@ -378,6 +414,7 @@ async function ensureMxcliAuth(mxcliBin, askFn = null) {
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: 15000
       });
+      mxcliAuthStatusCache = { bin: mxcliBin, authed: false, timestamp: 0 };
       if (checkMxcliAuthStatus(mxcliBin)) return true;
     } catch (e) {}
   }
@@ -393,7 +430,7 @@ async function ensureMxcliAuth(mxcliBin, askFn = null) {
   console.log('    Create a token and check scope: mx:marketplace-content:read (Marketplace read access).');
   console.log('  • Why this is needed: Studio Pro uses interactive desktop browser SSO which standalone');
   console.log('    CLI tools cannot access. mxcli uses this PAT to query version compatibility');
-  console.log('    and download required .mxmodule packages (MtaPluginModule, Menditect_AgenticTestSkills,');
+  console.log('    and download required .mxmodule packages (MtaPluginModule, MenditectMtaAgenticToolsSkills,');
   console.log('    Frontend TestKit, and Playwright Connector) directly into your app\'s modules/ folder.');
   console.log('  • 🔒 Where it is saved:');
   console.log('    - Global CLI credential store: ~/.mxcli/auth.json (mode 0600, user-only permissions)');
@@ -414,6 +451,7 @@ async function ensureMxcliAuth(mxcliBin, askFn = null) {
       timeout: 15000
     });
     process.env.MENDIX_PAT = pat.trim();
+    mxcliAuthStatusCache = { bin: mxcliBin, authed: true, timestamp: Date.now() };
     console.log(`${PASS} Authenticated mxcli with Mendix Marketplace (stored in ~/.mxcli/auth.json and .env).`);
     return true;
   } catch (err) {
@@ -422,10 +460,54 @@ async function ensureMxcliAuth(mxcliBin, askFn = null) {
   }
 }
 
+function parseMarketplaceVersionsOutput(out, cleanMxVer) {
+  const major = cleanMxVer.split('.')[0] || '11';
+  const parsed = JSON.parse(out);
+  const list = Array.isArray(parsed) ? parsed : (parsed.versions || parsed.items || parsed.data || []);
+  if (!Array.isArray(list) || list.length === 0) return null;
+
+  const normalized = list.map(item => {
+    const ver = String(item.version || item.Version || item.versionNumber || item.number || '').trim();
+    const minMx = String(item.minSupportedMendixVersion || item.MinSupportedMendixVersion || item.mendixVersion || item.frameworkVersion || '').trim();
+    const releaseNotes = item.releaseNotes || item.ReleaseNotes || item.notes || '';
+    const versionGuid = item.guid || item.Guid || item.versionGuid || item.VersionGuid || item.id || item.uuid || '';
+    const appStoreGuid = item.appStoreGuid || item.AppStoreGuid || item.packageGuid || versionGuid;
+    return {
+      version: ver,
+      minSupportedMendixVersion: minMx,
+      releaseNotes,
+      versionGuid,
+      appStoreGuid,
+      raw: item
+    };
+  }).filter(v => v.version);
+
+  let candidates = normalized.filter(v => {
+    const verMajor = v.version.split('.')[0];
+    if (verMajor !== major) return false;
+    if (v.minSupportedMendixVersion && !isMendixVersionCompatible(v.minSupportedMendixVersion, cleanMxVer)) {
+      return false;
+    }
+    return true;
+  });
+
+  if (candidates.length === 0) {
+    candidates = normalized.filter(v => v.version.split('.')[0] === major);
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => compareSemverDesc(a.version, b.version));
+  return candidates[0];
+}
+
 function resolveCompatibleModuleVersion(packageId, mendixVersion, mxcliBin) {
   if (!mxcliBin || !packageId) return null;
   const cleanMxVer = (mendixVersion || '11.0.0').trim();
-  const major = cleanMxVer.split('.')[0] || '11';
+  const cacheKey = `${packageId}:${cleanMxVer}`;
+  const cached = marketplaceVersionsCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 300000) {
+    return cached.value;
+  }
 
   try {
     const out = execMxcliSync(mxcliBin, ['marketplace', 'versions', String(packageId), '--json'], {
@@ -434,45 +516,52 @@ function resolveCompatibleModuleVersion(packageId, mendixVersion, mxcliBin) {
       timeout: 25000,
       env: { ...process.env }
     });
-    const parsed = JSON.parse(out);
-    const list = Array.isArray(parsed) ? parsed : (parsed.versions || parsed.items || parsed.data || []);
-    if (!Array.isArray(list) || list.length === 0) return null;
-
-    const normalized = list.map(item => {
-      const ver = String(item.version || item.Version || item.versionNumber || item.number || '').trim();
-      const minMx = String(item.minSupportedMendixVersion || item.MinSupportedMendixVersion || item.mendixVersion || item.frameworkVersion || '').trim();
-      const releaseNotes = item.releaseNotes || item.ReleaseNotes || item.notes || '';
-      const versionGuid = item.guid || item.Guid || item.versionGuid || item.VersionGuid || item.id || item.uuid || '';
-      const appStoreGuid = item.appStoreGuid || item.AppStoreGuid || item.packageGuid || versionGuid;
-      return {
-        version: ver,
-        minSupportedMendixVersion: minMx,
-        releaseNotes,
-        versionGuid,
-        appStoreGuid,
-        raw: item
-      };
-    }).filter(v => v.version);
-
-    let candidates = normalized.filter(v => {
-      const verMajor = v.version.split('.')[0];
-      if (verMajor !== major) return false;
-      if (v.minSupportedMendixVersion && !isMendixVersionCompatible(v.minSupportedMendixVersion, cleanMxVer)) {
-        return false;
-      }
-      return true;
-    });
-
-    if (candidates.length === 0) {
-      candidates = normalized.filter(v => v.version.split('.')[0] === major);
+    const best = parseMarketplaceVersionsOutput(out, cleanMxVer);
+    if (best) {
+      marketplaceVersionsCache.set(cacheKey, { value: best, timestamp: Date.now() });
     }
-
-    if (candidates.length === 0) return null;
-    candidates.sort((a, b) => compareSemverDesc(a.version, b.version));
-    return candidates[0];
+    return best;
   } catch (e) {
     return null;
   }
+}
+
+function resolveCompatibleModuleVersionAsync(packageId, mendixVersion, mxcliBin) {
+  if (!mxcliBin || !packageId) return Promise.resolve(null);
+  const cleanMxVer = (mendixVersion || '11.0.0').trim();
+  const cacheKey = `${packageId}:${cleanMxVer}`;
+  const cached = marketplaceVersionsCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 300000) {
+    return Promise.resolve(cached.value);
+  }
+
+  return new Promise(resolve => {
+    execFile(
+      mxcliBin,
+      ['marketplace', 'versions', String(packageId), '--json'],
+      {
+        encoding: 'utf8',
+        timeout: 25000,
+        windowsHide: true,
+        env: { ...process.env }
+      },
+      (err, stdout) => {
+        if (err || !stdout) {
+          resolve(null);
+          return;
+        }
+        try {
+          const best = parseMarketplaceVersionsOutput(stdout, cleanMxVer);
+          if (best) {
+            marketplaceVersionsCache.set(cacheKey, { value: best, timestamp: Date.now() });
+          }
+          resolve(best);
+        } catch (e) {
+          resolve(null);
+        }
+      }
+    );
+  });
 }
 
 function isAllowedDownloadRedirectUrl(urlStr) {
@@ -590,10 +679,17 @@ async function installMxModuleFromMarketplace(modSpec, projectDir, mendixVersion
     fs.mkdirSync(modulesDir, { recursive: true });
   }
 
-  if (modSpec.moduleName === 'Menditect_AgenticTestSkills') {
+  if (modSpec.moduleName === 'MenditectMtaAgenticToolsSkills') {
     const mprPath = options.mprPath || findMpr(projectDir);
     if (mprPath && fs.existsSync(mprPath)) {
       removeSourceModuleFromMpr(mprPath, 'Menditect_AgenticTestSkills', mxcliBin);
+      removeSourceModuleFromMpr(mprPath, 'MenditectMtaAgenticToolsSkills', mxcliBin);
+    }
+    for (const legacyFile of ['Menditect_AgenticTestSkills.mxmodule', 'Menditect_AgenticTestSkills_AppStoreInfo.json', 'Menditect_AgenticTestSkills.mpk']) {
+      const legacyPath = path.join(modulesDir, legacyFile);
+      if (fs.existsSync(legacyPath)) {
+        try { fs.unlinkSync(legacyPath); } catch (e) {}
+      }
     }
   }
 
@@ -683,7 +779,7 @@ async function installMxModuleFromMarketplace(modSpec, projectDir, mendixVersion
 
     console.log(`  ${PASS} Installed ${modSpec.fileName} (v${resolved.version}) in modules/`);
 
-    if (modSpec.moduleName === 'Menditect_AgenticTestSkills') {
+    if (modSpec.moduleName === 'MenditectMtaAgenticToolsSkills') {
       const syncRes = syncAndVerifyMaiaSkills(projectDir, targetMxModulePath, path.join(toolsRootDir, 'skills'));
       if (syncRes.success) {
         console.log(`  ${PASS} Synchronized & verified MAIA skills in ${path.relative(projectDir, syncRes.targetSkillsDir)} (${syncRes.verifiedCount}/${syncRes.expectedCount} skills + AGENTS.md)`);
@@ -813,9 +909,13 @@ async function syncProjectMarketplaceModules(state, askFn, mxcliBin, options = {
 
   console.log(`\nChecking Menditect Marketplace module versions for Mendix ${mxVer}...`);
   let playwrightReleaseNotes = '';
-  for (const spec of modsToCheck) {
+  const resolvedRemoteList = await Promise.all(
+    modsToCheck.map(spec => resolveCompatibleModuleVersionAsync(spec.id, mxVer, mxcliBin))
+  );
+  for (let idx = 0; idx < modsToCheck.length; idx++) {
+    const spec = modsToCheck[idx];
     const locInfo = installedInfo.modules[spec.moduleName] || {};
-    const resolvedRemote = resolveCompatibleModuleVersion(spec.id, mxVer, mxcliBin);
+    const resolvedRemote = resolvedRemoteList[idx] || resolveCompatibleModuleVersion(spec.id, mxVer, mxcliBin);
     if (!resolvedRemote || !resolvedRemote.version) continue;
     if (spec.hasDriverBundle && resolvedRemote.releaseNotes) {
       playwrightReleaseNotes = resolvedRemote.releaseNotes;

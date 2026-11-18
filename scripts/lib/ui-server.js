@@ -13,10 +13,12 @@
 
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { execFileSync, execFile } = require('child_process');
+const { execFileSync, execFile, spawn } = require('child_process');
 const {
+  toolsRootDir,
   PASS,
   INFO,
   WARN,
@@ -34,19 +36,223 @@ const {
 } = require('./setup-core');
 
 /**
+ * Walks up parent directories until an existing directory is found (cross-platform).
+ * Never returns "" — if `initialDir` is empty or does not exist, falls back to a fast,
+ * concrete local folder (`~/Mendix`, `~/Documents/Mendix`, parent of workspace, or `~`)
+ * so Windows `IFileOpenDialog` never opens at the virtual Shell root (which stalls
+ * enumerating Desktop, OneDrive, Quick Access, and network shares).
+ */
+function resolveInitialBrowseDir(initialDir) {
+  if (initialDir && typeof initialDir === 'string' && initialDir.trim()) {
+    let candidate = path.resolve(initialDir.trim().replace(/^["']|["']$/g, ''));
+    for (let depth = 0; depth < 12 && candidate; depth++) {
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+          return candidate;
+        }
+      } catch (e) {}
+      const parent = path.dirname(candidate);
+      if (!parent || parent === candidate) break;
+      candidate = parent;
+    }
+  }
+
+  const home = os.homedir();
+  const fallbacks = [
+    home ? path.join(home, 'Mendix') : '',
+    home ? path.join(home, 'Documents', 'Mendix') : '',
+    toolsRootDir ? path.dirname(toolsRootDir) : '',
+    toolsRootDir || '',
+    home || ''
+  ];
+  for (const fb of fallbacks) {
+    if (!fb) continue;
+    try {
+      if (fs.existsSync(fb) && fs.statSync(fb).isDirectory()) {
+        return fb;
+      }
+    } catch (e) {}
+  }
+  return '';
+}
+
+// Persistent pre-warmed Windows STA Folder Picker worker (cached DLL + pre-warmed ExplorerFrame COM)
+let winFolderPickerWorker = null;
+let winFolderPickerReady = false;
+let winFolderPickerReadyWaiters = [];
+let winFolderPickerPending = null;
+let winFolderPickerStdoutBuf = '';
+
+function notifyWinFolderPickerReady(ready) {
+  const waiters = winFolderPickerReadyWaiters;
+  winFolderPickerReadyWaiters = [];
+  for (const w of waiters) {
+    try {
+      w(ready);
+    } catch (e) {}
+  }
+}
+
+function stopWinFolderPickerWorker() {
+  notifyWinFolderPickerReady(false);
+  if (winFolderPickerPending) {
+    const pending = winFolderPickerPending;
+    winFolderPickerPending = null;
+    pending.resolve(null);
+  }
+  if (winFolderPickerWorker) {
+    try {
+      winFolderPickerWorker.kill();
+    } catch (e) {}
+    winFolderPickerWorker = null;
+  }
+  winFolderPickerReady = false;
+  winFolderPickerStdoutBuf = '';
+}
+
+function ensureWinFolderPickerWorker() {
+  if (process.platform !== 'win32') return null;
+  if (winFolderPickerWorker && !winFolderPickerWorker.killed) {
+    return winFolderPickerWorker;
+  }
+  const psScriptPath = path.join(__dirname, 'modern-folder-picker.ps1');
+  if (!fs.existsSync(psScriptPath)) return null;
+
+  try {
+    winFolderPickerStdoutBuf = '';
+    winFolderPickerReady = false;
+    const child = spawn(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Sta',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        psScriptPath,
+        '-ServerMode'
+      ],
+      {
+        stdio: ['pipe', 'pipe', 'ignore'],
+        windowsHide: true
+      }
+    );
+
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', chunk => {
+      winFolderPickerStdoutBuf += chunk;
+      let nlIndex;
+      while ((nlIndex = winFolderPickerStdoutBuf.indexOf('\n')) !== -1) {
+        const line = winFolderPickerStdoutBuf.slice(0, nlIndex).trim();
+        winFolderPickerStdoutBuf = winFolderPickerStdoutBuf.slice(nlIndex + 1);
+        if (!line) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg && msg.ready) {
+            winFolderPickerReady = true;
+            notifyWinFolderPickerReady(true);
+            continue;
+          }
+          if (winFolderPickerPending) {
+            const pending = winFolderPickerPending;
+            winFolderPickerPending = null;
+            pending.resolve({
+              cancelled: Boolean(msg.cancelled || !msg.folderPath),
+              folderPath: msg.folderPath ? String(msg.folderPath) : ''
+            });
+          }
+        } catch (e) {}
+      }
+    });
+
+    child.on('error', () => {
+      stopWinFolderPickerWorker();
+    });
+    child.on('exit', () => {
+      stopWinFolderPickerWorker();
+    });
+
+    winFolderPickerWorker = child;
+    return child;
+  } catch (e) {
+    return null;
+  }
+}
+
+function waitForWinFolderPickerReady(timeoutMs = 3500) {
+  if (winFolderPickerReady) return Promise.resolve(true);
+  const worker = ensureWinFolderPickerWorker();
+  if (!worker) return Promise.resolve(false);
+  if (winFolderPickerReady) return Promise.resolve(true);
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      const idx = winFolderPickerReadyWaiters.indexOf(onReady);
+      if (idx !== -1) winFolderPickerReadyWaiters.splice(idx, 1);
+      resolve(winFolderPickerReady);
+    }, timeoutMs);
+    function onReady(ready) {
+      clearTimeout(timer);
+      resolve(Boolean(ready));
+    }
+    winFolderPickerReadyWaiters.push(onReady);
+  });
+}
+
+function execFileAsync(cmd, args, options) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, options, (err, stdout) => {
+      if (err) return reject(err);
+      resolve(String(stdout || ''));
+    });
+  });
+}
+
+/**
  * Opens a native OS folder selection dialog and returns the selected directory path.
- * Uses `execFileSync` (`shell: false`) so paths containing spaces, `&`, `$`, or quotes
+ * Uses `spawn` / `execFile` (`shell: false`) so paths containing spaces, `&`, `$`, or quotes
  * are never interpreted by a command shell (SEC-02).
  */
-function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') {
-  const cleanTitle = String(promptTitle || 'Select Folder').replace(/["'`$\r\n]/g, '');
-  const cleanInit = initialDir && fs.existsSync(initialDir) ? path.resolve(initialDir) : '';
+async function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') {
+  const cleanTitle = String(promptTitle || 'Select Folder').replace(/["'`$\r\n\t]/g, '');
+  const cleanInit = resolveInitialBrowseDir(initialDir).replace(/[\r\n\t]/g, '');
 
   if (process.platform === 'win32') {
+    const worker = ensureWinFolderPickerWorker();
+    if (worker && !winFolderPickerReady) {
+      await waitForWinFolderPickerReady(3500);
+    }
+    if (worker && worker.stdin && !worker.stdin.destroyed && !winFolderPickerPending) {
+      const workerResult = await new Promise(resolve => {
+        const timer = setTimeout(() => {
+          if (winFolderPickerPending && winFolderPickerPending.resolve === resolve) {
+            winFolderPickerPending = null;
+          }
+          resolve(null);
+        }, 120000);
+        winFolderPickerPending = {
+          resolve: res => {
+            clearTimeout(timer);
+            resolve(res);
+          }
+        };
+        try {
+          worker.stdin.write(`REQ\t${cleanTitle}\t${cleanInit}\n`);
+        } catch (e) {
+          clearTimeout(timer);
+          winFolderPickerPending = null;
+          resolve(null);
+        }
+      });
+      if (workerResult) {
+        return workerResult;
+      }
+    }
+
     const psScriptPath = path.join(__dirname, 'modern-folder-picker.ps1');
     if (fs.existsSync(psScriptPath)) {
       try {
-        const out = execFileSync(
+        const rawOut = await execFileAsync(
           'powershell.exe',
           [
             '-NoProfile',
@@ -62,11 +268,11 @@ function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') 
           ],
           {
             encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'ignore'],
             timeout: 120000,
             windowsHide: true
           }
-        ).trim();
+        );
+        const out = rawOut.trim();
         if (out) {
           const lines = out.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
           const selected = lines.length ? lines[lines.length - 1] : '';
@@ -96,16 +302,15 @@ function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') 
     ].filter(Boolean).join(' ');
 
     try {
-      const out = execFileSync(
+      const out = (await execFileAsync(
         'powershell.exe',
         ['-NoProfile', '-Sta', '-Command', psScript],
         {
           encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
           timeout: 120000,
           windowsHide: true
         }
-      ).trim();
+      )).trim();
       if (out) {
         return { cancelled: false, folderPath: out };
       }
@@ -117,15 +322,30 @@ function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') 
 
   if (process.platform === 'darwin') {
     try {
-      const out = execFileSync(
-        'osascript',
-        ['-e', `POSIX path of (choose folder with prompt "${cleanTitle}")`],
-        {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-          timeout: 120000
-        }
-      ).trim();
+      const osaArgs = cleanInit
+        ? [
+            '-e',
+            'on run argv',
+            '-e',
+            'POSIX path of (choose folder with prompt (item 1 of argv) default location (POSIX file (item 2 of argv)))',
+            '-e',
+            'end run',
+            cleanTitle,
+            cleanInit
+          ]
+        : [
+            '-e',
+            'on run argv',
+            '-e',
+            'POSIX path of (choose folder with prompt (item 1 of argv))',
+            '-e',
+            'end run',
+            cleanTitle
+          ];
+      const out = (await execFileAsync('osascript', osaArgs, {
+        encoding: 'utf8',
+        timeout: 120000
+      })).trim();
       if (out) {
         return { cancelled: false, folderPath: out };
       }
@@ -136,15 +356,25 @@ function pickFolderNativeDialog(promptTitle = 'Select Folder', initialDir = '') 
   }
 
   try {
-    const out = execFileSync(
-      'zenity',
-      ['--file-selection', '--directory', `--title=${cleanTitle}`],
-      {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 120000
-      }
-    ).trim();
+    const zenityArgs = ['--file-selection', '--directory', `--title=${cleanTitle}`];
+    if (cleanInit) {
+      zenityArgs.push(`--filename=${cleanInit.replace(/\/?$/, '/')}`);
+    }
+    const out = (await execFileAsync('zenity', zenityArgs, {
+      encoding: 'utf8',
+      timeout: 120000
+    })).trim();
+    if (out) {
+      return { cancelled: false, folderPath: out };
+    }
+  } catch (e) {}
+
+  try {
+    const kdialogArgs = ['--getexistingdirectory', cleanInit || process.cwd(), '--title', cleanTitle];
+    const out = (await execFileAsync('kdialog', kdialogArgs, {
+      encoding: 'utf8',
+      timeout: 120000
+    })).trim();
     if (out) {
       return { cancelled: false, folderPath: out };
     }
@@ -297,6 +527,7 @@ function startVisualSetupServer(options = {}) {
         }
 
         if (req.method === 'GET' && pathname === '/api/init') {
+          ensureWinFolderPickerWorker();
           const bootstrap = getInitialUiBootstrapPayload();
           return sendJson(res, 200, { ok: true, ...bootstrap });
         }
@@ -315,7 +546,7 @@ function startVisualSetupServer(options = {}) {
 
         if (req.method === 'POST' && pathname === '/api/pick-folder') {
           const body = await readJsonBody(req);
-          const pickRes = pickFolderNativeDialog(body.title || 'Select Folder', body.initialDir || '');
+          const pickRes = await pickFolderNativeDialog(body.title || 'Select Folder', body.initialDir || '');
           return sendJson(res, 200, { ok: true, ...pickRes });
         }
 
@@ -400,6 +631,7 @@ function startVisualSetupServer(options = {}) {
         if (req.method === 'POST' && pathname === '/api/shutdown') {
           sendJson(res, 200, { ok: true });
           setTimeout(() => {
+            stopWinFolderPickerWorker();
             server.close(() => process.exit(0));
           }, 250);
           return;
@@ -415,6 +647,13 @@ function startVisualSetupServer(options = {}) {
       }
     });
 
+    server.on('close', () => {
+      stopWinFolderPickerWorker();
+    });
+    process.once('exit', () => {
+      stopWinFolderPickerWorker();
+    });
+
     const tryListen = port => {
       server.once('error', err => {
         if (err.code === 'EADDRINUSE' && port < 3490) {
@@ -424,6 +663,7 @@ function startVisualSetupServer(options = {}) {
         }
       });
       server.listen(port, '127.0.0.1', () => {
+        ensureWinFolderPickerWorker();
         const url = `http://127.0.0.1:${port}`;
         console.log('\n======================================================================');
         console.log(` ${PASS} Menditect Visual Workspace Setup is running at:`);

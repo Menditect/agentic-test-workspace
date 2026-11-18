@@ -242,7 +242,7 @@ MTA_APP_INSTANCE_DEFAULT="${state.defaultInstanceName}"
     console.log('\n--- Menditect Agentic Test Skills Synchronization ---');
     try {
       const { syncSkills } = require('../sync-upstream');
-      skillsSyncSuccess = await syncSkills({ config });
+      skillsSyncSuccess = await syncSkills({ config, fastIfCurrent: true });
       if (skillsSyncSuccess) {
         console.log(`${PASS} Upstream skills synchronized successfully into ${skillsDir}.`);
       } else {

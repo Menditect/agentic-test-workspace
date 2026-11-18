@@ -217,8 +217,8 @@ function checkSkillsPresence() {
 
   if (wsType === 'mendix_project') {
     const mendixDir = config.mendix_project_dir || activeWorkspaceDir;
-    const mxmodulePath = path.join(mendixDir, 'modules', 'Menditect_AgenticTestSkills.mxmodule');
-    const moduleSkillsDir = path.join(mendixDir, 'skillssource', '_modules', 'menditect_agentictestskills');
+    const mxmodulePath = path.join(mendixDir, 'modules', 'MenditectMtaAgenticToolsSkills.mxmodule');
+    const moduleSkillsDir = path.join(mendixDir, 'skillssource', '_modules', 'menditectmtaagentictoolsskills');
     const skillsSourceAgents = path.join(mendixDir, 'skillssource', 'AGENTS.md');
     const plansDir = config.execution_plans_dir || path.join(mendixDir, 'menditect-output', 'execution-plans');
 
@@ -228,10 +228,10 @@ function checkSkillsPresence() {
     const hasPlansDir = fs.existsSync(plansDir);
 
     if (hasMxModule) {
-      console.log(`  ${PASS} Menditect_AgenticTestSkills.mxmodule (with mta-linter extension) is installed at ${mxmodulePath}.`);
+      console.log(`  ${PASS} MenditectMtaAgenticToolsSkills.mxmodule (with mta-linter extension) is installed at ${mxmodulePath}.`);
     } else {
-      console.warn(`  ${WARN} Menditect_AgenticTestSkills.mxmodule not found at ${mxmodulePath}.`);
-      console.warn(`         Download component 305457 (Menditect_AgenticTestSkills) from Mendix Marketplace`);
+      console.warn(`  ${WARN} MenditectMtaAgenticToolsSkills.mxmodule not found at ${mxmodulePath}.`);
+      console.warn(`         Download component 305457 (MenditectMtaAgenticToolsSkills) from Mendix Marketplace`);
       console.warn(`         or re-run "npm run setup" to automatically install it.`);
     }
 

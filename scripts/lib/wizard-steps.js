@@ -849,7 +849,7 @@ async function runWizardLoop(state) {
             mcpServerAccessToken
           });
 
-          // Automated Marketplace Modules Sync (MtaPluginModule, Menditect_AgenticTestSkills if Mendix project, Paid add-ons if Paid server)
+          // Automated Marketplace Modules Sync (MtaPluginModule, MenditectMtaAgenticToolsSkills if Mendix project, Paid add-ons if Paid server)
           if (!skipModuleOpsDueToStudioPro && mxcliBin) {
             const syncRes = await syncProjectMarketplaceModules(state, ask, mxcliBin);
             if (syncRes.success && syncRes.updatedCount > 0) {

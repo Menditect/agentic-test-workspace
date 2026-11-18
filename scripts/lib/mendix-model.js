@@ -70,15 +70,13 @@ function prepareMendixGitRepo(projectDir) {
     'javasource/system/*'
   ];
 
-  for (const pat of patternsToUntrack) {
-    try {
-      execFileSync('git', ['rm', '-r', '--cached', '--ignore-unmatch', pat], {
-        cwd: projectDir,
-        stdio: ['ignore', 'ignore', 'ignore'],
-        windowsHide: true
-      });
-    } catch (e) {}
-  }
+  try {
+    execFileSync('git', ['rm', '-r', '--cached', '--ignore-unmatch', '--', ...patternsToUntrack], {
+      cwd: projectDir,
+      stdio: ['ignore', 'ignore', 'ignore'],
+      windowsHide: true
+    });
+  } catch (e) {}
 
   const gitIgnoreEntries = [
     '/modules/javasource/*/actions/*',
@@ -98,6 +96,9 @@ function prepareMendixGitRepo(projectDir) {
   console.log(`  ${PASS} Prepared Git in Mendix project (untracked generated Java actions/proxies and configured .gitignore).`);
   return { isGit: true, success: true };
 }
+
+let studioProProcessCache = { timestamp: 0, processes: [] };
+const STUDIOPRO_PROCESS_CACHE_TTL_MS = 5000;
 
 function isMendixProjectOpenInStudioPro(mprPath, projectDir) {
   if (!mprPath && !projectDir) return { isOpen: false };
@@ -127,32 +128,74 @@ function isMendixProjectOpenInStudioPro(mprPath, projectDir) {
 
   if (process.platform === 'win32') {
     try {
-      const out = execFileSync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          "Get-CimInstance Win32_Process -Filter \"Name like '%studiopro%'\" | Select-Object ProcessId, CommandLine | ConvertTo-Json"
-        ],
-        {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-          timeout: 5000,
-          windowsHide: true
+      const now = Date.now();
+      let procs = studioProProcessCache.processes;
+      if (now - studioProProcessCache.timestamp > STUDIOPRO_PROCESS_CACHE_TTL_MS) {
+        procs = [];
+        // Fast pre-check (~30ms): only invoke PowerShell CIM if studiopro.exe is actually running
+        const tasklistOut = execFileSync(
+          'tasklist.exe',
+          ['/FI', 'IMAGENAME eq studiopro.exe', '/NH'],
+          {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 2000,
+            windowsHide: true
+          }
+        );
+        if (tasklistOut && /studiopro\.exe/i.test(tasklistOut)) {
+          const out = execFileSync(
+            'powershell.exe',
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              "Get-CimInstance Win32_Process -Filter \"Name like '%studiopro%'\" | Select-Object ProcessId, CommandLine | ConvertTo-Json"
+            ],
+            {
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'ignore'],
+              timeout: 5000,
+              windowsHide: true
+            }
+          );
+          if (out && out.trim()) {
+            const parsed = JSON.parse(out.trim());
+            procs = Array.isArray(parsed) ? parsed : [parsed];
+          }
         }
-      );
-      if (out && out.trim()) {
-        const parsed = JSON.parse(out.trim());
-        const procs = Array.isArray(parsed) ? parsed : [parsed];
-        for (const proc of procs) {
-          const cmd = (proc.CommandLine || '').toLowerCase();
-          if ((targetMpr && cmd.includes(targetMpr)) || (targetDir && cmd.includes(targetDir))) {
+        studioProProcessCache = { timestamp: now, processes: procs };
+      }
+
+      for (const proc of procs) {
+        const cmd = (proc.CommandLine || '').toLowerCase();
+        if ((targetMpr && cmd.includes(targetMpr)) || (targetDir && cmd.includes(targetDir))) {
+          return {
+            isOpen: true,
+            pid: proc.ProcessId,
+            source: 'process_cli',
+            commandLine: proc.CommandLine
+          };
+        }
+      }
+    } catch (e) {}
+  } else if (process.platform === 'darwin') {
+    try {
+      const pgrepOut = execFileSync('pgrep', ['-fl', 'StudioPro'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 2000
+      });
+      if (pgrepOut && pgrepOut.trim()) {
+        for (const line of pgrepOut.split(/\r?\n/)) {
+          const lower = line.toLowerCase();
+          if ((targetMpr && lower.includes(targetMpr)) || (targetDir && lower.includes(targetDir))) {
+            const pidMatch = line.trim().match(/^(\d+)/);
             return {
               isOpen: true,
-              pid: proc.ProcessId,
+              pid: pidMatch ? Number(pidMatch[1]) : undefined,
               source: 'process_cli',
-              commandLine: proc.CommandLine
+              commandLine: line.trim()
             };
           }
         }
@@ -188,14 +231,53 @@ function findMpr(dir) {
   return null;
 }
 
+const mprVersionCache = new Map();
+const mprSettingsCache = new Map();
+
+function getMprStatSignature(mprPath) {
+  try {
+    const st = fs.statSync(mprPath);
+    return `${path.resolve(mprPath)}:${st.mtimeMs}:${st.size}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+function invalidateMprCache(mprPath) {
+  if (!mprPath) {
+    mprSettingsCache.clear();
+    return;
+  }
+  const abs = path.resolve(mprPath);
+  mprSettingsCache.delete(abs);
+}
+
 function detectMendixVersion(mprPath) {
   if (!mprPath || !fs.existsSync(mprPath)) return null;
+  const sig = getMprStatSignature(mprPath);
+  if (sig && mprVersionCache.has(sig)) {
+    return mprVersionCache.get(sig);
+  }
+  let fd = null;
   try {
-    const buf = fs.readFileSync(mprPath);
-    const str = buf.toString('latin1', 0, Math.min(buf.length, 1024 * 512));
+    const st = fs.statSync(mprPath);
+    const readLen = Math.min(st.size, 1024 * 512);
+    if (readLen <= 0) return null;
+    const buf = Buffer.allocUnsafe(readLen);
+    fd = fs.openSync(mprPath, 'r');
+    const bytesRead = fs.readSync(fd, buf, 0, readLen, 0);
+    const str = buf.toString('latin1', 0, bytesRead);
     const match = str.match(/\b(1[0-2]\.\d+(?:\.\d+)?)\b/);
-    if (match) return match[1];
-  } catch (e) {}
+    if (match) {
+      if (sig) mprVersionCache.set(sig, match[1]);
+      return match[1];
+    }
+  } catch (e) {
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch (e) {}
+    }
+  }
   return null;
 }
 
@@ -220,15 +302,26 @@ function isVersion1116OrHigher(versionStr) {
 }
 
 function detectMendixModule(mendixDir) {
-  const candidate = path.join(mendixDir, 'skillssource', '_modules', 'menditect_agentictestskills');
-  if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
-    return candidate;
+  for (const modFolder of ['menditectmtaagentictoolsskills', 'menditect_agentictestskills']) {
+    const candidate = path.join(mendixDir, 'skillssource', '_modules', modFolder);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
   }
   return null;
 }
 
 function inspectMendixMtaSettings(mprPath, optionalBin) {
   if (!mprPath || !fs.existsSync(mprPath)) return null;
+
+  const absMpr = path.resolve(mprPath);
+  const sig = getMprStatSignature(absMpr);
+  if (sig && mprSettingsCache.has(absMpr)) {
+    const cached = mprSettingsCache.get(absMpr);
+    if (cached && cached.sig === sig && cached.result) {
+      return cached.result;
+    }
+  }
 
   const mxcliBin = optionalBin || findMxcliBinary(mprPath);
   if (!mxcliBin) return null;
@@ -412,7 +505,7 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
       }
     }
 
-    return {
+    const result = {
       instances,
       configurationNames,
       afterStartupMicroflow,
@@ -429,6 +522,10 @@ function inspectMendixMtaSettings(mprPath, optionalBin) {
       globalPluginUrl,
       globalPluginPort: globalPort
     };
+    if (sig) {
+      mprSettingsCache.set(absMpr, { sig, result, rawDescribeOutput: output });
+    }
+    return result;
   } catch (err) {
     return null;
   }
@@ -444,14 +541,21 @@ function tryDuplicateConfigurationInMpr(mprPath, mxcliBin, sourceConfigName, new
   const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   let settingsOutput = '';
-  try {
-    settingsOutput = execMxcliSync(mxcliBin, ['-c', 'describe settings;', '-p', mprPath], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 30000
-    });
-  } catch (err) {
-    settingsOutput = '';
+  const absMpr = path.resolve(mprPath);
+  const sig = getMprStatSignature(absMpr);
+  const cached = sig ? mprSettingsCache.get(absMpr) : null;
+  if (cached && cached.sig === sig && cached.rawDescribeOutput) {
+    settingsOutput = cached.rawDescribeOutput;
+  } else {
+    try {
+      settingsOutput = execMxcliSync(mxcliBin, ['-c', 'describe settings;', '-p', mprPath], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 30000
+      });
+    } catch (err) {
+      settingsOutput = '';
+    }
   }
 
   // Parse source configuration block: alter settings configuration '<source>' ... ;
@@ -511,6 +615,7 @@ function tryDuplicateConfigurationInMpr(mprPath, mxcliBin, sourceConfigName, new
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30000
     });
+    invalidateMprCache(mprPath);
     return { success: true, duplicatedFrom: cleanSourceName, createdName: cleanNewName };
   } catch (err) {
     const rawError = (err.stderr ? err.stderr.toString('utf8') : '') || (err.stdout ? err.stdout.toString('utf8') : '') || err.message || '';
@@ -538,6 +643,7 @@ function tryCreateConfigurationInMpr(mprPath, mxcliBin, configName, sourceConfig
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30000
     });
+    invalidateMprCache(mprPath);
     return { success: true };
   } catch (err) {
     const rawError = (err.stderr ? err.stderr.toString('utf8') : '') || (err.stdout ? err.stdout.toString('utf8') : '') || err.message || '';
@@ -601,14 +707,16 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
   const isAddonModule = fs.existsSync(addonMxmodulePath);
 
   let existingInternalModule = false;
-  try {
-    const modulesOutput = execMxcliSync(mxcliBin, ['-c', 'SHOW MODULES;', '-p', mprPath], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 25000
-    });
-    existingInternalModule = /\|\s*MtaPluginModule\s*\|/i.test(modulesOutput);
-  } catch (e) {}
+  if (!isAddonModule) {
+    try {
+      const modulesOutput = execMxcliSync(mxcliBin, ['-c', 'SHOW MODULES;', '-p', mprPath], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 25000
+      });
+      existingInternalModule = /\|\s*MtaPluginModule\s*\|/i.test(modulesOutput);
+    } catch (e) {}
+  }
 
   const mdlLines = [
     'CREATE OR REPLACE MODULE MtaPluginModule;',
@@ -683,6 +791,51 @@ function configureMtaPluginInMpr(mprPath, mxcliBin, pluginConfig) {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30000
     });
+    invalidateMprCache(mprPath);
+    if (currentSettings) {
+      const updatedNames = Array.from(new Set([...(currentSettings.configurationNames || []), ...effectiveConfigs]));
+      const httpMta = String(pluginConfig.mtaConnectionUrl || 'wss://services.menditect.com')
+        .replace(/^wss:\/\//i, 'https://')
+        .replace(/^ws:\/\//i, 'http://');
+      const existingInstances = Array.isArray(currentSettings.instances) ? [...currentSettings.instances] : [];
+      for (const cfgName of effectiveConfigs) {
+        let inst = existingInstances.find(i => i.name.toLowerCase() === cfgName.toLowerCase());
+        if (!inst) {
+          const port = currentSettings.globalPluginPort || '8081';
+          inst = {
+            name: cfgName,
+            runtimeUrl: `http://localhost:${port}/`,
+            pluginUrl: `http://localhost:${port}/plugin/mcp`,
+            pluginPort: port
+          };
+          existingInstances.push(inst);
+        }
+        inst.token = pluginConfig.applicationInstanceToken || '';
+        inst.rawMtaConnectionUrl = pluginConfig.mtaConnectionUrl || 'wss://services.menditect.com';
+        inst.mtaUrl = httpMta;
+        inst.connectionMethod = pluginConfig.connectionMethod || 'AfterStartup';
+        inst.connectionUsername = pluginConfig.connectionUsername || '';
+        inst.connectionPassword = pluginConfig.connectionPassword || '';
+        inst.enableMcpServer = pluginConfig.enableMcpServer || 'True';
+        inst.rawMcpServerAccessToken = pluginConfig.mcpServerAccessToken || '';
+        inst.pluginToken = formatBearerToken(pluginConfig.mcpServerAccessToken || '');
+      }
+      const updatedResult = {
+        ...currentSettings,
+        instances: existingInstances,
+        configurationNames: updatedNames,
+        afterStartupMicroflow: targetAfterStartupMicroflow,
+        isPluginConfigured: true
+      };
+      const newSig = getMprStatSignature(mprPath);
+      if (newSig) {
+        mprSettingsCache.set(path.resolve(mprPath), {
+          sig: newSig,
+          result: updatedResult,
+          rawDescribeOutput: ''
+        });
+      }
+    }
     return {
       success: true,
       configuredConfigurations: effectiveConfigs,

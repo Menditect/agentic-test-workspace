@@ -19,21 +19,33 @@ function execMxcliSync(mxcliBin, args = [], options = {}) {
   });
 }
 
+let cachedToolsMxcliBin = undefined;
+let cachedFallbackMxcliBin = undefined;
+
 function findMxcliBinary(mprPath) {
-  const candidates = [
-    path.join(toolsRootDir, 'bin', process.platform === 'win32' ? 'mxcli.exe' : 'mxcli'),
-    ...(mprPath ? [path.join(path.dirname(mprPath), 'bin', process.platform === 'win32' ? 'mxcli.exe' : 'mxcli')] : [])
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) {
-      return c;
+  if (cachedToolsMxcliBin === undefined) {
+    const defaultCand = path.join(toolsRootDir, 'bin', process.platform === 'win32' ? 'mxcli.exe' : 'mxcli');
+    cachedToolsMxcliBin = fs.existsSync(defaultCand) ? defaultCand : null;
+  }
+  if (cachedToolsMxcliBin) {
+    return cachedToolsMxcliBin;
+  }
+  if (mprPath) {
+    const mprCand = path.join(path.dirname(mprPath), 'bin', process.platform === 'win32' ? 'mxcli.exe' : 'mxcli');
+    if (fs.existsSync(mprCand)) {
+      return mprCand;
     }
+  }
+  if (cachedFallbackMxcliBin !== undefined) {
+    return cachedFallbackMxcliBin;
   }
   const fallbackBin = process.platform === 'win32' ? 'mxcli.exe' : 'mxcli';
   try {
     execFileSync(fallbackBin, ['--version'], { stdio: 'ignore', windowsHide: true });
+    cachedFallbackMxcliBin = fallbackBin;
     return fallbackBin;
   } catch (e) {
+    cachedFallbackMxcliBin = null;
     return null;
   }
 }

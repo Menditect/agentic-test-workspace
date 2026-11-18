@@ -646,8 +646,8 @@ async function checkVersions(options = {}) {
       let modulesUpdateAvailable = false;
 
       const modsToCheck = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
-      if (projConfig.workspace_type === 'mendix_project' && MENDITECT_MARKETPLACE_MODULES.Menditect_AgenticTestSkills) {
-        modsToCheck.push(MENDITECT_MARKETPLACE_MODULES.Menditect_AgenticTestSkills);
+      if (projConfig.workspace_type === 'mendix_project' && MENDITECT_MARKETPLACE_MODULES.MenditectMtaAgenticToolsSkills) {
+        modsToCheck.push(MENDITECT_MARKETPLACE_MODULES.MenditectMtaAgenticToolsSkills);
       }
       if (isPaid || installed.modules.MenditectMxFrontendTestKit?.installed || installed.modules.MenditectPlaywrightConnector?.installed || installed.modules.MenditectMtaCommons?.installed) {
         modsToCheck.push(
@@ -962,7 +962,10 @@ async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir, config: cfg
   if (!fs.existsSync(rootFixturesDir)) fs.mkdirSync(rootFixturesDir, { recursive: true });
 
   try {
-    const linterCode = await fetchRawText('https://raw.githubusercontent.com/Menditect/agentic-test-workspace/main/tools/mta-lint.mjs');
+    const [linterCode, runnerCode] = await Promise.all([
+      fetchRawText('https://raw.githubusercontent.com/Menditect/agentic-test-workspace/main/tools/mta-lint.mjs').catch(() => ''),
+      fetchRawText('https://raw.githubusercontent.com/Menditect/agentic-test-workspace/main/tools/run-linter.mjs').catch(() => '')
+    ]);
     if (linterCode && linterCode.includes('LINTER_VERSION')) {
       fs.writeFileSync(path.join(rootToolsDir, 'mta-lint.mjs'), linterCode, 'utf8');
 
@@ -973,14 +976,6 @@ async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir, config: cfg
       }
       console.log('[PASS] Synchronized tools/mta-lint.mjs from upstream workspace repository.');
     }
-  } catch (err) {
-    console.warn(`[WARN] Could not download latest mta-lint.mjs from upstream: ${err.message}`);
-  }
-
-  // Also sync run-linter.mjs dispatcher
-  try {
-    const runnerUrl = 'https://raw.githubusercontent.com/Menditect/agentic-test-workspace/main/tools/run-linter.mjs';
-    const runnerCode = await fetchRawText(runnerUrl);
     if (runnerCode && runnerCode.includes('spawnSync')) {
       fs.writeFileSync(path.join(rootToolsDir, 'run-linter.mjs'), runnerCode, 'utf8');
       if (shouldCopyToolsToWorkspace) {
@@ -991,7 +986,7 @@ async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir, config: cfg
       console.log('[PASS] Synchronized tools/run-linter.mjs dispatcher.');
     }
   } catch (err) {
-    // Non-fatal if offline or not yet merged on upstream main
+    console.warn(`[WARN] Could not download latest linter tools from upstream: ${err.message}`);
   }
 
   // Check and preserve custom linter override if present
@@ -1000,7 +995,7 @@ async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir, config: cfg
     console.log('[NOTICE] Preserving local custom linter override: tools/mta-lint.custom.mjs');
   }
 
-  // Sync test fixtures if available
+  // Sync test fixtures concurrently in batches of 8
   const fixtureFiles = [
     'valid_plan.md',
     'invalid_matrix_assoc.md',
@@ -1025,30 +1020,35 @@ async function syncLinterTools({ rootDir: rDir, workspaceDir: wsDir, config: cfg
     'server_response_doc_mismatch.json'
   ];
 
-  for (const f of fixtureFiles) {
-    try {
-      const fixUrl = `https://raw.githubusercontent.com/Menditect/agentic-test-workspace/main/tools/fixtures/${f}`;
-      const content = await fetchRawText(fixUrl);
-      if (content && content.length > 0) {
-        fs.writeFileSync(path.join(rootFixturesDir, f), content, 'utf8');
-        if (shouldCopyToolsToWorkspace) {
-          const wsFixDir = path.join(targetWsDir, 'tools', 'fixtures');
-          if (!fs.existsSync(wsFixDir)) fs.mkdirSync(wsFixDir, { recursive: true });
-          fs.writeFileSync(path.join(wsFixDir, f), content, 'utf8');
+  for (let i = 0; i < fixtureFiles.length; i += 8) {
+    const batch = fixtureFiles.slice(i, i + 8);
+    await Promise.all(batch.map(async (f) => {
+      try {
+        const fixUrl = `https://raw.githubusercontent.com/Menditect/agentic-test-workspace/main/tools/fixtures/${f}`;
+        const content = await fetchRawText(fixUrl);
+        if (content && content.length > 0) {
+          fs.writeFileSync(path.join(rootFixturesDir, f), content, 'utf8');
+          if (shouldCopyToolsToWorkspace) {
+            const wsFixDir = path.join(targetWsDir, 'tools', 'fixtures');
+            if (!fs.existsSync(wsFixDir)) fs.mkdirSync(wsFixDir, { recursive: true });
+            fs.writeFileSync(path.join(wsFixDir, f), content, 'utf8');
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }));
   }
 
-  // Always run self-test verification
-  try {
-    const linterPath = path.join(targetRootDir, 'tools', 'mta-lint.mjs');
-    if (fs.existsSync(linterPath)) {
-      console.log('Running linter health self-test...');
-      execSync(`node "${linterPath}" self-test`, { stdio: 'inherit' });
+  // Run self-test verification unless skipSelfTest is requested
+  if (!cfg || !cfg._skipSelfTest) {
+    try {
+      const linterPath = path.join(targetRootDir, 'tools', 'mta-lint.mjs');
+      if (fs.existsSync(linterPath)) {
+        console.log('Running linter health self-test...');
+        execSync(`node "${linterPath}" self-test`, { stdio: 'inherit' });
+      }
+    } catch (testErr) {
+      console.warn(`[WARN] Linter self-test verification reported errors: ${testErr.message}`);
     }
-  } catch (testErr) {
-    console.warn(`[WARN] Linter self-test verification reported errors: ${testErr.message}`);
   }
   return true;
 }
@@ -1066,6 +1066,29 @@ async function syncSkills(options = {}) {
     if (!fs.existsSync(plansDir)) fs.mkdirSync(plansDir, { recursive: true });
   }
 
+  // Fast-path check when invoked during Save Configuration (fastIfCurrent: true):
+  // If local skills/AGENTS.md and tools/mta-lint.mjs already match upstream versions, skip full git clone & 23-file download.
+  if (options.fastIfCurrent) {
+    const localAgentsPath = path.join(targetSkillsDir, 'AGENTS.md');
+    const localLinterInfo = getLocalLinterVersion(rootDir);
+    if (fs.existsSync(localAgentsPath) && localLinterInfo.installed && localLinterInfo.version) {
+      try {
+        const localAgentsVer = extractFrontmatterVersion(fs.readFileSync(localAgentsPath, 'utf8'));
+        if (localAgentsVer) {
+          const [remoteAgentsRaw, remoteLinterInfo] = await Promise.all([
+            fetchRawText('https://raw.githubusercontent.com/Menditect/agentic-test-skills/main/AgenticTestSkills/AGENTS.md').catch(() => ''),
+            getRemoteLinterVersion()
+          ]);
+          const remoteAgentsVer = extractFrontmatterVersion(remoteAgentsRaw);
+          if (remoteAgentsVer && remoteAgentsVer === localAgentsVer && remoteLinterInfo.available && remoteLinterInfo.version === localLinterInfo.version) {
+            console.log(`[PASS] Central skills (v${localAgentsVer}) and MTA linter (v${localLinterInfo.version}) are already up to date with upstream.`);
+            return true;
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
   // Check if Marketplace module was recently added and offer/perform automatic migration (requires Mendix 11.12+)
   if (config.workspace_type === 'mendix_project' && config.skills_style === 'standard') {
     const is1112Plus = !config.mendix_version || (() => {
@@ -1074,9 +1097,9 @@ async function syncSkills(options = {}) {
     })();
 
     if (is1112Plus) {
-      const candidateModule = path.join(workspaceDir, 'skillssource', '_modules', 'menditect_agentictestskills');
+      const candidateModule = path.join(workspaceDir, 'skillssource', '_modules', 'menditectmtaagentictoolsskills');
       if (fs.existsSync(candidateModule) && fs.statSync(candidateModule).isDirectory()) {
-        console.log(`\n[MIGRATION] Detected Menditect_AgenticTestSkills module at:`);
+        console.log(`\n[MIGRATION] Detected MenditectMtaAgenticToolsSkills module at:`);
         console.log(`            ${path.relative(workspaceDir, candidateModule)}`);
         console.log('Migrating skills from project-level ./skills/ into module...');
 
@@ -1093,7 +1116,7 @@ async function syncSkills(options = {}) {
 
         // Update project directives to explore the module
         updateDirectives(workspaceDir, config.application_name || 'MyApp', config.mta_base_url || 'https://mta-trial.mendixcloud.com', 'mendix_module');
-        console.log('Updated project AGENTS.md to explore [Menditect_AgenticTestSkills].');
+        console.log('Updated project AGENTS.md to explore [MenditectMtaAgenticToolsSkills].');
       }
     }
   }
@@ -1297,8 +1320,8 @@ async function syncSingleMarketplaceModuleProject(projectConfig, options = {}) {
   const isPaid = projectConfig.mta_license_tier === 'paid_enterprise' || projectConfig.mta_license_tier === 'paid' || isPaidMtaServerUrl(projectConfig.mta_base_url);
 
   const modsToSync = [MENDITECT_MARKETPLACE_MODULES.MtaPluginModule];
-  if (projectConfig.workspace_type === 'mendix_project' && MENDITECT_MARKETPLACE_MODULES.Menditect_AgenticTestSkills) {
-    modsToSync.push(MENDITECT_MARKETPLACE_MODULES.Menditect_AgenticTestSkills);
+  if (projectConfig.workspace_type === 'mendix_project' && MENDITECT_MARKETPLACE_MODULES.MenditectMtaAgenticToolsSkills) {
+    modsToSync.push(MENDITECT_MARKETPLACE_MODULES.MenditectMtaAgenticToolsSkills);
   }
   if (isPaid || installed.modules.MenditectMxFrontendTestKit?.installed || installed.modules.MenditectPlaywrightConnector?.installed || installed.modules.MenditectMtaCommons?.installed) {
     modsToSync.push(
