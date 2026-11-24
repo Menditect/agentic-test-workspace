@@ -332,6 +332,23 @@
     .sp-btn-secondary:hover:not(:disabled) {
       background: var(--sp-btn-secondary-hover);
     }
+    .sp-btn-green {
+      background: #16a34a;
+      color: #ffffff;
+      border: 1px solid #15803d;
+      padding: 6px 13px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: none;
+    }
+    .sp-btn-green:hover:not(:disabled) {
+      background: #15803d;
+    }
 
     .sp-banner {
       padding: 9px 12px;
@@ -664,10 +681,10 @@
         <div>
           <strong>I want to request a token for exploratory testing:</strong> Enter your information to receive your free <code>ApplicationInstanceToken</code> by email.
         </div>
-        <button type="button" id="btn_open_free_license_modal" class="sp-btn sp-btn-primary">Request Free License Key...</button>
+        <button type="button" id="btn_open_free_license_modal" class="sp-btn-green">Request Free License</button>
       </div>
       <div style="font-size: 12px; color: var(--sp-text-muted); margin-top: 8px;">
-        <a href="https://menditect.com/contact/" target="_blank" rel="noopener noreferrer" style="color: var(--sp-input-focus); text-decoration: underline;">Contact Menditect Sales</a> for an MTA license.
+        <a href="mailto:sales@menditect.com" style="color: var(--sp-input-focus); text-decoration: underline;">Contact Menditect Sales (sales@menditect.com)</a> for a paid MTA license.
       </div>
       <div id="free_license_success_banner" class="sp-banner sp-banner-success" style="display: none;"></div>
     </div>
@@ -757,17 +774,17 @@
 
         <div id="target_config_wrap" class="sp-field" style="margin-bottom: 0; display: none;">
           <div class="sp-label-row">
-            <label class="sp-label" for="sel_mendix_config">Target Mendix Configuration</label>
+            <label class="sp-label" for="sel_mendix_config">StudioPro Configuration</label>
             <span class="sp-tooltip-wrap" tabindex="0">
               <span class="sp-tooltip-icon">?</span>
-              <span class="sp-tooltip-popup">Selects which Mendix Runtime Configuration under <strong>App &gt; Settings &gt; Configurations</strong> receives the <code>MtaPluginModule</code> constants.</span>
+              <span class="sp-tooltip-popup">Selects which StudioPro Configuration under <strong>App &gt; Settings &gt; Configurations</strong> receives the <code>MtaPluginModule</code> constants.</span>
             </span>
           </div>
           <div style="display: flex; gap: 6px;">
             <select id="sel_mendix_config" class="sp-select">
               <option value="Default">Default</option>
             </select>
-            <button type="button" id="btn_toggle_new_cfg" class="sp-btn sp-btn-secondary" title="Duplicate selected configuration with all database and server settings">Duplicate...</button>
+            <button type="button" id="btn_toggle_new_cfg" class="sp-btn sp-btn-secondary" title="Duplicate selected StudioPro Configuration with all database and server settings">Duplicate StudioPro Configuration...</button>
           </div>
         </div>
       </div>
@@ -775,9 +792,9 @@
       <!-- Inline Duplicate Configuration Box -->
       <div id="new_cfg_inline_box" style="display: none; background: var(--sp-surface-alt); border: 1px solid var(--sp-border); border-radius: 5px; padding: 10px 12px; margin-bottom: 12px;">
         <div class="sp-label-row">
-          <label class="sp-label" for="inp_new_cfg_name" id="lbl_new_cfg_name">Duplicate Configuration</label>
+          <label class="sp-label" for="inp_new_cfg_name" id="lbl_new_cfg_name">Duplicate StudioPro Configuration</label>
         </div>
-        <p style="font-size: 11.5px; color: var(--sp-text-muted); margin: 0 0 8px 0;">Clones all database, server, and constant settings from the selected configuration.</p>
+        <p style="font-size: 11.5px; color: var(--sp-text-muted); margin: 0 0 8px 0;">Clones all database, server, and constant settings from the selected StudioPro Configuration.</p>
         <div style="display: flex; gap: 8px;">
           <input id="inp_new_cfg_name" type="text" class="sp-input" placeholder="e.g. Default_MTA" />
           <button type="button" id="btn_confirm_new_cfg" class="sp-btn sp-btn-primary">Duplicate</button>
@@ -794,7 +811,11 @@
             <span class="sp-tooltip-popup">For Free Exploratory: your personal license key (e.g. <code>mta_exploratory_free_...</code>). For Paid MTA: generated in MTA under <strong>Applications &gt; App Instances</strong>.</span>
           </span>
         </div>
-        <input id="inp_app_token" type="text" class="sp-input" placeholder="e.g. mta_exploratory_free_550e8400-e29b-41d4-a716-446655440000" />
+        <input id="inp_app_token" type="password" class="sp-input" placeholder="e.g. mta_exploratory_free_550e8400-e29b-41d4-a716-446655440000" />
+        <div id="copy_app_token_from_sp_cfg_box" style="display: none; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 6px; padding: 6px 9px; background: var(--sp-surface-alt); border: 1px solid var(--sp-border); border-radius: 5px; font-size: 11.5px; color: var(--sp-text-muted);">
+          <span id="copy_app_token_from_sp_cfg_msg">Selected StudioPro Configuration already has an Application Instance Token (may belong to a colleague).</span>
+          <button type="button" id="btn_copy_app_token_from_sp_cfg" class="sp-btn sp-btn-secondary" style="font-size: 11px; padding: 3px 9px; white-space: nowrap;">Copy from selected StudioPro Configuration</button>
+        </div>
         <div id="err_app_token" class="sp-field-error" style="display: none;"></div>
       </div>
 
@@ -804,11 +825,11 @@
             <label class="sp-label" for="inp_mcp_token">Plugin MCP Access Token (<code>McpServerAccessToken</code>)</label>
             <span class="sp-tooltip-wrap" tabindex="0">
               <span class="sp-tooltip-icon">?</span>
-              <span class="sp-tooltip-popup">A secret value that you choose/invent yourself (this does <strong>not</strong> come from Menditect) protecting <code>/plugin/mcp</code> in your running Mendix app. Configures both the Mendix constant (<code>MtaPluginModule.McpServerAccessToken</code>) and <code>PLUGIN_MCP_TOKEN</code> in <code>.env</code>. A simple value (such as <code>1</code> or <code>local-dev</code>) is recommended for local use, and a more complex secret (e.g. a UUID or SHA256 token) for use in a cloud or shared runtime.</span>
+              <span class="sp-tooltip-popup">A random per-project secret generated automatically for you (does <strong>not</strong> come from Menditect) protecting <code>/plugin/mcp</code> in your running Mendix app. Configures both the Mendix constant (<code>MtaPluginModule.McpServerAccessToken</code>) and <code>PLUGIN_MCP_TOKEN</code> in <code>.env</code>.</span>
             </span>
           </div>
-          <input id="inp_mcp_token" type="text" class="sp-input" placeholder="Choose your own value (e.g. 1 or local-dev) — not from Menditect" />
-          <div class="sp-field-hint">Choose any secret value yourself (e.g. <code>1</code> for local testing) — this token does <strong>not</strong> come from Menditect.</div>
+          <input id="inp_mcp_token" type="password" class="sp-input" placeholder="Auto-generated random secret (or enter your own)" />
+          <div class="sp-field-hint">Auto-generated per-project secret — this token does <strong>not</strong> come from Menditect.</div>
           <div id="err_mcp_token" class="sp-field-error" style="display: none; margin-top: 4px;"></div>
         </div>
 
@@ -839,7 +860,7 @@
             <div class="sp-label-row">
               <label class="sp-label" for="inp_conn_password">MTA Connection Password (<code>MTAConnectionPassword</code>)</label>
             </div>
-            <input id="inp_conn_password" type="text" class="sp-input" />
+            <input id="inp_conn_password" type="password" class="sp-input" />
           </div>
         </div>
 
@@ -1122,13 +1143,49 @@
       }
     }
 
+    function getSelectedConfigDiscoveredToken() {
+      const insp = uiState.lastInspection;
+      const selCfg = $('sel_mendix_config');
+      if (!insp || !insp.discoveredMta || !selCfg) return '';
+      const cfgName = String(selCfg.value || '').trim().toLowerCase();
+      const instances = insp.discoveredMta.instances || [];
+      const match = instances.find(i => String(i.name || '').trim().toLowerCase() === cfgName);
+      return String(match?.token || '').trim();
+    }
+
+    function refreshCopyAppTokenFromConfigPrompt() {
+      const box = $('copy_app_token_from_sp_cfg_box');
+      const msg = $('copy_app_token_from_sp_cfg_msg');
+      const selCfg = $('sel_mendix_config');
+      if (!box || !selCfg) return;
+      const cfgTok = getSelectedConfigDiscoveredToken();
+      const curTok = $('inp_app_token').value.trim();
+      if (cfgTok && cfgTok !== curTok) {
+        if (msg) {
+          msg.innerHTML = `StudioPro Configuration <strong>${escapeHtml(selCfg.value || 'Default')}</strong> already has an Application Instance Token (may belong to a colleague).`;
+        }
+        box.style.display = 'flex';
+      } else {
+        box.style.display = 'none';
+      }
+    }
+
     function setLicenseTier(tier, options = {}) {
       const tierChanged = uiState.licenseTier !== tier;
+      if (tierChanged && !options.preserveInputs && uiState.setupMode === 'existing') {
+        const fromLbl = uiState.licenseTier === 'paid_enterprise' ? 'Paid MTA License' : 'Free Exploratory License';
+        const toLbl = tier === 'paid_enterprise' ? 'Paid MTA License' : 'Free Exploratory License';
+        const ok = window.confirm(
+          `Switching from ${fromLbl} to ${toLbl} will clear your current Application Instance Token, MTA URL, and stored MTA Service Account token. Do you want to continue?`
+        );
+        if (!ok) return;
+      }
       uiState.licenseTier = tier;
       const isPaid = tier === 'paid_enterprise';
       if (tierChanged && !options.preserveInputs) {
         $('inp_app_token').value = '';
         $('inp_mta_url').value = '';
+        if ($('inp_mta_bearer')) $('inp_mta_bearer').value = '';
         $('err_app_token').style.display = 'none';
         $('inp_app_token').classList.remove('sp-input-error');
         if ($('err_mta_url')) $('err_mta_url').style.display = 'none';
@@ -1140,6 +1197,7 @@
       $('badge_tier_paid').style.display = isPaid ? 'inline-block' : 'none';
       $('free_license_cta_bar').style.display = !isPaid ? 'flex' : 'none';
       $('paid_server_fields').style.display = isPaid ? 'block' : 'none';
+      refreshCopyAppTokenFromConfigPrompt();
       updateFooterSummary();
     }
 
@@ -1260,17 +1318,13 @@
         selCfg.value = preferredConfigName;
       }
 
-      // Pre-fill discovered tokens and Plugin MCP URL if currently empty
+      // Pre-fill discovered URLs and MCP token if currently empty (NEVER auto-copy ApplicationInstanceToken from .mpr — offer explicit Copy button instead)
       if (insp.discoveredMta) {
         const instances = insp.discoveredMta.instances || [];
         const matchInst = instances.find(i => i.name === selCfg.value) || instances[0];
         if (matchInst) {
           const instUrl = String(matchInst.mtaUrl || insp.discoveredMta.globalMtaUrl || '').toLowerCase();
           const instIsPaid = Boolean(instUrl && !instUrl.includes('services.menditect.com'));
-          const tierMatchesInst = (uiState.licenseTier === 'paid_enterprise') === instIsPaid;
-          if (!$('inp_app_token').value.trim() && matchInst.token && tierMatchesInst) {
-            $('inp_app_token').value = matchInst.token;
-          }
           if (!$('inp_mta_url').value.trim() && uiState.licenseTier === 'paid_enterprise' && instIsPaid) {
             $('inp_mta_url').value = matchInst.mtaUrl || insp.discoveredMta.globalMtaUrl || '';
           }
@@ -1285,6 +1339,7 @@
           $('inp_mcp_token').value = insp.discoveredMta.globalRawMcpServerAccessToken;
         }
       }
+      refreshCopyAppTokenFromConfigPrompt();
       if (!$('inp_plugin_url').value.trim() && !uiState.pluginUrlCustomized) {
         const port = (insp.discoveredMta && insp.discoveredMta.globalPluginPort) ? insp.discoveredMta.globalPluginPort : '8081';
         $('inp_plugin_url').value = `http://localhost:${port}/plugin/mcp`;
@@ -1381,6 +1436,9 @@
         uiState.gatewayDefaults = data.gatewayDefaults || { idValue: '', keyValue: '' };
         uiState.mxcliAuthed = Boolean(data.mxcliAuthed);
         $('inp_conn_password').value = uiState.gatewayDefaults.keyValue || '';
+        if (data.generatedPluginToken && !$('inp_mcp_token').value.trim()) {
+          $('inp_mcp_token').value = data.generatedPluginToken;
+        }
         const parentSep = (data.defaultWorkspaceParentDir && data.defaultWorkspaceParentDir.includes('/')) ? '/' : '\\';
         $('inp_workspace_dir').value = data.defaultWorkspaceParentDir
           ? `${data.defaultWorkspaceParentDir.replace(/[\\/]+$/, '')}${parentSep}MyApp-test-workspace`
@@ -1438,6 +1496,17 @@
 
     $('exp_opt_auto').addEventListener('click', () => setExploratoryMode('auto_execute'));
     $('exp_opt_prompt').addEventListener('click', () => setExploratoryMode('prompt_approval'));
+
+    $('sel_mendix_config').addEventListener('change', () => refreshCopyAppTokenFromConfigPrompt());
+    $('inp_app_token').addEventListener('input', () => refreshCopyAppTokenFromConfigPrompt());
+    $('btn_copy_app_token_from_sp_cfg').addEventListener('click', () => {
+      const cfgTok = getSelectedConfigDiscoveredToken();
+      if (!cfgTok) return;
+      $('inp_app_token').value = cfgTok;
+      $('err_app_token').style.display = 'none';
+      $('inp_app_token').classList.remove('sp-input-error');
+      refreshCopyAppTokenFromConfigPrompt();
+    });
 
     $('btn_browse_workspace').addEventListener('click', async () => {
       const btn = $('btn_browse_workspace');

@@ -140,6 +140,24 @@ async function applyWorkspaceConfiguration(state, options = {}) {
 
   const isPaidServer = (state.licenseTier === 'paid_enterprise') || isPaidMtaServerUrl(state.mtaUrl);
   state.licenseTier = isPaidServer ? 'paid_enterprise' : 'free_exploratory';
+  let normalizedMtaUrl = mtaUrl;
+  try {
+    if (normalizedMtaUrl) normalizedMtaUrl = new URL(/^https?:\/\//i.test(normalizedMtaUrl) ? normalizedMtaUrl : `https://${normalizedMtaUrl}`).origin;
+  } catch {}
+  const normalizedMcpEndpoint = normalizedMtaUrl ? `${normalizedMtaUrl}/primitivetools/mcp` : mcpEndpoint;
+  const preservedPaidFields = isPaidServer
+    ? {
+        ...(existingConfig.mta_application_key ? { mta_application_key: existingConfig.mta_application_key } : {}),
+        ...(existingConfig.mta_application_instance_key ? { mta_application_instance_key: existingConfig.mta_application_instance_key } : {}),
+        ...(existingConfig.mta_test_configuration_key ? { mta_test_configuration_key: existingConfig.mta_test_configuration_key } : {}),
+        ...(existingConfig.mta_test_configuration_name ? { mta_test_configuration_name: existingConfig.mta_test_configuration_name } : {}),
+        ...(typeof existingConfig.auto_download_and_adapt_on_push === 'boolean' ? { auto_download_and_adapt_on_push: existingConfig.auto_download_and_adapt_on_push } : {}),
+        ...(typeof existingConfig.block_mta_mcp_on_revision_mismatch === 'boolean' ? { block_mta_mcp_on_revision_mismatch: existingConfig.block_mta_mcp_on_revision_mismatch } : {}),
+        ...(typeof existingConfig.auto_queue_construction_errors_on_adapt === 'boolean' ? { auto_queue_construction_errors_on_adapt: existingConfig.auto_queue_construction_errors_on_adapt } : {}),
+        ...(typeof existingConfig.auto_scan_changes_on_adapt === 'boolean' ? { auto_scan_changes_on_adapt: existingConfig.auto_scan_changes_on_adapt } : {}),
+        ...(typeof existingConfig.mta_api_polling_interval_seconds === 'number' ? { mta_api_polling_interval_seconds: existingConfig.mta_api_polling_interval_seconds } : {})
+      }
+    : {};
 
   const config = {
     $schema: './mta_config.schema.json',
@@ -154,8 +172,8 @@ async function applyWorkspaceConfiguration(state, options = {}) {
     exploratory_execution_mode: state.exploratoryMode || 'auto_execute',
     mendix_version: state.detectedVersion || '',
     application_name: state.appName,
-    mta_base_url: mtaUrl,
-    mcp_endpoint: mcpEndpoint,
+    mta_base_url: normalizedMtaUrl,
+    mcp_endpoint: normalizedMcpEndpoint,
     plugin_mcp_url: state.pluginUrl,
     playwright_viewer_url: defaultPlaywrightViewerUrl,
     tracefile_base_url: defaultTracefileBaseUrl,
@@ -166,7 +184,8 @@ async function applyWorkspaceConfiguration(state, options = {}) {
     default_app_instance_token: state.defaultInstanceToken,
     model_source: mcpSource,
     mendix_project_dir: state.projectDir,
-    mendix_mpr_path: state.mprPath
+    mendix_mpr_path: state.mprPath,
+    ...preservedPaidFields
   };
   if (state.studioproMcpUrl) {
     config.studiopro_mcp_url = state.studioproMcpUrl;

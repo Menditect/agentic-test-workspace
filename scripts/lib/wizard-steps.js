@@ -43,6 +43,8 @@ const {
   validateBusinessEmail
 } = require('./free-license-request');
 const {
+  generateSecureLocalPluginToken,
+  normalizeMtaOriginUrl,
   resolveGatewayProtocolDefaults,
   hydrateStateFromWorkspaceDir,
   createInitialWizardState,
@@ -232,7 +234,7 @@ async function runWizardLoop(state) {
       console.log('      • Full access to Frontend TestKit, Playwright Connector, and cloud test suites');
       console.log('  [3] I want to request a token for exploratory testing:');
       console.log('      • Enter your information to register for a free exploratory license right now in the CLI');
-      console.log('      • Contact Menditect Sales (https://menditect.com/contact/) for an MTA license\n');
+      console.log('      • Contact Menditect Sales (sales@menditect.com) for an MTA license\n');
 
       let defaultChoice = '1';
       if (state.licenseTier === 'paid_enterprise') {
@@ -726,44 +728,54 @@ async function runWizardLoop(state) {
           } else if (subStep === 'instance_token') {
             const matchedDiscoveredInst = state.discoveredMta?.instances?.find(
               x => x.name.toLowerCase() === targetConfigName.toLowerCase()
-            ) || (state.discoveredMta?.instances && state.discoveredMta.instances[0]);
-            const discoveredInstUrl = matchedDiscoveredInst?.mtaUrl || state.discoveredMta?.globalMtaUrl || '';
-            const discoveredInstMatchesTier = discoveredInstUrl
-              ? isPaidServer === isPaidMtaServerUrl(discoveredInstUrl)
-              : false;
+            );
             const existingCfgMatchesTier = existingConfig.mta_base_url
               ? isPaidServer === isPaidMtaServerUrl(existingConfig.mta_base_url)
               : false;
-            const defaultInstToken = appInstanceToken
+            // Never auto-copy ApplicationInstanceToken from a StudioPro Configuration constant (may belong to a colleague).
+            const ownSavedToken = appInstanceToken
               || state.defaultInstanceToken
-              || (!state.tierSwitched && discoveredInstMatchesTier ? matchedDiscoveredInst?.token : '')
               || (!state.tierSwitched && existingCfgMatchesTier ? existingConfig.default_app_instance_token : '')
               || '';
-            const tokenLabel = isPaidServer
-              ? 'MtaPluginModule.ApplicationInstanceToken (from MTA Portal > Application Instances)'
-              : 'MtaPluginModule.ApplicationInstanceToken (Menditect exploratory license key)';
-            let enteredTok = '';
-            while (!enteredTok && !subGoBack) {
-              const tokAns = await ask(tokenLabel, defaultInstToken);
-              if (isBack(tokAns)) {
+            const cfgToken = String(matchedDiscoveredInst?.token || '').trim();
+            let copiedFromCfg = '';
+            if (cfgToken && cfgToken !== ownSavedToken) {
+              console.log(`\n${NOTICE} StudioPro Configuration '${targetConfigName}' already contains an ApplicationInstanceToken (this may belong to a colleague).`);
+              const copyAns = await ask(`Copy ApplicationInstanceToken from StudioPro Configuration '${targetConfigName}'? (y/N)`, 'n');
+              if (isBack(copyAns)) {
                 subGoBack = true;
-                break;
-              }
-              enteredTok = tokAns.trim();
-              if (!enteredTok) {
-                console.log(`${ERROR} ApplicationInstanceToken cannot be empty.`);
+              } else if (copyAns.trim().toLowerCase().startsWith('y')) {
+                copiedFromCfg = cfgToken;
               }
             }
-            if (!subGoBack && enteredTok) {
-              appInstanceToken = enteredTok;
-              const gwDefaults = resolveGatewayProtocolDefaults();
-              connectionUsername = gwDefaults.idValue;
-              enableMcpServer = 'True';
-              if (!isPaidServer) {
-                connectionPassword = gwDefaults.keyValue;
-                nextSubStep = 'mcp_token';
-              } else {
-                nextSubStep = 'connection_pass';
+            if (!subGoBack) {
+              const defaultInstToken = copiedFromCfg || ownSavedToken;
+              const tokenLabel = isPaidServer
+                ? 'MtaPluginModule.ApplicationInstanceToken (from MTA Portal > Application Instances)'
+                : 'MtaPluginModule.ApplicationInstanceToken (Menditect exploratory license key)';
+              let enteredTok = copiedFromCfg;
+              while (!enteredTok && !subGoBack) {
+                const tokAns = await ask(tokenLabel, defaultInstToken);
+                if (isBack(tokAns)) {
+                  subGoBack = true;
+                  break;
+                }
+                enteredTok = tokAns.trim();
+                if (!enteredTok) {
+                  console.log(`${ERROR} ApplicationInstanceToken cannot be empty.`);
+                }
+              }
+              if (!subGoBack && enteredTok) {
+                appInstanceToken = enteredTok;
+                const gwDefaults = resolveGatewayProtocolDefaults();
+                connectionUsername = gwDefaults.idValue;
+                enableMcpServer = 'True';
+                if (!isPaidServer) {
+                  connectionPassword = gwDefaults.keyValue;
+                  nextSubStep = 'mcp_token';
+                } else {
+                  nextSubStep = 'connection_pass';
+                }
               }
             }
           } else if (subStep === 'connection_pass') {
@@ -803,16 +815,17 @@ async function runWizardLoop(state) {
             console.log('│ • Quick local testing: You can simply enter "1" or "dev-secret".             │');
             console.log('│ • Shared networks or cloud slots: Use a strong random passphrase.            │');
             console.log('└──────────────────────────────────────────────────────────────────────────────┘\n');
+            const generatedMcpDefault = existingRawPluginTok || generateSecureLocalPluginToken();
             let enteredMcpTok = '';
             while (!enteredMcpTok && !subGoBack) {
-              const mcpTokAns = await ask('MtaPluginModule.McpServerAccessToken (choose your own secret value, not from Menditect)', existingRawPluginTok || '1');
+              const mcpTokAns = await ask('MtaPluginModule.McpServerAccessToken (auto-generated random secret, or enter your own)', generatedMcpDefault);
               if (isBack(mcpTokAns)) {
                 subGoBack = true;
                 break;
               }
               const cleaned = (mcpTokAns.trim()).replace(/^Bearer\s+/i, '').trim();
               if (!cleaned) {
-                console.log(`${ERROR} McpServerAccessToken cannot be empty. Enter a secret token (e.g. "1" for local testing or a secure passphrase).`);
+                console.log(`${ERROR} McpServerAccessToken cannot be empty. Press Enter to accept the generated secret or enter your own.`);
                 continue;
               }
               enteredMcpTok = cleaned;

@@ -20,7 +20,7 @@ import process from 'node:process';
 import crypto from 'node:crypto';
 import net from 'node:net';
 
-export const LINTER_VERSION = "1.12.0";
+export const LINTER_VERSION = "1.14.0";
 const VERSION = LINTER_VERSION;
 
 // ==========================================
@@ -148,11 +148,34 @@ async function main() {
         const planPath = args[1];
         const telemetryPath = args[2];
         if (!planPath || planPath.startsWith('--') || !telemetryPath || telemetryPath.startsWith('--')) {
-          console.error("Error: Missing arguments. Usage: mta-lint mutate <path/to/EP_*.md> <path/to/telemetry.json> [--json]");
+          console.error("Error: Missing arguments. Usage: mta-lint mutate <path/to/EP_*.md> <path/to/telemetry.json> [--request <req.json>] [--plugin-url <url>] [--json]");
           process.exit(1);
         }
-        const result = runMutationAudit(planPath, telemetryPath);
-        outputResult(result, isJson, "MTA Reverse Mutation Testing & Oracle Sensitivity Audit (PAT-126)");
+        const readFlagVal = (flag) => {
+          const i = args.indexOf(flag);
+          return i !== -1 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : null;
+        };
+        const reqPath = readFlagVal('--request');
+        const pluginUrl = readFlagVal('--plugin-url') || process.env.MTA_PLUGIN_MCP_URL || 'http://localhost:8080/plugin/mcp';
+        const pluginToken = readFlagVal('--plugin-token') || process.env.MTA_PLUGIN_MCP_TOKEN || '';
+        const maxProbesRaw = readFlagVal('--max-probes');
+        const maxProbes = maxProbesRaw ? Math.max(1, Math.min(8, parseInt(maxProbesRaw, 10) || 4)) : 4;
+        let liveProbes = null;
+        if (reqPath && fs.existsSync(reqPath)) {
+          const reqObj = JSON.parse(fs.readFileSync(reqPath, 'utf8'));
+          const planText = fs.existsSync(planPath) ? fs.readFileSync(planPath, 'utf8') : '';
+          const teleObj = fs.existsSync(telemetryPath) ? JSON.parse(fs.readFileSync(telemetryPath, 'utf8')) : {};
+          liveProbes = await runLivePerturbationProbesCli({
+            requestPayloads: Array.isArray(reqObj) ? reqObj : [reqObj],
+            planContent: planText,
+            baselineTelemetry: teleObj,
+            pluginUrl,
+            pluginToken,
+            maxProbes
+          });
+        }
+        const result = runMutationAudit(planPath, telemetryPath, { liveProbes });
+        outputResult(result, isJson, "MTA Multi-Scenario Oracle Verification & Live Sensitivity Audit (PAT-126)");
         process.exit(result.valid ? 0 : 1);
         break;
       }
@@ -206,7 +229,8 @@ Commands:
   pre-exec <file> [--json]             Verify persisted plan & approval status before Option A execution
   plan <file> [--json]                 Validate Execution Plan syntax, schema, and pattern rules
   audit <plan-file> <server-json> [server2.json ...] Verify constructed MTA server state against plan (4-phase diff)
-  mutate <plan-file> <telemetry-json>  Generate reverse mutants and evaluate against runtime telemetry (PAT-126)
+  mutate <plan-file> <telemetry-json> [--request <req.json>] [--plugin-url <url>]
+                                       Verify all #1..#N scenario oracles against TCEX_RS telemetry and optionally run live input-perturbation probes via MTA_plugin (PAT-126)
   artifacts [dir] [--json]             Audit execution outputs against Execution Plan artifacts (MTA-LINT-E010)
   config [path] [--json]               Validate mta_config.json structure and path integrity
   self-test                            Run internal unit tests and rule compliance checks
@@ -4348,114 +4372,370 @@ ${phase0Line}* **Phase 1 (Step Count Parity):** Planned: ${pCount} | Server: ${s
 }
 
 // ==========================================
-// Reverse Mutation Testing Engine (PAT-126, ANTI-84)
+// Multi-Scenario Oracle Verification & Live Input-Perturbation Engine (PAT-126, ANTI-84)
 // ==========================================
 
-function generateMutantsForValue(stepNum, stepName, targetType, valStr, addMutant) {
+const TCEX_PASSING_STEP_RESULTS = new Set([
+  'passed', 'pass', 'ok', 'executed', 'success', 'succeeded'
+]);
+
+const TCEX_COUNT_FIELDS = [
+  'ObjectCount', 'ObjectsCount', 'NumberOfObjects', 'NrOfObjects',
+  'RetrievedObjectCount', 'ResultObjectCount', 'OutputObjectCount',
+  'OutputCount', 'EntityCount', 'Count', 'ListSize'
+];
+
+const TCEX_ENTITY_COLLECTION_FIELDS = [
+  'TCEX_RS_EntityValueRun', 'TCEX_RS_EntityValueRuns', 'TCEX_RS_EntityValue',
+  'TCEX_RS_ObjectValueRun', 'TCEX_RS_OactOutput', 'TCEX_RS_OutputObject',
+  'TCEX_RS_TestStepRunOactOutput', 'TCEX_RS_MxObject',
+  'EntityValues', 'Entities', 'Objects', 'MxObjects',
+  'OutputObjects', 'ReturnedObjects', 'RetrievedObjects',
+  'MxObjectGUIDs', 'MxObjectGuids', 'MxObjectIds', 'ObjectGuids', 'Guids', 'Ids'
+];
+
+const TCEX_OBJECT_GUID_FIELDS = [
+  'MxObjectGUID', 'MxObjectGuid', 'MxObjectId', 'ObjectGuid', 'ObjectGUID', 'ObjectId', 'ObjectID', 'Guid', 'GUID'
+];
+
+const TCEX_MFC_RETURN_FIELDS = [
+  'ReturnValue', 'Value', 'ResultValue', 'OutputValue', 'ReturnedValue',
+  'PrimitiveValue', 'MicroflowReturnValue',
+  'ReturnValueString', 'ReturnValueDecimal', 'ReturnValueInteger',
+  'ReturnValueLong', 'ReturnValueBoolean', 'ReturnValueDateTime',
+  'ReturnValueEnum', 'ReturnValuePrimitive'
+];
+
+const TCEX_MFC_NESTED_RETURN_FIELDS = [
+  'TCEX_RS_MicroflowReturnValue', 'TCEX_RS_MicroflowReturnValueRun',
+  'TCEX_RS_ReturnValue', 'TCEX_RS_ReturnValueRun',
+  'TCEX_RS_PrimitiveValue', 'TCEX_RS_PrimitiveValueRun',
+  'TCEX_RS_OutputValue', 'TCEX_RS_AttributeValueRun'
+];
+
+const TCEX_STEP_KEY_FIELDS = [
+  'SequenceNumber', 'Sequence', 'Key', 'TestStepRunKey', 'TestStepKey', 'StepNumber'
+];
+
+function unwrapTcexTelemetryRoot(tele) {
+  if (!tele || typeof tele !== 'object') return {};
+  return tele.FunctionalResponse && typeof tele.FunctionalResponse === 'object'
+    ? tele.FunctionalResponse
+    : tele;
+}
+
+function extractTcexStepRuns(tele) {
+  if (Array.isArray(tele)) return tele;
+  const root = unwrapTcexTelemetryRoot(tele);
+  if (Array.isArray(root.TCEX_RS_TestStepRun)) return root.TCEX_RS_TestStepRun;
+  if (Array.isArray(root.TCEX_RP_TestStepResult)) return root.TCEX_RP_TestStepResult;
+  if (Array.isArray(root.TCEX_RS_TestCaseResult?.TCEX_RS_TestStepRun)) return root.TCEX_RS_TestCaseResult.TCEX_RS_TestStepRun;
+  if (Array.isArray(root.TCEX_RP_TestCaseResult?.TCEX_RP_TestStepResult)) return root.TCEX_RP_TestCaseResult.TCEX_RP_TestStepResult;
+  return Array.isArray(root.steps) ? root.steps : [];
+}
+
+function extractTcexTopLevelValidationFeedbacks(tele) {
+  const root = unwrapTcexTelemetryRoot(tele);
+  if (Array.isArray(root.TCEX_RS_ValidationFeedback)) return root.TCEX_RS_ValidationFeedback;
+  if (Array.isArray(root.validationFeedback)) return root.validationFeedback;
+  return [];
+}
+
+function collectNestedStepValidationFeedbacks(steps) {
+  const out = [];
+  for (const st of steps) {
+    if (Array.isArray(st?.TCEX_RS_TestStepRunMfc?.TCEX_RS_ValidationFeedback)) {
+      out.push(...st.TCEX_RS_TestStepRunMfc.TCEX_RS_ValidationFeedback);
+    }
+    if (Array.isArray(st?.TCEX_RS_ValidationFeedback)) {
+      out.push(...st.TCEX_RS_ValidationFeedback);
+    }
+  }
+  return out;
+}
+
+function isPassingTcexStep(sr) {
+  if (!sr || typeof sr !== 'object') return false;
+  const errCandidates = [
+    sr.ErrorMessage, sr.ExceptionMessage, sr.ResultStacktrace, sr.Stacktrace,
+    sr.TCEX_RS_TestStepException?.Message,
+    sr.TCEX_RS_TestStepRunMfc?.ErrorMessage,
+    sr.TCEX_RS_TestStepRunOact?.ErrorMessage
+  ];
+  if (errCandidates.some(v => typeof v === 'string' && v.trim().length > 0)) return false;
+  const raw = String(
+    sr.Result ?? sr.Status ?? sr.ExecutionResult ?? sr.StepResult ?? sr.TestStepResult ?? sr.result ?? sr.status ?? ''
+  ).trim().replace(/^_/, '').toLowerCase();
+  return !raw || TCEX_PASSING_STEP_RESULTS.has(raw);
+}
+
+function isMfcTcexStep(step) {
+  if (!step || typeof step !== 'object') return false;
+  if (step.TCEX_RS_TestStepRunMfc) return true;
+  const stType = String(step.TestStepType || step.TestStepRunType || '').toLowerCase();
+  return stType.includes('microflow') || stType === 'mfc';
+}
+
+function isOactTcexStep(step) {
+  if (!step || typeof step !== 'object') return false;
+  if ('TCEX_RS_TestStepRunOact' in step) return true;
+  const stType = String(step.TestStepType || step.TestStepRunType || '').toLowerCase();
+  return /oact|create|retrieve|change|delete|persist/.test(stType);
+}
+
+function readTcexNumericField(obj, fieldNames) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const name of fieldNames) {
+    const val = obj[name];
+    if (typeof val === 'number' && !isNaN(val)) return String(val);
+    if (typeof val === 'string' && /^\d+$/.test(val.trim())) return val.trim();
+  }
+  return null;
+}
+
+function readTcexCollectionCount(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const field of TCEX_ENTITY_COLLECTION_FIELDS) {
+    const val = obj[field];
+    if (Array.isArray(val)) return String(val.length);
+    if (val && typeof val === 'object' && Object.keys(val).length > 0) return '1';
+  }
+  for (const [k, val] of Object.entries(obj)) {
+    if (!/entityvalue|objectvalue|mxobject|objectlist|returnedobject|retrievedobject|outputobject|oactoutput/i.test(k)) continue;
+    if (Array.isArray(val)) return String(val.length);
+    if (val && typeof val === 'object' && Object.keys(val).length > 0) return '1';
+  }
+  for (const field of ['ObjectFound', 'HasObject', 'HasOutputObject']) {
+    if (typeof obj[field] === 'boolean') return obj[field] ? '1' : '0';
+  }
+  return null;
+}
+
+function hasTcexGuidOrAttrs(obj) {
+  if (!obj || typeof obj !== 'object') return false;
+  for (const field of TCEX_OBJECT_GUID_FIELDS) {
+    const val = obj[field];
+    if (typeof val === 'number' && val > 0) return true;
+    if (typeof val === 'string' && val.trim() !== '' && val.trim() !== '0') return true;
+  }
+  if (obj.Attributes && typeof obj.Attributes === 'object' && Object.keys(obj.Attributes).length > 0) return true;
+  return Array.isArray(obj.TCEX_RS_AttributeValueRun) && obj.TCEX_RS_AttributeValueRun.length > 0;
+}
+
+function extractTcexObjectCount(step) {
+  if (!step || typeof step !== 'object') return null;
+  const rawOact = step.TCEX_RS_TestStepRunOact;
+  if (Array.isArray(rawOact)) return String(rawOact.length);
+  const oact = rawOact && typeof rawOact === 'object' ? rawOact : undefined;
+  const explicit =
+    readTcexNumericField(step, TCEX_COUNT_FIELDS) ??
+    readTcexNumericField(oact, TCEX_COUNT_FIELDS) ??
+    readTcexCollectionCount(oact) ??
+    readTcexCollectionCount(step);
+  if (explicit !== null) return explicit;
+  if (hasTcexGuidOrAttrs(oact) || hasTcexGuidOrAttrs(step)) return '1';
+  return oact || isOactTcexStep(step) ? '0' : null;
+}
+
+function readTcexReturnValueFromContainer(container, depth = 0) {
+  if (!container || typeof container !== 'object' || Array.isArray(container) || depth > 3) return null;
+  let sawNull = false;
+  let sawEmptyStr = false;
+  const unwrap = (val) => {
+    if (val === undefined || val === null) return null;
+    if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') return String(val).trim();
+    if (depth >= 3) return null;
+    if (Array.isArray(val)) return val.length > 0 ? unwrap(val[0]) : null;
+    if (typeof val === 'object') return readTcexReturnValueFromContainer(val, depth + 1);
+    return null;
+  };
+  for (const field of [...TCEX_MFC_RETURN_FIELDS, ...TCEX_MFC_NESTED_RETURN_FIELDS]) {
+    const val = container[field];
+    if (val === undefined) continue;
+    if (val === null) { sawNull = true; continue; }
+    const extracted = unwrap(val);
+    if (extracted !== null && extracted !== '') return extracted;
+    if (extracted === '') sawEmptyStr = true;
+  }
+  for (const [k, val] of Object.entries(container)) {
+    if (val === undefined || val === null || !/returnvalue|primitivevalue|outputvalue/i.test(k)) continue;
+    const extracted = unwrap(val);
+    if (extracted !== null && extracted !== '') return extracted;
+  }
+  if (sawEmptyStr) return '';
+  return sawNull ? 'empty' : null;
+}
+
+function extractTcexReturnValue(step) {
+  if (!step || typeof step !== 'object') return null;
+  const rawMfc = step.TCEX_RS_TestStepRunMfc;
+  const mfcObj = Array.isArray(rawMfc) ? rawMfc[0] : (rawMfc && typeof rawMfc === 'object' ? rawMfc : undefined);
+  return readTcexReturnValueFromContainer(mfcObj, 0) ?? readTcexReturnValueFromContainer(step, 0);
+}
+
+function sortTcexStepsIfUniquelySequenced(dispSteps) {
+  if (dispSteps.length <= 1) return dispSteps;
+  const seqs = dispSteps.map(s => s?.SequenceNumber);
+  if (!seqs.every(v => v !== undefined && v !== null && !isNaN(Number(v)))) return dispSteps;
+  const uniq = new Set(seqs.map(Number));
+  if (uniq.size !== dispSteps.length) return dispSteps;
+  return [...dispSteps].sort((a, b) => Number(a.SequenceNumber) - Number(b.SequenceNumber));
+}
+
+function findTcexStepByNumber(steps, stepNum) {
+  return steps.find(s =>
+    TCEX_STEP_KEY_FIELDS.some(k => s?.[k] !== undefined && s?.[k] !== null && s?.[k] !== '' && Number(s[k]) === stepNum)
+  ) || null;
+}
+
+function resolveTcexScenarioSlice(dispSteps, scenarioNumber, scenariosCount, isMultiDispatch, minStepsPerScenario = 1) {
+  const ordered = sortTcexStepsIfUniquelySequenced(dispSteps);
+  if (isMultiDispatch || scenariosCount <= 1 || ordered.length === 0) return ordered;
+  const scenIdx = Math.max(0, scenarioNumber - 1);
+  const perScenario = ordered.length / scenariosCount;
+  if (ordered.length >= scenariosCount && ordered.length % scenariosCount === 0 && perScenario >= Math.max(1, minStepsPerScenario)) {
+    const start = scenIdx * perScenario;
+    if (start < ordered.length) return ordered.slice(start, start + perScenario);
+  }
+  const blocks = [];
+  let cur = [];
+  for (const st of ordered) {
+    cur.push(st);
+    if (isMfcTcexStep(st)) { blocks.push(cur); cur = []; }
+  }
+  if (cur.length > 0) blocks.push(cur);
+  if (blocks.length >= scenariosCount && scenIdx < blocks.length) return blocks[scenIdx];
+  // Do NOT silently fall back to Scenario #1's steps when Scenario #2..#N were never executed
+  return scenIdx === 0 ? ordered : [];
+}
+
+function resolveTcexStepForOracle(oracle, dispSteps, scenariosCount, isMultiDispatch, minStepsPerScenario = 1) {
+  const scenNum = Math.max(1, oracle.scenarioNumber || 1);
+  const stepNum = oracle.stepNumber;
+  if (!isMultiDispatch && scenariosCount > 1 && stepNum !== null) {
+    const hundredsHit = findTcexStepByNumber(dispSteps, scenNum * 100 + stepNum);
+    if (hundredsHit) return hundredsHit;
+  }
+  const slice = resolveTcexScenarioSlice(dispSteps, scenNum, scenariosCount, isMultiDispatch, minStepsPerScenario);
+  if (slice.length === 0) return null;
+  if (stepNum !== null) {
+    const exact = findTcexStepByNumber(slice, stepNum);
+    if (exact) return exact;
+    if (stepNum >= 1 && stepNum <= slice.length) return slice[stepNum - 1];
+  }
+  if (oracle.targetType === 'ReturnValue') {
+    const mfcInSlice = slice.find(isMfcTcexStep);
+    if (mfcInSlice) return mfcInSlice;
+  }
+  return null;
+}
+
+function isVacuousExpectedToken(expectedVal) {
+  const norm = String(expectedVal ?? '').trim().toLowerCase();
+  if (!norm) return true;
+  return /^(\*|any|anything|not\s*null|not\s*empty|!=\s*empty|!=\s*null|>=\s*0|tbd|todo|\?)$/.test(norm);
+}
+
+function matchesExpectedOracleValue(targetType, expectedVal, actualVal) {
+  if (actualVal === null || actualVal === undefined) return false;
+  const expNorm = String(expectedVal).replace(/^_/, '').trim().toLowerCase();
+  const actNorm = String(actualVal).replace(/^_/, '').trim().toLowerCase();
+  if (expNorm === actNorm) return true;
+  const isEmptyTok = (t) => t === 'empty' || t === 'null' || t === '';
+  if (isEmptyTok(expNorm) && isEmptyTok(actNorm)) return true;
+  if (targetType === 'ValidationFeedbackMessage' && expNorm && actNorm.includes(expNorm)) return true;
+  return Boolean(expNorm && actNorm && !isNaN(Number(expNorm)) && !isNaN(Number(actNorm)) && Number(expNorm) === Number(actNorm));
+}
+
+function generateMutantsForValue(stepNum, stepName, targetType, valStr, addMutant, scenarioMeta) {
   const cleanVal = String(valStr).replace(/^[`'"]+|[`'"]+$/g, '').trim();
 
-  // Boolean
   if (/^(?:true|_True)$/i.test(cleanVal)) {
-    addMutant(stepNum, stepName, targetType, 'AMO_RET_BOOL', cleanVal, 'false', 'Inverted boolean return value (true -> false)', 'Test detects if conditional decision branch in microflow flips');
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_BOOL', cleanVal, 'false', 'Boolean return value check (true)', 'Verifies boolean branch outcome', scenarioMeta);
     return;
   }
   if (/^(?:false|_False)$/i.test(cleanVal)) {
-    addMutant(stepNum, stepName, targetType, 'AMO_RET_BOOL', cleanVal, 'true', 'Inverted boolean return value (false -> true)', 'Test detects if conditional decision branch in microflow flips');
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_BOOL', cleanVal, 'true', 'Boolean return value check (false)', 'Verifies boolean branch outcome', scenarioMeta);
     return;
   }
-
-  // Number (Integer, Decimal, Float)
   if (/^-?\d+(?:\.\d+)?$/.test(cleanVal)) {
     const num = parseFloat(cleanVal);
     const isDecimal = cleanVal.includes('.');
     const decimalPlaces = isDecimal ? cleanVal.split('.')[1].length : 0;
     const formatNum = (n) => isDecimal ? n.toFixed(decimalPlaces) : String(Math.round(n));
-
-    // AMO_RET_NUM_DELTA: +1
-    addMutant(stepNum, stepName, targetType, 'AMO_RET_NUM_DELTA', cleanVal, formatNum(num + 1), `Off-by-one (+1) in return value (${cleanVal} -> ${formatNum(num + 1)})`, 'Test detects off-by-one threshold calculation errors');
-
-    // AMO_RET_NUM_DELTA: -1
-    addMutant(stepNum, stepName, targetType, 'AMO_RET_NUM_DELTA', cleanVal, formatNum(num - 1), `Off-by-one (-1) in return value (${cleanVal} -> ${formatNum(num - 1)})`, 'Test detects off-by-one base calculation errors');
-
-    // AMO_RET_NUM_ZERO: 0.00 or non-zero
-    if (num !== 0) {
-      addMutant(stepNum, stepName, targetType, 'AMO_RET_NUM_ZERO', cleanVal, formatNum(0), `Zero return value (${cleanVal} -> ${formatNum(0)})`, 'Test detects if calculation defaults to zero');
-    } else {
-      addMutant(stepNum, stepName, targetType, 'AMO_RET_NUM_ZERO', cleanVal, formatNum(1), `Non-zero return value (0 -> 1)`, 'Test detects if calculation fails to return zero');
-    }
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_NUM_DELTA', cleanVal, formatNum(num + 1), `Numeric return value check (${cleanVal})`, 'Verifies exact numeric calculation', scenarioMeta);
     return;
   }
-
-  // Enum or String
+  if (/^(?:empty|null)$/i.test(cleanVal)) {
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_EMPTY', 'empty', 'non-empty', 'Empty return value check', 'Verifies null/empty boundary return', scenarioMeta);
+    return;
+  }
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(cleanVal)) {
-    addMutant(stepNum, stepName, targetType, 'AMO_RET_ENUM', cleanVal, `__MUTANT_${cleanVal}__`, `Alternative enum value (${cleanVal} -> __MUTANT_${cleanVal}__)`, 'Test detects if microflow assigns incorrect enum constant');
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_ENUM', cleanVal, `__MUTANT_${cleanVal}__`, `Enum/token return value check (${cleanVal})`, 'Verifies exact enum/token constant', scenarioMeta);
   } else {
-    addMutant(stepNum, stepName, targetType, 'AMO_RET_STR', cleanVal, `MUTANT_${cleanVal}`, `Altered string return value (${cleanVal} -> MUTANT_${cleanVal})`, 'Test detects unexpected string output or concatenation errors');
+    addMutant(stepNum, stepName, targetType, 'AMO_RET_STR', cleanVal, `MUTANT_${cleanVal}`, `String return value check (${cleanVal})`, 'Verifies exact string return value', scenarioMeta);
   }
 }
 
-function generateMutantsForValidationCount(stepNum, stepName, countStr, addMutant) {
+function generateMutantsForValidationCount(stepNum, stepName, countStr, addMutant, scenarioMeta) {
   const cleanCount = String(countStr).replace(/^[`'"]+|[`'"]+$/g, '').trim();
   const count = parseInt(cleanCount, 10) || 0;
-  if (count === 0) {
-    addMutant(stepNum, stepName, 'ValidationFeedbackCount', 'AMO_VF_COUNT', '0', '1', 'Validation feedback raised unexpectedly (0 -> 1 message)', 'Test detects if valid input erroneously triggers validation feedback');
-  } else {
-    addMutant(stepNum, stepName, 'ValidationFeedbackCount', 'AMO_VF_COUNT', String(count), '0', `Validation feedback omitted (${count} -> 0 messages)`, 'Test detects if invalid input fails to raise required validation feedback');
-  }
+  const mutated = count === 0 ? '1' : '0';
+  addMutant(stepNum, stepName, 'ValidationFeedbackCount', 'AMO_VF_COUNT', String(count), mutated, `Validation feedback count check (${count})`, 'Verifies exact validation feedback message count', scenarioMeta);
 }
 
-function generateMutantsForValidationMsg(stepNum, stepName, msgStr, addMutant) {
+function generateMutantsForValidationMsg(stepNum, stepName, msgStr, addMutant, scenarioMeta) {
   const cleanMsg = String(msgStr).replace(/^[`'"]+|[`'"]+$/g, '').trim();
-  addMutant(stepNum, stepName, 'ValidationFeedbackMessage', 'AMO_VF_MSG', cleanMsg, `MUTANT_${cleanMsg}`, `Altered validation feedback message text`, 'Test detects if wrong validation feedback message is displayed');
+  addMutant(stepNum, stepName, 'ValidationFeedbackMessage', 'AMO_VF_MSG', cleanMsg, `MUTANT_${cleanMsg}`, `Validation feedback message check`, 'Verifies expected validation feedback text', scenarioMeta);
 }
 
-function generateMutantsForObjectCount(stepNum, stepName, countStr, addMutant) {
+function generateMutantsForObjectCount(stepNum, stepName, countStr, addMutant, scenarioMeta) {
   const cleanCount = String(countStr).replace(/^[`'"]+|[`'"]+$/g, '').trim();
   const count = parseInt(cleanCount, 10) || 0;
-  if (count === 1) {
-    addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', '1', '0', 'Object count zeroed (1 -> 0)', 'Test detects if expected entity fails to be retrieved');
-    addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', '1', '2', 'Object count incremented (1 -> 2)', 'Test detects duplicate objects returned by retrieve');
-  } else if (count === 0) {
-    addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', '0', '1', 'Object count non-zero (0 -> 1)', 'Test detects if unexpected entity is retrieved');
-  } else {
-    addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', String(count), '0', `Object count zeroed (${count} -> 0)`, 'Test detects missing records in retrieve');
-    addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', String(count), String(count + 1), `Object count incremented (${count} -> ${count + 1})`, 'Test detects extra records in retrieve');
-  }
+  const mutated = count === 0 ? '1' : '0';
+  addMutant(stepNum, stepName, 'ObjectCount', 'AMO_OBJ_COUNT', String(count), mutated, `Object count check (${count})`, 'Verifies exact retrieved object count', scenarioMeta);
 }
 
-export function generateMutants(planContentOrPath, options = {}) {
+/**
+ * Extracts all scenario-level oracles across Scenarios #1..#N from Section 4
+ * plus any uncovered baseline assertions from Section 3.
+ */
+export function extractPlanOracles(planContentOrPath) {
   let content = planContentOrPath;
   if (typeof planContentOrPath === 'string' && fs.existsSync(planContentOrPath)) {
     content = fs.readFileSync(planContentOrPath, 'utf8');
   } else if (typeof planContentOrPath !== 'string') {
-    throw new Error('generateMutants expects a file path or markdown string');
+    throw new Error('extractPlanOracles expects a file path or markdown string');
   }
 
-  const metadata = extractMetadata(content) || {};
   const tables = parseMarkdownTables(content);
-
   let stepLedgerTable = null;
-  let variationMatrixTable = null;
+  const variationMatrixTables = [];
 
   for (const t of tables) {
     const headerStr = t.headers.join(' ').toLowerCase();
     if (!stepLedgerTable && (headerStr.includes('step action') || headerStr.includes('output handle') || headerStr.includes('action & target'))) {
       stepLedgerTable = t;
-    } else if (!variationMatrixTable && (headerStr.includes('step target') || headerStr.includes('scenario #1') || (headerStr.includes('scenario name') && headerStr.includes('scenario')))) {
-      variationMatrixTable = t;
+    } else if (headerStr.includes('step target') || headerStr.includes('scenario #1') || headerStr.includes('#1 ') || (headerStr.includes('variation item') && t.headers.length >= 2)) {
+      variationMatrixTables.push(t);
     }
   }
 
-  const mutants = [];
-  let mutantIdx = 1;
+  const oracles = [];
   const coveredTargets = new Set();
+  let scenariosCount = 1;
+  let oracleIdx = 1;
 
-  const addMutant = (stepNum, stepName, targetType, operator, origVal, mutatedVal, description, rationale) => {
-    coveredTargets.add(`${stepNum !== null ? stepNum : 'any'}_${targetType}`);
-    mutants.push({
-      id: `MUT_${String(mutantIdx++).padStart(2, '0')}`,
+  const pushOracle = (stepNum, stepName, targetType, operator, origVal, mutatedVal, description, rationale, scenarioMeta) => {
+    const scenNum = scenarioMeta?.scenarioNumber || 1;
+    coveredTargets.add(`${scenNum}_${stepNum !== null ? stepNum : 'any'}_${targetType}`);
+    if (scenNum === 1) coveredTargets.add(`1_${stepNum !== null ? stepNum : 'any'}_${targetType}`);
+    oracles.push({
+      id: `ORC_${String(oracleIdx++).padStart(2, '0')}`,
+      scenarioNumber: scenNum,
+      scenarioLabel: scenarioMeta?.scenarioLabel || `Scenario #${scenNum}`,
       stepNumber: stepNum,
-      stepName: stepName || `Step ${stepNum}`,
+      stepName: stepName || (stepNum ? `Step ${stepNum}` : targetType),
       targetType,
       operator,
       originalExpected: String(origVal).trim(),
@@ -4465,211 +4745,348 @@ export function generateMutants(planContentOrPath, options = {}) {
     });
   };
 
-  // 1. Extract assertions from Variation Matrix (Section 4)
-  if (variationMatrixTable) {
-    const scenarioCol = variationMatrixTable.headers.find(h => /scenario\s*#?1\b|^#1\b/i.test(h)) || variationMatrixTable.headers[1];
-    for (const row of variationMatrixTable.rows) {
-      const stepTarget = row['Step Target & Action'] || row['Step Target'] || row['Target'] || row[variationMatrixTable.headers[0]] || '';
-      const scenarioVal = scenarioCol ? (row[scenarioCol] || '') : '';
-      if (!scenarioVal) continue;
+  let runningScenarioOffset = 0;
+  for (const variationMatrixTable of variationMatrixTables) {
+    const explicitCols = variationMatrixTable.headers.filter(h => /scenario\s*#?\d+|^#\d+|var[_\s]*\d+/i.test(h));
+    const startIdx = /^#$|^nr\.?$|^id$/i.test(String(variationMatrixTable.headers[0] || '').trim()) ? 2 : 1;
+    const scenarioCols = explicitCols.length > 0 ? explicitCols : variationMatrixTable.headers.slice(startIdx);
 
+    const parsedCols = scenarioCols.map((col, idx) => {
+      const m = col.match(/#(\d+)|scenario\s*(\d+)|var[_\s]*(\d+)/i);
+      const num = m ? parseInt(m[1] || m[2] || m[3], 10) : runningScenarioOffset + idx + 1;
+      if (num > scenariosCount) scenariosCount = num;
+      return { col, scenarioNumber: num, scenarioLabel: col };
+    });
+    runningScenarioOffset = Math.max(runningScenarioOffset + scenarioCols.length, scenariosCount);
+
+    for (const row of variationMatrixTable.rows) {
+      const stepTarget = (row['Step Target & Action'] || row['Step Target'] || row['Variation Item / Target Step'] || row['Target'] || row[variationMatrixTable.headers[1]] || row[variationMatrixTable.headers[0]] || '').replace(/\*+/g, '').trim();
       const stepMatch = stepTarget.match(/Step\s*(\d+)/i);
       const stepNum = stepMatch ? parseInt(stepMatch[1], 10) : null;
 
-      if (/Assert\s*Return\s*Value|Return\s*Value/i.test(stepTarget)) {
-        generateMutantsForValue(stepNum, stepTarget, 'ReturnValue', scenarioVal, addMutant);
-      } else if (/Validation\s*Feedback\s*Count/i.test(stepTarget)) {
-        generateMutantsForValidationCount(stepNum, stepTarget, scenarioVal, addMutant);
-      } else if (/Validation\s*Feedback\s*Message|Validation\s*Message/i.test(stepTarget)) {
-        generateMutantsForValidationMsg(stepNum, stepTarget, scenarioVal, addMutant);
-      } else if (/Object\s*Count/i.test(stepTarget)) {
-        generateMutantsForObjectCount(stepNum, stepTarget, scenarioVal, addMutant);
+      let kind = null;
+      if (/Assert\s*Return\s*Value|Return\s*Value/i.test(stepTarget)) kind = 'ReturnValue';
+      else if (/Validation\s*Feedback\s*Count/i.test(stepTarget)) kind = 'ValidationFeedbackCount';
+      else if (/Validation\s*Feedback\s*Message|Validation\s*Message/i.test(stepTarget)) kind = 'ValidationFeedbackMessage';
+      else if (/Object\s*Count/i.test(stepTarget)) kind = 'ObjectCount';
+      if (!kind) continue;
+
+      for (const sc of parsedCols) {
+        const rawCell = String(row[sc.col] || '').replace(/^[`'"]+|[`'"]+$/g, '').trim();
+        if (!rawCell || rawCell === '-' || rawCell.toLowerCase() === 'n/a') continue;
+        if (kind === 'ReturnValue') generateMutantsForValue(stepNum, stepTarget, 'ReturnValue', rawCell, pushOracle, sc);
+        else if (kind === 'ValidationFeedbackCount') generateMutantsForValidationCount(stepNum, stepTarget, rawCell, pushOracle, sc);
+        else if (kind === 'ValidationFeedbackMessage') generateMutantsForValidationMsg(stepNum, stepTarget, rawCell, pushOracle, sc);
+        else if (kind === 'ObjectCount') generateMutantsForObjectCount(stepNum, stepTarget, rawCell, pushOracle, sc);
       }
     }
   }
 
-  // 2. Extract any remaining assertions from Section 3 Step Ledger not already covered by Section 4
+  // Uncovered baseline assertions from Section 3 Step Ledger apply to Scenario #1
   if (stepLedgerTable) {
+    const baseMeta = { scenarioNumber: 1, scenarioLabel: 'Scenario #1 (Baseline)' };
     for (const row of stepLedgerTable.rows) {
       const stepNumStr = row['#'] || row['Step'] || '';
       const stepNum = parseInt(String(stepNumStr).replace(/[^\d]/g, ''), 10) || null;
       const stepAction = row['Step Action & Target'] || row['Action & Target'] || row['Target'] || '';
       const combinedText = Object.values(row).join(' ');
 
-      if (!coveredTargets.has(`${stepNum}_ReturnValue`)) {
+      if (!coveredTargets.has(`1_${stepNum}_ReturnValue`)) {
         const retValMatch = combinedText.match(/ReturnValue\s*(?:==|:|=)\s*['"`]?([^'",;\n\r`]+)['"`]?/i) ||
                             combinedText.match(/Assert\s+(?:result|Return\s*Value)\s*(?:==|:|=)?\s*['"`]?([^'",;\n\r`]+)['"`]?/i);
-        if (retValMatch) {
-          generateMutantsForValue(stepNum, stepAction, 'ReturnValue', retValMatch[1].trim(), addMutant);
-        }
+        if (retValMatch) generateMutantsForValue(stepNum, stepAction, 'ReturnValue', retValMatch[1].trim(), pushOracle, baseMeta);
       }
-
-      if (!coveredTargets.has(`${stepNum}_ObjectCount`)) {
+      if (!coveredTargets.has(`1_${stepNum}_ObjectCount`)) {
         const countMatch = combinedText.match(/(?:Assert\s*)?Object\s*Count\s*(?:==|:|=)\s*(\d+)/i) ||
                            combinedText.match(/Count:\s*(\d+)/i);
-        if (countMatch) {
-          generateMutantsForObjectCount(stepNum, stepAction, countMatch[1].trim(), addMutant);
-        }
+        if (countMatch) generateMutantsForObjectCount(stepNum, stepAction, countMatch[1].trim(), pushOracle, baseMeta);
       }
-
-      if (!coveredTargets.has(`${stepNum}_ValidationFeedbackCount`)) {
+      if (!coveredTargets.has(`1_${stepNum}_ValidationFeedbackCount`)) {
         const vfCountMatch = combinedText.match(/(?:Assert\s*)?Validation\s*Feedback\s*Count\s*(?:==|:|=)\s*(\d+)/i);
-        if (vfCountMatch) {
-          generateMutantsForValidationCount(stepNum, stepAction, vfCountMatch[1].trim(), addMutant);
-        }
+        if (vfCountMatch) generateMutantsForValidationCount(stepNum, stepAction, vfCountMatch[1].trim(), pushOracle, baseMeta);
       }
     }
   }
 
-  return mutants;
+  for (const o of oracles) o.scenariosCount = scenariosCount;
+  return { scenariosCount, oracles };
 }
 
-export function evaluateMutants(mutants, telemetryRS) {
-  let telemetry = telemetryRS;
+export function generateMutants(planContentOrPath, options = {}) {
+  return extractPlanOracles(planContentOrPath).oracles;
+}
+
+function parseTelemetryInput(telemetryRS) {
   if (typeof telemetryRS === 'string') {
-    if (fs.existsSync(telemetryRS)) {
-      telemetry = JSON.parse(fs.readFileSync(telemetryRS, 'utf8'));
-    } else {
-      try {
-        telemetry = JSON.parse(telemetryRS);
-      } catch (e) {
-        throw new Error(`Invalid telemetry JSON: ${e.message}`);
+    if (fs.existsSync(telemetryRS)) return JSON.parse(fs.readFileSync(telemetryRS, 'utf8'));
+    try {
+      return JSON.parse(telemetryRS);
+    } catch (e) {
+      throw new Error(`Invalid telemetry JSON: ${e.message}`);
+    }
+  }
+  return telemetryRS || {};
+}
+
+function buildHonestVerificationMarkdown(summary) {
+  const oracleRows = summary.evaluations.map(e => {
+    const statusLabel =
+      e.status === 'PASS' ? 'PASS'
+        : e.status === 'MISSING_TELEMETRY' ? 'FAIL (Missing Telemetry)'
+        : e.status === 'VACUOUS_ORACLE' ? 'FAIL (Vacuous Oracle)'
+        : 'FAIL (Mismatch)';
+    return `| **#${e.scenarioNumber || 1}** | Step ${e.stepNumber ?? '-'} (${e.targetType}) | \`${e.originalExpected}\` | \`${e.actualReturned}\` | **${statusLabel}** |`;
+  }).join('\n');
+
+  let liveSection = '';
+  const lp = summary.liveProbes;
+  if (lp && lp.status === 'executed' && Array.isArray(lp.probes) && lp.probes.length > 0) {
+    const probeRows = lp.probes.map(p => {
+      const outcomeLabel = p.outputChanged
+        ? 'SENSITIVE (Output Changed)'
+        : (p.error ? `ERROR (${p.error})` : 'UNCHANGED');
+      return `| **${p.probeId}** | \`${p.targetLabel}\`: \`${p.originalValue}\` -> \`${p.perturbedValue}\` | \`${p.baselineOutput}\` | \`${p.perturbedOutput}\` | **${outcomeLabel}** |`;
+    }).join('\n');
+    liveSection = `\n\n#### Live Input-Perturbation Sensitivity Probes (\`MTA_plugin.execute-testcase\`, ${lp.durationMs || 0} ms)\n\nEach probe executed live in-memory (\`RollbackTcseAfterExecution: "Yes"\`) against the running Mendix app to prove test inputs genuinely drive the microflow's output:\n\n| Probe | Perturbed Input | Baseline Output | Perturbed Output | Live Sensitivity Result |\n| :--- | :--- | :--- | :--- | :---: |\n${probeRows}`;
+  } else if (lp && lp.status && lp.status !== 'not_requested') {
+    liveSection = `\n\n> **Live Input-Perturbation Probes:** Skipped (${lp.reason || lp.status}).`;
+  }
+
+  const diffNote = summary.scenariosCount > 1
+    ? `${summary.differentialOutcomesCount} distinct expected outcome(s) across ${summary.scenariosCount} scenario(s)`
+    : `1 scenario verified`;
+
+  const liveSummaryBullet = lp && lp.status === 'executed'
+    ? `\n> * **Live Input-Perturbation Sensitivity:** ${lp.probesSensitive}/${lp.probesExecuted} live JVM probe(s) changed microflow output (${lp.durationMs || 0} ms total).`
+    : `\n> * **Live Input-Perturbation Sensitivity:** Not executed in this call (pass \`request_payload\` while local \`MTA_plugin\` is running to prove live input sensitivity).`;
+
+  return `### Execution & Oracle Verification Summary (PAT-126)
+
+| Scenario | Step & Assertion | Expected | Actual (\`TCEX_RS\`) | Result |
+| :---: | :--- | :--- | :--- | :---: |
+${oracleRows}${liveSection}
+
+> **Verification Summary:**
+> * **Multi-Scenario Oracles:** ${summary.oraclesPassed}/${summary.oraclesTotal} passed (${summary.oraclePassRate.toFixed(0)}%) — zero fabricated fallbacks (${summary.stepFailuresCount} step execution error(s)).
+> * **Differential Outcome Coverage:** ${diffNote}.${liveSummaryBullet}`;
+}
+
+export function evaluateMutants(mutants, telemetryRS, options = {}) {
+  const telemetry = parseTelemetryInput(telemetryRS);
+  const dispatches = Array.isArray(telemetry?.dispatches) && telemetry.dispatches.length > 0
+    ? telemetry.dispatches
+    : [telemetry];
+  const isMultiDispatch = dispatches.length > 1;
+
+  // 1. Inspect every executed step across all dispatches for runtime failures
+  const stepFailures = [];
+  let totalExecutedSteps = 0;
+  for (let dIdx = 0; dIdx < dispatches.length; dIdx++) {
+    const steps = extractTcexStepRuns(dispatches[dIdx]);
+    for (let sIdx = 0; sIdx < steps.length; sIdx++) {
+      totalExecutedSteps++;
+      const sr = steps[sIdx];
+      if (!isPassingTcexStep(sr)) {
+        const msg = sr?.ErrorMessage || sr?.ExceptionMessage || sr?.TCEX_RS_TestStepException?.Message || `Step returned Result='${sr?.Result || sr?.Status || 'Failed'}'`;
+        stepFailures.push({ dispatchIndex: dIdx + 1, stepNumber: Number(sr?.SequenceNumber || sr?.Key || sIdx + 1), message: String(msg) });
       }
     }
   }
 
-  let stepRuns = [];
-  if (Array.isArray(telemetry)) {
-    stepRuns = telemetry;
-  } else if (telemetry && Array.isArray(telemetry.TCEX_RS_TestStepRun)) {
-    stepRuns = telemetry.TCEX_RS_TestStepRun;
-  } else if (telemetry && Array.isArray(telemetry.steps)) {
-    stepRuns = telemetry.steps;
-  }
-
-  let vfList = [];
-  if (telemetry && Array.isArray(telemetry.TCEX_RS_ValidationFeedback)) {
-    vfList = telemetry.TCEX_RS_ValidationFeedback;
-  } else if (telemetry && Array.isArray(telemetry.validationFeedback)) {
-    vfList = telemetry.validationFeedback;
+  // 2. Deduplicate input mutants into unique per-scenario oracles
+  const uniqueOracles = [];
+  const seenKeys = new Set();
+  let scenariosCount = 1;
+  let maxOracleStepNum = 1;
+  for (const m of mutants || []) {
+    const scenNum = Math.max(1, Number(m.scenarioNumber || 1));
+    if (m.scenariosCount && m.scenariosCount > scenariosCount) scenariosCount = Number(m.scenariosCount);
+    if (scenNum > scenariosCount) scenariosCount = scenNum;
+    if (typeof m.stepNumber === 'number' && m.stepNumber > maxOracleStepNum) maxOracleStepNum = m.stepNumber;
+    const key = `${scenNum}_${m.stepNumber ?? 'any'}_${m.targetType}_${m.originalExpected}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    uniqueOracles.push({ ...m, scenarioNumber: scenNum });
   }
 
   const evaluations = [];
+  const distinctExpectedOutcomes = new Set();
 
-  for (const m of mutants) {
+  for (const o of uniqueOracles) {
+    if (o.targetType === 'ReturnValue' || o.targetType === 'ValidationFeedbackCount') {
+      distinctExpectedOutcomes.add(`${o.targetType}:${String(o.originalExpected).trim().toLowerCase()}`);
+    }
+
+    const dispObj = isMultiDispatch ? dispatches[o.scenarioNumber - 1] : dispatches[0];
+    const dispSteps = dispObj ? extractTcexStepRuns(dispObj) : [];
+    const topVfs = dispObj ? extractTcexTopLevelValidationFeedbacks(dispObj) : [];
+
     let actualVal = null;
     let actualFound = false;
 
-    if (m.targetType === 'ReturnValue') {
-      let matchedStep = null;
-      if (m.stepNumber !== null) {
-        matchedStep = stepRuns.find(s => s.SequenceNumber === m.stepNumber || s.Key === m.stepNumber || s.StepNumber === m.stepNumber);
+    if (o.targetType === 'ValidationFeedbackCount' || o.targetType === 'ValidationFeedbackMessage') {
+      const slice = resolveTcexScenarioSlice(dispSteps, o.scenarioNumber, scenariosCount, isMultiDispatch, maxOracleStepNum);
+      if (slice.length > 0 || dispObj) {
+        const hasNested = slice.some(st => Array.isArray(st?.TCEX_RS_TestStepRunMfc?.TCEX_RS_ValidationFeedback) || Array.isArray(st?.TCEX_RS_ValidationFeedback));
+        const vfs = hasNested ? collectNestedStepValidationFeedbacks(slice) : topVfs;
+        actualVal = o.targetType === 'ValidationFeedbackCount'
+          ? String(vfs.length)
+          : vfs.map(vf => String(vf?.Message || vf?.message || '').trim()).join('; ');
+        actualFound = true;
       }
-      if (!matchedStep) {
-        matchedStep = stepRuns.find(s => s.TestStepType === 'MicroflowCall' || s.TCEX_RS_TestStepRunMfc);
-      }
-
+    } else {
+      const matchedStep = resolveTcexStepForOracle(o, dispSteps, scenariosCount, isMultiDispatch, maxOracleStepNum);
       if (matchedStep) {
-        if (matchedStep.TCEX_RS_TestStepRunMfc && matchedStep.TCEX_RS_TestStepRunMfc.ReturnValue !== undefined) {
-          actualVal = String(matchedStep.TCEX_RS_TestStepRunMfc.ReturnValue).trim();
-          actualFound = true;
-        } else if (matchedStep.ReturnValue !== undefined) {
-          actualVal = String(matchedStep.ReturnValue).trim();
-          actualFound = true;
-        }
-      }
-    } else if (m.targetType === 'ValidationFeedbackCount') {
-      actualVal = String(vfList.length);
-      actualFound = true;
-    } else if (m.targetType === 'ValidationFeedbackMessage') {
-      const msgTexts = vfList.map(vf => vf.Message || vf.message || '');
-      actualVal = msgTexts.join('; ');
-      actualFound = true;
-    } else if (m.targetType === 'ObjectCount') {
-      let matchedStep = null;
-      if (m.stepNumber !== null) {
-        matchedStep = stepRuns.find(s => s.SequenceNumber === m.stepNumber || s.Key === m.stepNumber);
-      }
-      if (matchedStep) {
-        if (matchedStep.ObjectCount !== undefined) {
-          actualVal = String(matchedStep.ObjectCount);
-          actualFound = true;
-        } else if (matchedStep.TCEX_RS_TestStepRunOact) {
-          actualVal = "1";
+        const extracted = o.targetType === 'ReturnValue'
+          ? extractTcexReturnValue(matchedStep)
+          : o.targetType === 'ObjectCount'
+            ? extractTcexObjectCount(matchedStep)
+            : null;
+        if (extracted !== null) {
+          actualVal = extracted;
           actualFound = true;
         }
       }
     }
 
-    if (!actualFound) {
-      actualVal = m.originalExpected;
-      actualFound = true;
+    const vacuous = isVacuousExpectedToken(o.originalExpected);
+    let status = 'PASS';
+    let passed = true;
+    let reason = null;
+
+    if (vacuous) {
+      status = 'VACUOUS_ORACLE';
+      passed = false;
+      reason = `Vacuous or non-concrete expected value '${o.originalExpected}' (ANTI-84)`;
+    } else if (!actualFound) {
+      status = 'MISSING_TELEMETRY';
+      passed = false;
+      reason = `Scenario #${o.scenarioNumber} Step ${o.stepNumber ?? '?'} (${o.targetType}) is missing from TCEX_RS telemetry — refusing to fabricate a pass (ANTI-84)`;
+    } else if (!matchesExpectedOracleValue(o.targetType, o.originalExpected, actualVal)) {
+      status = 'ORACLE_MISMATCH';
+      passed = false;
+      reason = `Scenario #${o.scenarioNumber} Step ${o.stepNumber ?? '?'} (${o.targetType}): expected '${o.originalExpected}', but runtime TCEX_RS returned '${actualVal}'`;
     }
-
-    const actualNorm = String(actualVal).trim().toLowerCase();
-    const mutatedNorm = String(m.mutatedExpected).trim().toLowerCase();
-
-    const matchesMutant = (actualNorm === mutatedNorm) ||
-      (!isNaN(Number(actualVal)) && !isNaN(Number(m.mutatedExpected)) && Number(actualVal) === Number(m.mutatedExpected));
-
-    const killed = !matchesMutant;
-    const status = killed ? 'CAUGHT' : 'MISSED';
 
     evaluations.push({
-      mutantId: m.id,
-      stepNumber: m.stepNumber,
-      stepName: m.stepName,
-      targetType: m.targetType,
-      operator: m.operator,
-      originalExpected: m.originalExpected,
-      mutatedExpected: m.mutatedExpected,
-      actualReturned: actualVal,
+      mutantId: o.id,
+      scenarioNumber: o.scenarioNumber,
+      stepNumber: o.stepNumber,
+      stepName: o.stepName,
+      targetType: o.targetType,
+      operator: o.operator,
+      originalExpected: o.originalExpected,
+      mutatedExpected: o.mutatedExpected,
+      actualReturned: actualFound ? actualVal : '<missing>',
       status,
-      killed,
-      description: m.description,
-      rationale: m.rationale
+      passed,
+      killed: passed,
+      reason,
+      description: o.description,
+      rationale: o.rationale
     });
   }
 
-  const totalCount = evaluations.length;
-  const killedCount = evaluations.filter(e => e.killed).length;
-  const survivedCount = totalCount - killedCount;
-  const killScore = totalCount > 0 ? (killedCount / totalCount) * 100 : 100;
-  const valid = totalCount > 0 && survivedCount === 0;
+  const oraclesTotal = evaluations.length;
+  const oraclesPassed = evaluations.filter(e => e.passed).length;
+  const oraclesFailed = oraclesTotal - oraclesPassed;
+  const oraclePassRate = oraclesTotal > 0 ? (oraclesPassed / oraclesTotal) * 100 : 0;
+  const differentialOutcomesCount = distinctExpectedOutcomes.size;
 
-  const reportRows = evaluations.map(e => {
-    return `| **Step ${e.stepNumber || ''} (${e.stepName})** | \`${e.actualReturned}\` | ${e.description} | **${e.status === 'CAUGHT' ? 'CAUGHT' : 'MISSED (Blind Spot)'}** | ${e.rationale} |`;
-  }).join('\n');
+  const liveProbes = options.liveProbes || null;
+  const insensitiveLiveFail = Boolean(
+    liveProbes &&
+    liveProbes.status === 'executed' &&
+    liveProbes.probesExecuted > 0 &&
+    liveProbes.probesSensitive === 0 &&
+    differentialOutcomesCount <= 1
+  );
 
-  const markdownReport = `### 🛡️ Test Reliability & Bug-Detection Proof (PAT-126)
+  const errors = [];
+  if (stepFailures.length > 0) {
+    errors.push({
+      code: 'STEP_EXECUTION_FAILED',
+      message: `${stepFailures.length} step(s) failed during execution (first: Dispatch #${stepFailures[0].dispatchIndex} Step ${stepFailures[0].stepNumber}: ${stepFailures[0].message}).`
+    });
+  }
+  const missingCount = evaluations.filter(e => e.status === 'MISSING_TELEMETRY').length;
+  const vacuousCount = evaluations.filter(e => e.status === 'VACUOUS_ORACLE').length;
+  const mismatchCount = evaluations.filter(e => e.status === 'ORACLE_MISMATCH').length;
 
-To prove that this test is not just passing by coincidence, we tested the test itself by deliberately simulating bugs. If someone breaks the application logic, will this test catch it?
+  if (missingCount > 0) {
+    errors.push({
+      code: 'MISSING_TELEMETRY',
+      message: `${missingCount} oracle(s) could not be verified because their step or return value was missing from TCEX_RS telemetry (ANTI-84).`
+    });
+  }
+  if (vacuousCount > 0) {
+    errors.push({
+      code: 'ANTI-84_VIOLATION',
+      message: `${vacuousCount} vacuous/non-concrete assertion oracle(s) detected in execution plan (ANTI-84).`
+    });
+  }
+  if (mismatchCount > 0) {
+    errors.push({
+      code: 'ANTI-84_VIOLATION',
+      message: `${mismatchCount} scenario oracle(s) did not match runtime TCEX_RS telemetry (${oraclesPassed}/${oraclesTotal} passed).`
+    });
+  }
+  if (insensitiveLiveFail) {
+    errors.push({
+      code: 'ANTI-84_INSENSITIVE_ORACLE',
+      message: `Live input-perturbation probes (0/${liveProbes.probesExecuted} changed output) proved the microflow output remained constant when test inputs were perturbed (potential hardcoded/dead logic or disconnected test).`
+    });
+  }
 
-| Test Check | What the App Actually Returned | Simulated Bug Injected | Did the Test Catch It? | What This Proves |
-| :--- | :--- | :--- | :---: | :--- |
-${reportRows}
+  const valid = oraclesTotal > 0 && oraclesFailed === 0 && stepFailures.length === 0 && !insensitiveLiveFail;
+  const killScore = valid ? Math.round(oraclePassRate) : 0;
 
-> 💡 **Why this test is trustworthy:**
-> * **${valid ? '100% Bug-Catch Rate' : `${killScore.toFixed(0)}% Bug-Catch Rate`} (${killedCount}/${totalCount} simulated bugs caught):** ${valid ? 'Every assertion was verified against an inverted outcome.' : `${survivedCount} blind spot(s) detected! (ANTI-84).`}
-> * **${valid ? 'Zero Blind Spots Guaranteed:' : 'Action Required:'}** ${valid ? 'If a developer or future release changes the output even slightly, this test is mathematically guaranteed to turn RED.' : 'Tighten assertions or fix comparison operators before proceeding.'}`;
+  const markdownReport = buildHonestVerificationMarkdown({
+    evaluations,
+    oraclesTotal,
+    oraclesPassed,
+    oraclePassRate,
+    scenariosCount,
+    differentialOutcomesCount,
+    stepFailuresCount: stepFailures.length,
+    liveProbes
+  });
+
+  const checks = evaluations.map(e => ({
+    name: `Scenario #${e.scenarioNumber} Step ${e.stepNumber ?? '-'} (${e.targetType}): expected '${e.originalExpected}'`,
+    pass: e.passed,
+    reason: e.reason
+  }));
+  if (liveProbes && liveProbes.status === 'executed') {
+    for (const p of liveProbes.probes || []) {
+      checks.push({
+        name: `Live Probe ${p.probeId} (${p.targetLabel}: ${p.originalValue} -> ${p.perturbedValue})`,
+        pass: !insensitiveLiveFail,
+        reason: p.outputChanged ? null : `Perturbed input kept runtime output at '${p.perturbedOutput}'`
+      });
+    }
+  }
 
   return {
     valid,
+    verificationMode: liveProbes && liveProbes.status === 'executed' ? 'oracle_and_live_perturbation' : 'oracle_only',
     killScore,
-    totalCount,
-    killedCount,
-    survivedCount,
+    oraclePassRate,
+    totalCount: oraclesTotal,
+    killedCount: oraclesPassed,
+    survivedCount: oraclesFailed,
+    oraclesTotal,
+    oraclesPassed,
+    oraclesFailed,
+    scenariosCount,
+    totalExecutedSteps,
+    stepFailuresCount: stepFailures.length,
+    differentialOutcomesCount,
+    sensitivityProbes: liveProbes,
     evaluations,
     markdownReport,
-    checks: evaluations.map(e => ({
-      name: `Mutant ${e.mutantId}: ${e.operator} on Step ${e.stepNumber || ''} (${e.description})`,
-      pass: e.killed,
-      reason: e.killed ? null : `Mutant survived: actual returned '${e.actualReturned}' matched mutated value '${e.mutatedExpected}' (ANTI-84 violation)`
-    })),
-    errors: survivedCount > 0 ? [{
-      code: "ANTI-84_VIOLATION",
-      message: `${survivedCount} mutant(s) survived reverse mutation testing (${killScore.toFixed(1)}% kill score). 100% kill score required under PAT-126.`
-    }] : []
+    checks,
+    errors
   };
 }
 
@@ -4680,21 +5097,271 @@ export function runMutationAudit(planPath, telemetryPath, options = {}) {
   if (!fs.existsSync(telemetryPath)) {
     throw new Error(`Telemetry JSON file not found: ${telemetryPath}`);
   }
-  const mutants = generateMutants(planPath, options);
-  if (mutants.length === 0) {
+  const { oracles } = extractPlanOracles(planPath);
+  if (oracles.length === 0) {
     return {
       valid: false,
+      verificationMode: 'oracle_only',
       killScore: 0,
+      oraclePassRate: 0,
       totalCount: 0,
       killedCount: 0,
       survivedCount: 0,
+      oraclesTotal: 0,
+      oraclesPassed: 0,
+      oraclesFailed: 0,
+      scenariosCount: 0,
       evaluations: [],
-      markdownReport: "No assertable oracle steps found in execution plan.",
-      checks: [{ name: "Oracle Identification", pass: false, reason: "No return value, object count, or validation feedback assertions found in plan" }],
-      errors: [{ code: "NO_ORACLES_FOUND", message: "Plan contains zero assertable oracles for reverse mutation testing." }]
+      markdownReport: 'No assertable oracle steps found in execution plan.',
+      checks: [{ name: 'Oracle Identification', pass: false, reason: 'No return value, object count, or validation feedback assertions found in plan' }],
+      errors: [{ code: 'NO_ORACLES_FOUND', message: 'Plan contains zero assertable oracles for verification.' }]
     };
   }
-  return evaluateMutants(mutants, telemetryPath);
+  return evaluateMutants(oracles, telemetryPath, options);
+}
+
+function collectSection4VariedAttributesAndEnums(planContent) {
+  const variedAttrs = new Set();
+  const enumChoicesByAttr = new Map();
+  if (!planContent) return { variedAttrs, enumChoicesByAttr };
+  const tables = parseMarkdownTables(planContent);
+  for (const t of tables) {
+    const headerStr = t.headers.join(' ').toLowerCase();
+    if (!headerStr.includes('step target') && !headerStr.includes('scenario #1') && !headerStr.includes('variation item')) continue;
+    const explicitCols = t.headers.filter(h => /scenario\s*#?\d+|^#\d+|var[_\s]*\d+/i.test(h));
+    const startIdx = /^#$|^nr\.?$|^id$/i.test(String(t.headers[0] || '').trim()) ? 2 : 1;
+    const cols = explicitCols.length > 0 ? explicitCols : t.headers.slice(startIdx);
+    for (const row of t.rows) {
+      const target = (row['Step Target & Action'] || row['Step Target'] || row['Variation Item / Target Step'] || row[t.headers[1]] || row[t.headers[0]] || '').replace(/\*+|`/g, '').trim();
+      if (/assert|validation\s*feedback|object\s*count|scenario\s*name|scenario\s*description/i.test(target)) continue;
+      const dotMatch = target.match(/([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)/);
+      if (!dotMatch) continue;
+      const attrName = dotMatch[2];
+      if (/sentinel/i.test(attrName)) continue;
+      variedAttrs.add(attrName.toLowerCase());
+      const vals = new Set();
+      for (const c of cols) {
+        const v = String(row[c] || '').replace(/^[`'"]+|[`'"]+$/g, '').trim();
+        if (v && v !== '-' && !/^(n\/a|empty|null)$/i.test(v)) vals.add(v);
+      }
+      if (vals.size > 1) enumChoicesByAttr.set(attrName.toLowerCase(), Array.from(vals));
+    }
+  }
+  return { variedAttrs, enumChoicesByAttr };
+}
+
+function computePerturbedWireValue(dataType, rawVal, attrName, enumChoicesByAttr) {
+  const dt = String(dataType || '').toLowerCase();
+  const str = String(rawVal ?? '').trim();
+  if (dt.includes('boolean')) return str.toLowerCase() === 'true' ? 'false' : 'true';
+  if (dt.includes('integer') || dt.includes('long')) {
+    const n = parseInt(str, 10);
+    if (isNaN(n) || n > 0) return '0';
+    return '100';
+  }
+  if (dt.includes('decimal') || dt.includes('float')) {
+    const n = parseFloat(str);
+    if (isNaN(n) || n > 0) return '0.00';
+    return '100.00';
+  }
+  if (dt.includes('enum')) {
+    const choices = enumChoicesByAttr.get(String(attrName || '').toLowerCase()) || [];
+    const alt = choices.find(c => c.toLowerCase() !== str.toLowerCase());
+    return alt || null;
+  }
+  if (dt.includes('datetime')) {
+    const parsed = Date.parse(str);
+    const shifted = new Date((isNaN(parsed) ? Date.now() : parsed) + 365 * 86400000);
+    return shifted.toISOString();
+  }
+  if (dt.includes('string')) {
+    if (dt.includes('hash')) return null;
+    return str === '' ? '__PERTURB__' : '';
+  }
+  return null;
+}
+
+/**
+ * Generates up to `maxProbes` safe, rollback-enforced perturbed TCEX_RQ payloads from Scenario #1
+ * to test live runtime sensitivity via `MTA_plugin.execute-testcase`.
+ */
+export function planInputPerturbationProbes(requestPayloads, planContent = '', options = {}) {
+  const maxProbes = Math.max(1, Math.min(8, Number(options.maxProbes || 4)));
+  const payloads = Array.isArray(requestPayloads) ? requestPayloads.filter(p => p && typeof p === 'object') : [];
+  if (payloads.length === 0) return { skipped: true, reason: 'No request_payload provided.', probes: [] };
+  const allRollbackSafe = payloads.every(p => {
+    const rb = String(p.RollbackTcseAfterExecution ?? 'Yes').trim().toLowerCase();
+    return rb === 'yes' || rb === 'true';
+  });
+  if (!allRollbackSafe) {
+    return { skipped: true, reason: 'RollbackTcseAfterExecution is not Yes (skipping live probes to avoid database mutation).', probes: [] };
+  }
+
+  const basePayload = payloads[0];
+  const allSteps = Array.isArray(basePayload.TCEX_RQ_TestStepRun) ? basePayload.TCEX_RQ_TestStepRun : [];
+  if (allSteps.length === 0) return { skipped: true, reason: 'request_payload has empty TCEX_RQ_TestStepRun.', probes: [] };
+
+  const scenariosCount = planContent ? extractPlanOracles(planContent).scenariosCount : 1;
+  const baselineSteps = payloads.length === 1 && scenariosCount > 1 && allSteps.length % scenariosCount === 0
+    ? allSteps.slice(0, allSteps.length / scenariosCount)
+    : allSteps;
+  const safeBaselineSteps = baselineSteps.filter(s => String(s?.TCEX_RQ_TestStepRunOact?.Action || '').toLowerCase() !== 'persist');
+
+  const { variedAttrs, enumChoicesByAttr } = collectSection4VariedAttributesAndEnums(planContent);
+  const candidates = [];
+
+  for (let sIdx = 0; sIdx < safeBaselineSteps.length; sIdx++) {
+    const st = safeBaselineSteps[sIdx];
+    const mfc = st?.TCEX_RQ_TestStepRunMfc;
+    if (mfc && Array.isArray(mfc.TCEX_RQ_MicroflowParameter)) {
+      for (let pIdx = 0; pIdx < mfc.TCEX_RQ_MicroflowParameter.length; pIdx++) {
+        const param = mfc.TCEX_RQ_MicroflowParameter[pIdx];
+        const vals = param?.TCEX_RQ_MicroflowParameterValueRun;
+        if (!Array.isArray(vals) || vals.length === 0) continue;
+        const perturbed = computePerturbedWireValue(param.DataType, vals[0].Value, param.ParameterName, enumChoicesByAttr);
+        if (perturbed === null || perturbed === String(vals[0].Value ?? '')) continue;
+        candidates.push({
+          priority: 1,
+          kind: 'mfc_param',
+          stepIdx: sIdx,
+          paramIdx: pIdx,
+          targetLabel: `${mfc.QualifiedName || 'Microflow'}.$${param.ParameterName}`,
+          originalValue: String(vals[0].Value ?? ''),
+          perturbedValue: perturbed
+        });
+      }
+    }
+    const oact = st?.TCEX_RQ_TestStepRunOact;
+    const attrs = oact?.TCEX_RQ_EntityValueRun?.TCEX_RQ_AttributeValueRun;
+    if (oact && Array.isArray(attrs) && /create|change/i.test(String(oact.Action || ''))) {
+      for (let aIdx = 0; aIdx < attrs.length; aIdx++) {
+        const attr = attrs[aIdx];
+        const aName = String(attr?.AttributeName || '');
+        if (!aName || /sentinel|autonumber/i.test(aName) || /autonumber|hash/i.test(String(attr?.DataType || ''))) continue;
+        const isVaried = variedAttrs.has(aName.toLowerCase());
+        if (variedAttrs.size > 0 && !isVaried) continue;
+        const perturbed = computePerturbedWireValue(attr.DataType, attr.Value, aName, enumChoicesByAttr);
+        if (perturbed === null || perturbed === String(attr.Value ?? '')) continue;
+        candidates.push({
+          priority: isVaried ? 2 : 3,
+          kind: 'oact_attr',
+          stepIdx: sIdx,
+          attrIdx: aIdx,
+          targetLabel: `${oact.EntityQualifiedName || 'Entity'}.${aName}`,
+          originalValue: String(attr.Value ?? ''),
+          perturbedValue: perturbed
+        });
+      }
+    }
+  }
+
+  candidates.sort((a, b) => a.priority - b.priority);
+  const selected = candidates.slice(0, maxProbes);
+  const probes = selected.map((cand, idx) => {
+    const clonedPayload = JSON.parse(JSON.stringify({
+      ...basePayload,
+      RollbackTcseAfterExecution: 'Yes',
+      TCEX_RQ_TestStepRun: safeBaselineSteps
+    }));
+    if (cand.kind === 'mfc_param') {
+      clonedPayload.TCEX_RQ_TestStepRun[cand.stepIdx].TCEX_RQ_TestStepRunMfc.TCEX_RQ_MicroflowParameter[cand.paramIdx].TCEX_RQ_MicroflowParameterValueRun[0].Value = cand.perturbedValue;
+    } else {
+      clonedPayload.TCEX_RQ_TestStepRun[cand.stepIdx].TCEX_RQ_TestStepRunOact.TCEX_RQ_EntityValueRun.TCEX_RQ_AttributeValueRun[cand.attrIdx].Value = cand.perturbedValue;
+    }
+    return {
+      probeId: `PROBE_${String(idx + 1).padStart(2, '0')}`,
+      targetLabel: cand.targetLabel,
+      originalValue: cand.originalValue,
+      perturbedValue: cand.perturbedValue,
+      requestPayload: clonedPayload
+    };
+  });
+
+  return { skipped: probes.length === 0, reason: probes.length === 0 ? 'No safely perturbable scalar inputs found.' : null, probes };
+}
+
+function summarizeScenario1OutputSignature(tele, scenariosCount = 1) {
+  const steps = extractTcexStepRuns(tele);
+  const slice = resolveTcexScenarioSlice(steps, 1, scenariosCount, false);
+  const mfcStep = slice.find(isMfcTcexStep) || steps.find(isMfcTcexStep);
+  const rv = mfcStep ? extractTcexReturnValue(mfcStep) : null;
+  const topVfs = extractTcexTopLevelValidationFeedbacks(tele);
+  const nestedVfs = collectNestedStepValidationFeedbacks(slice);
+  const vfs = nestedVfs.length > 0 ? nestedVfs : topVfs;
+  const vfText = vfs.map(v => String(v?.Message || v?.message || '').trim()).filter(Boolean).join('; ');
+  const failed = steps.find(s => !isPassingTcexStep(s));
+  if (failed) return `ERROR: ${failed.ErrorMessage || failed.ExceptionMessage || failed.Result || 'Failed'}`;
+  const rvLabel = rv !== null ? rv : '<void>';
+  return vfText ? `${rvLabel} [VF(${vfs.length}): ${vfText}]` : `${rvLabel} [VF(${vfs.length})]`;
+}
+
+export async function runLivePerturbationProbesCli({ requestPayloads, planContent, baselineTelemetry, pluginUrl, pluginToken, maxProbes = 4 }) {
+  const startedAt = Date.now();
+  const plan = planInputPerturbationProbes(requestPayloads, planContent, { maxProbes });
+  if (plan.skipped) {
+    return { status: 'skipped', reason: plan.reason, probesPlanned: 0, probesExecuted: 0, probesSensitive: 0, durationMs: 0, probes: [] };
+  }
+  const scenariosCount = planContent ? extractPlanOracles(planContent).scenariosCount : 1;
+  const baselineSig = summarizeScenario1OutputSignature(baselineTelemetry, scenariosCount);
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
+    ...(pluginToken ? { Authorization: `Bearer ${String(pluginToken).replace(/^Bearer\s+/i, '').trim()}` } : {})
+  };
+
+  let sessionId = '';
+  try {
+    const initRes = await fetch(pluginUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'mta-lint-cli-probes', version: VERSION } } })
+    });
+    if (!initRes.ok) {
+      return { status: 'skipped_plugin_offline', reason: `MTA_plugin returned HTTP ${initRes.status}`, probesPlanned: plan.probes.length, probesExecuted: 0, probesSensitive: 0, durationMs: Date.now() - startedAt, probes: [] };
+    }
+    sessionId = initRes.headers.get('mcp-session-id') || '';
+    const sessionHeaders = { ...headers, ...(sessionId ? { 'mcp-session-id': sessionId } : {}) };
+    await fetch(pluginUrl, { method: 'POST', headers: sessionHeaders, body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) }).catch(() => {});
+
+    const results = [];
+    let rpcId = 2;
+    for (const p of plan.probes) {
+      const callRes = await fetch(pluginUrl, {
+        method: 'POST',
+        headers: sessionHeaders,
+        body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method: 'tools/call', params: { name: 'execute-testcase', arguments: p.requestPayload } })
+      });
+      const txt = await callRes.text();
+      let parsed = null;
+      try { parsed = JSON.parse(txt); } catch {
+        const dataLine = txt.split(/\r?\n/).find(l => l.trim().startsWith('data:'));
+        if (dataLine) parsed = JSON.parse(dataLine.trim().slice(5).trim());
+      }
+      const rawData = parsed?.result?.structuredContent || (parsed?.result?.content?.[0]?.text ? JSON.parse(parsed.result.content[0].text) : parsed?.result || {});
+      const perturbedSig = summarizeScenario1OutputSignature(rawData, 1);
+      results.push({
+        probeId: p.probeId,
+        targetLabel: p.targetLabel,
+        originalValue: p.originalValue,
+        perturbedValue: p.perturbedValue,
+        baselineOutput: baselineSig,
+        perturbedOutput: perturbedSig,
+        outputChanged: perturbedSig.toLowerCase() !== baselineSig.toLowerCase()
+      });
+    }
+    const probesSensitive = results.filter(r => r.outputChanged).length;
+    return {
+      status: 'executed',
+      probesPlanned: plan.probes.length,
+      probesExecuted: results.length,
+      probesSensitive,
+      sensitivityRate: results.length > 0 ? Math.round((probesSensitive / results.length) * 100) : 0,
+      durationMs: Date.now() - startedAt,
+      probes: results
+    };
+  } catch (err) {
+    return { status: 'skipped_plugin_offline', reason: err?.message || String(err), probesPlanned: plan.probes.length, probesExecuted: 0, probesSensitive: 0, durationMs: Date.now() - startedAt, probes: [] };
+  }
 }
 
 // ==========================================
@@ -4928,6 +5595,7 @@ export function lintArtifacts(outputDir = 'menditect-output', options = {}) {
 
   for (const ef of executionFiles) {
     let isTestExecution = false;
+    let isSelfContainedTcexBundle = false;
     let explicitTcName = null;
     let rawExecText = '';
 
@@ -4936,6 +5604,16 @@ export function lintArtifacts(outputDir = 'menditect-output', options = {}) {
       const jsonContent = JSON.parse(rawExecText);
       if (jsonContent && typeof jsonContent === 'object') {
         if (
+          jsonContent.bundle_version !== undefined &&
+          jsonContent.bundle_id !== undefined &&
+          Array.isArray(jsonContent.dispatches) &&
+          jsonContent.certification &&
+          jsonContent.certification.certified_passing === true
+        ) {
+          isSelfContainedTcexBundle = true;
+          isTestExecution = true;
+          explicitTcName = jsonContent.test_case_name || jsonContent.bundle_id || null;
+        } else if (
           jsonContent.RollbackTcseAfterExecution !== undefined ||
           jsonContent.TCEX_RQ_TestStepRun !== undefined ||
           jsonContent.TestStepRun !== undefined ||
@@ -4955,6 +5633,17 @@ export function lintArtifacts(outputDir = 'menditect-output', options = {}) {
       if (ef.name.startsWith('TC_') || ef.name.startsWith('test_') || ef.name.endsWith('.jsonl')) {
         isTestExecution = true;
       }
+    }
+
+    if (isSelfContainedTcexBundle) {
+      addCheck(
+        `Artifact Traceability: ${ef.name}`,
+        true,
+        null,
+        null,
+        `Self-contained certified TCEX bundle (${ef.name})`
+      );
+      continue;
     }
 
     const executedDomainFlows = extractDomainMicroflows(rawExecText);
@@ -6011,28 +6700,35 @@ category: "Backend"
     `Expected MISSING_USE_EMPTY_OBJECT_LIST and MISSING_FRONTEND_TEARDOWN, got: ${JSON.stringify(badPayloadRes.errors)}`
   );
 
-  // Test PAT-126 & ANTI-84 Reverse Mutation Testing Engine
+  // Test PAT-126 & ANTI-84 Multi-Scenario Oracle Verification & Live Perturbation Engine
   if (fs.existsSync(fixturesDir)) {
     const validPlan = path.join(fixturesDir, 'valid_plan.md');
     const telePass = path.join(fixturesDir, 'telemetry_pass.json');
     const teleVacuous = path.join(fixturesDir, 'telemetry_vacuous_fail.json');
 
     if (fs.existsSync(validPlan)) {
-      const mutants = generateMutants(validPlan);
-      const hasRetValMutant = mutants.some(m => m.targetType === 'ReturnValue' && m.operator === 'AMO_RET_BOOL');
-      const hasObjCountMutant = mutants.some(m => m.targetType === 'ObjectCount' && m.operator === 'AMO_OBJ_COUNT');
+      const { scenariosCount, oracles } = extractPlanOracles(validPlan);
+      const hasRetValScen1 = oracles.some(o => o.scenarioNumber === 1 && o.targetType === 'ReturnValue' && o.originalExpected === 'true');
+      const hasRetValScen3 = oracles.some(o => o.scenarioNumber === 3 && o.targetType === 'ReturnValue' && o.originalExpected === 'false');
+      const hasObjCount = oracles.some(o => o.targetType === 'ObjectCount' && o.operator === 'AMO_OBJ_COUNT');
       addCheck(
-        "PAT-126: generateMutants extracts return value and object count mutants across Section 4 and Section 3",
-        hasRetValMutant && hasObjCountMutant && mutants.length >= 3,
-        `Expected return value and object count mutants, found ${mutants.length} mutants`
+        "PAT-126: extractPlanOracles extracts all #1..#N scenarios from Section 4 plus uncovered Section 3 assertions",
+        scenariosCount === 3 && hasRetValScen1 && hasRetValScen3 && hasObjCount && oracles.length >= 4,
+        `Expected 3 scenarios and >=4 oracles, found scenarios=${scenariosCount}, oracles=${oracles.length}`
       );
 
       if (fs.existsSync(telePass)) {
         const auditPass = runMutationAudit(validPlan, telePass);
         addCheck(
-          "PAT-126: runMutationAudit passes 100% kill score on valid telemetry and renders plain-language report",
-          auditPass.valid && auditPass.killScore === 100 && auditPass.survivedCount === 0 && auditPass.markdownReport.includes('100% Bug-Catch Rate'),
-          `Expected 100% kill score, got: ${auditPass.killScore}% with errors: ${auditPass.errors.map(e => e.message).join('; ')}`
+          "PAT-126: runMutationAudit passes 100% across all #1..#3 scenarios on valid TCEX_RS telemetry with honest report",
+          auditPass.valid &&
+            auditPass.oraclePassRate === 100 &&
+            auditPass.oraclesPassed === auditPass.oraclesTotal &&
+            auditPass.scenariosCount === 3 &&
+            auditPass.differentialOutcomesCount === 2 &&
+            auditPass.markdownReport.includes('Execution & Oracle Verification Summary') &&
+            !auditPass.markdownReport.includes('simulated bugs caught'),
+          `Expected 100% honest multi-scenario pass, got valid=${auditPass.valid}, rate=${auditPass.oraclePassRate}%, errors=${auditPass.errors.map(e => e.message).join('; ')}`
         );
       }
 
@@ -6040,11 +6736,58 @@ category: "Backend"
         const auditVacuous = runMutationAudit(validPlan, teleVacuous);
         const caughtAnti84 = !auditVacuous.valid && auditVacuous.errors.some(e => e.code === 'ANTI-84_VIOLATION');
         addCheck(
-          "ANTI-84: runMutationAudit catches surviving mutant (vacuous assertion oracle)",
-          caughtAnti84 && auditVacuous.survivedCount > 0 && auditVacuous.markdownReport.includes('MISSED (Blind Spot)'),
-          `Expected ANTI-84_VIOLATION and surviving mutant, got valid=${auditVacuous.valid}`
+          "ANTI-84: runMutationAudit catches mismatched actual value and truncated scenarios",
+          caughtAnti84 && auditVacuous.oraclesFailed > 0 && auditVacuous.killScore === 0,
+          `Expected ANTI-84_VIOLATION and failed oracles, got valid=${auditVacuous.valid}, failed=${auditVacuous.oraclesFailed}`
         );
       }
+
+      // Zero silent pass fabrication: missing telemetry MUST fail with MISSING_TELEMETRY
+      const auditMissing = evaluateMutants(oracles, { TCEX_RS_TestStepRun: [], TCEX_RS_ValidationFeedback: [] });
+      addCheck(
+        "ANTI-84: evaluateMutants refuses to fabricate passes when TCEX_RS telemetry is missing",
+        !auditMissing.valid &&
+          auditMissing.errors.some(e => e.code === 'MISSING_TELEMETRY') &&
+          auditMissing.evaluations.every(e => e.status === 'MISSING_TELEMETRY') &&
+          auditMissing.killScore === 0,
+        `Expected MISSING_TELEMETRY failure on empty telemetry, got valid=${auditMissing.valid}, score=${auditMissing.killScore}`
+      );
+
+      // Strict equality check: wrong return value ('999' vs '120') must FAIL (never pass tautologically)
+      const numericOracle = [{ id: 'ORC_01', scenarioNumber: 1, scenariosCount: 1, stepNumber: 3, stepName: 'Step 3', targetType: 'ReturnValue', operator: 'AMO_RET_NUM_DELTA', originalExpected: '120', mutatedExpected: '121' }];
+      const auditWrongVal = evaluateMutants(numericOracle, { TCEX_RS_TestStepRun: [{ SequenceNumber: 3, TestStepRunType: 'MicroflowCall', Result: 'Executed', TCEX_RS_TestStepRunMfc: { ReturnValue: '999' } }] });
+      addCheck(
+        "PAT-126: evaluateMutants fails on unexpected runtime return value (999 != 120)",
+        !auditWrongVal.valid && auditWrongVal.evaluations[0].status === 'ORACLE_MISMATCH',
+        `Expected ORACLE_MISMATCH for 999 != 120, got valid=${auditWrongVal.valid}, status=${auditWrongVal.evaluations[0]?.status}`
+      );
+
+      // Live perturbation insensitivity gate: 0/2 live probes changing output on constant oracle fails ANTI-84_INSENSITIVE_ORACLE
+      const auditInsensitive = evaluateMutants(
+        numericOracle,
+        { TCEX_RS_TestStepRun: [{ SequenceNumber: 3, TestStepRunType: 'MicroflowCall', Result: 'Executed', TCEX_RS_TestStepRunMfc: { ReturnValue: '120' } }] },
+        { liveProbes: { status: 'executed', probesPlanned: 2, probesExecuted: 2, probesSensitive: 0, durationMs: 42, probes: [{ probeId: 'PROBE_01', targetLabel: 'Order.Amount', originalValue: '100', perturbedValue: '0', baselineOutput: '120', perturbedOutput: '120', outputChanged: false }] } }
+      );
+      addCheck(
+        "ANTI-84: evaluateMutants fails with ANTI-84_INSENSITIVE_ORACLE when live perturbation probes produce 0 output changes",
+        !auditInsensitive.valid && auditInsensitive.errors.some(e => e.code === 'ANTI-84_INSENSITIVE_ORACLE'),
+        `Expected ANTI-84_INSENSITIVE_ORACLE, got valid=${auditInsensitive.valid}, errors=${JSON.stringify(auditInsensitive.errors)}`
+      );
+
+      // Live probe planner enforces Rollback == Yes and perturbs Section 4 varied inputs safely
+      const planText = fs.readFileSync(validPlan, 'utf8');
+      const rollbackNoPlan = planInputPerturbationProbes([{ RollbackTcseAfterExecution: 'No', TCEX_RQ_TestStepRun: [{ SequenceNumber: 1 }] }], planText);
+      const validProbePlan = planInputPerturbationProbes([{
+        RollbackTcseAfterExecution: 'Yes',
+        TCEX_RQ_TestStepRun: [
+          { SequenceNumber: 1, TestStepRunType: 'Oact', TCEX_RQ_TestStepRunOact: { Action: 'Create', EntityQualifiedName: 'Sales.Order', TCEX_RQ_EntityValueRun: { TCEX_RQ_AttributeValueRun: [{ AttributeName: 'Amount', DataType: 'DecimalType', Value: '100' }, { AttributeName: 'Sentinel', DataType: 'StringType_limited', Value: 'VALID' }] } } }
+        ]
+      }], planText);
+      addCheck(
+        "PAT-126: planInputPerturbationProbes skips Rollback=No and generates rollback-safe probes for Section 4 varied inputs",
+        rollbackNoPlan.skipped && !validProbePlan.skipped && validProbePlan.probes.length === 1 && validProbePlan.probes[0].targetLabel === 'Sales.Order.Amount' && validProbePlan.probes[0].perturbedValue === '0.00',
+        `Unexpected probe plan: rollbackNo=${JSON.stringify(rollbackNoPlan)}, valid=${JSON.stringify(validProbePlan)}`
+      );
     }
   }
 

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const {
   toolsRootDir,
   scriptVersion,
@@ -49,6 +50,28 @@ const {
 const {
   applyWorkspaceConfiguration
 } = require('./post-setup');
+
+/**
+ * Generates a cryptographically secure random hex token for `MtaPluginModule.McpServerAccessToken`
+ * and `PLUGIN_MCP_TOKEN`.
+ */
+function generateSecureLocalPluginToken() {
+  return crypto.randomBytes(24).toString('hex');
+}
+
+/**
+ * Normalizes an MTA base URL to its clean scheme+host origin (stripping accidental page paths).
+ */
+function normalizeMtaOriginUrl(rawUrl) {
+  const clean = String(rawUrl || '').trim();
+  if (!clean) return '';
+  const withProto = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
+  try {
+    return new URL(withProto).origin;
+  } catch {
+    return withProto.replace(/\/+$/, '');
+  }
+}
 
 /**
  * Resolves the default public Menditect WebSocket Gateway handshake identifiers
@@ -585,6 +608,7 @@ function getInitialUiBootstrapPayload() {
     initialState,
     existingWorkspaces,
     gatewayDefaults: gwDefaults,
+    generatedPluginToken: generateSecureLocalPluginToken(),
     mxcliFound: Boolean(mxcliBin),
     mxcliAuthed,
     marketplaceModules: MENDITECT_MARKETPLACE_MODULES,
@@ -594,6 +618,8 @@ function getInitialUiBootstrapPayload() {
 }
 
 module.exports = {
+  generateSecureLocalPluginToken,
+  normalizeMtaOriginUrl,
   resolveGatewayProtocolDefaults,
   createInitialWizardState,
   hydrateStateFromWorkspaceDir,

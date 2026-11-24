@@ -1,15 +1,18 @@
 {
   "RollbackTcseAfterExecution": "Yes",
+  "OverallResult": "Executed",
   "TCEX_RS_TestStepRun": [
     {
       "SequenceNumber": 1,
       "TestStepType": "CreateObject",
+      "Result": "Executed",
       "Status": "PASSED"
     },
     {
       "SequenceNumber": 2,
       "TestStepType": "RetrieveObject",
       "ObjectCount": 1,
+      "Result": "Executed",
       "Status": "PASSED"
     },
     {
@@ -18,6 +21,51 @@
       "TCEX_RS_TestStepRunMfc": {
         "ReturnValue": "true"
       },
+      "Result": "Executed",
+      "Status": "PASSED"
+    },
+    {
+      "SequenceNumber": 4,
+      "TestStepType": "CreateObject",
+      "Result": "Executed",
+      "Status": "PASSED"
+    },
+    {
+      "SequenceNumber": 5,
+      "TestStepType": "RetrieveObject",
+      "ObjectCount": 1,
+      "Result": "Executed",
+      "Status": "PASSED"
+    },
+    {
+      "SequenceNumber": 6,
+      "TestStepType": "MicroflowCall",
+      "TCEX_RS_TestStepRunMfc": {
+        "ReturnValue": "true"
+      },
+      "Result": "Executed",
+      "Status": "PASSED"
+    },
+    {
+      "SequenceNumber": 7,
+      "TestStepType": "CreateObject",
+      "Result": "Executed",
+      "Status": "PASSED"
+    },
+    {
+      "SequenceNumber": 8,
+      "TestStepType": "RetrieveObject",
+      "ObjectCount": 0,
+      "Result": "Executed",
+      "Status": "PASSED"
+    },
+    {
+      "SequenceNumber": 9,
+      "TestStepType": "MicroflowCall",
+      "TCEX_RS_TestStepRunMfc": {
+        "ReturnValue": "false"
+      },
+      "Result": "Executed",
       "Status": "PASSED"
     }
   ],

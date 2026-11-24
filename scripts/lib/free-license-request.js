@@ -13,8 +13,10 @@ const {
 const HUBSPOT_PORTAL_ID = '6434334';
 const HUBSPOT_FORM_GUID = '94ca5423-e161-4b0e-84b0-a8d1e1724bf9';
 const HUBSPOT_SUBMISSION_ENDPOINT = `https://api.hsforms.com/submissions/v3/integration/submit/${HUBSPOT_PORTAL_ID}/${HUBSPOT_FORM_GUID}`;
+const HUBSPOT_SUBSCRIPTION_TYPE_IDS = [3514234990, 8397035, 7323267];
 const FREE_EULA_URL = 'https://documentation.menditect.com/legal/eula-free';
 const PRIVACY_POLICY_URL = 'https://documentation.menditect.com/legal/pp';
+const HUBSPOT_PRIVACY_CONSENT_TEXT = 'Menditect needs the contact information you provide to us to provide this free service and to contact you about our products and services. You may unsubscribe from these communications at anytime. For information on how to unsubscribe, as well as our privacy practices and commitment to protecting your privacy, check out our Privacy Policy. Unsubscribing to the MTA exploratory subscription will lead to a revoke of your free MTA exploratory license.';
 const SUCCESS_CONFIRMATION_MESSAGE = 'Thank you for requesting the MTA Exploratory Free Edition. Your license request was received and further instructions will be sent to you by email.';
 
 const MAX_FIRSTNAME_LENGTH = 100;
@@ -182,9 +184,12 @@ async function submitToHubSpot(data, token) {
       pageName: 'Menditect Agentic Test Workspace Setup'
     },
     legalConsentOptions: {
-      consent: {
-        consentToProcess: true,
-        text: 'I agree with the terms of the MTA exploratory EULA'
+      legitimateInterest: {
+        value: true,
+        subscriptionTypeId: HUBSPOT_SUBSCRIPTION_TYPE_IDS[0],
+        subscriptionTypeIds: [...HUBSPOT_SUBSCRIPTION_TYPE_IDS],
+        legalBasis: 'CUSTOMER',
+        text: HUBSPOT_PRIVACY_CONSENT_TEXT
       }
     }
   };
@@ -401,6 +406,7 @@ module.exports = {
   HUBSPOT_PORTAL_ID,
   HUBSPOT_FORM_GUID,
   HUBSPOT_SUBMISSION_ENDPOINT,
+  HUBSPOT_SUBSCRIPTION_TYPE_IDS,
   FREE_EULA_URL,
   COMMON_FREE_EMAIL_DOMAINS,
   loadCountries,
